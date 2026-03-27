@@ -9,4 +9,5 @@ export type ClientMessage =
 export type ServerMessage =
   | { type: 'zone_state'; state: ZoneState }
   | { type: 'damage'; result: DamageResult }
-  | { type: 'error'; message: string };
+  | { type: 'error'; message: string }
+  | { type: 'zone_change'; destinationZoneId: string; reason: string };
