@@ -13,6 +13,7 @@ export class ArenaScene extends Phaser.Scene {
   private cursors!: Phaser.Types.Input.Keyboard.CursorKeys;
   private fireKey!: Phaser.Input.Keyboard.Key;
   private myVehicleId = 'v1';
+  private lastInputSent = 0;
 
   constructor() {
     super({ key: 'ArenaScene' });
@@ -100,12 +101,16 @@ export class ArenaScene extends Phaser.Scene {
     });
   }
 
-  update(): void {
+  update(time: number): void {
     if (!this.zoneState) return;
+
+    // Rate-limit input to server tick rate (~100ms)
+    if (time - this.lastInputSent < 100) return;
+    this.lastInputSent = time;
 
     const speed = this.cursors.up?.isDown ? 15
       : this.cursors.down?.isDown ? 5
-      : 10;
+      : 0;
     const steer = this.cursors.left?.isDown ? -15
       : this.cursors.right?.isDown ? 15
       : 0;
