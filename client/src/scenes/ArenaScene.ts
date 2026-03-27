@@ -17,6 +17,7 @@ export class ArenaScene extends Phaser.Scene {
   private myVehicleId = 'v1';
   private token = '';
   private lastInputSent = 0;
+  private zoneEnded = false;
 
   constructor() {
     super({ key: 'ArenaScene' });
@@ -146,7 +147,7 @@ export class ArenaScene extends Phaser.Scene {
         if (barLeft)  { const p = pct('left');  barLeft.setSize(3, 20 * p).setFillStyle(barColor(p)); }
         if (barRight) { const p = pct('right'); barRight.setSize(3, 20 * p).setFillStyle(barColor(p)); }
 
-        // Tint body: total armor drives color shift toward dark red
+        // Tint body: interpolate from team color (full health) toward red (no health)
         const totalOrig = loadout.armor.front + loadout.armor.back + loadout.armor.left + loadout.armor.right;
         const totalRem  = (damage.armor.front  ?? loadout.armor.front) +
                           (damage.armor.back   ?? loadout.armor.back) +
@@ -155,9 +156,14 @@ export class ArenaScene extends Phaser.Scene {
         const healthPct = totalOrig > 0 ? totalRem / totalOrig : 1;
         const body = container.getByName('body') as Phaser.GameObjects.Rectangle;
         if (body) {
-          const r = Math.floor(255 * (1 - healthPct));
-          const g = Math.floor(healthPct * (v.id === this.myVehicleId ? 255 : 68));
-          const b = Math.floor(healthPct * (v.id === this.myVehicleId ? 136 : 68));
+          const isMe = v.id === this.myVehicleId;
+          const baseR = isMe ? 0 : 255;
+          const baseG = isMe ? 255 : 68;
+          const baseB = isMe ? 136 : 68;
+          // Lerp from damage color (0xff0000) at zero health to team color at full health
+          const r = Math.floor(255 + (baseR - 255) * healthPct);
+          const g = Math.floor(baseG * healthPct);
+          const b = Math.floor(baseB * healthPct);
           body.setFillStyle((r << 16) | (g << 8) | b);
         }
       }
@@ -202,6 +208,8 @@ export class ArenaScene extends Phaser.Scene {
   }
 
   private showZoneEnd(winnerId: string | null, reason: string): void {
+    if (this.zoneEnded) return;
+    this.zoneEnded = true;
     const myVehicle = this.zoneState?.vehicles.find(v => v.id === this.myVehicleId);
     const isWinner = myVehicle && winnerId && myVehicle.playerId === winnerId;
     const text = isWinner ? 'YOU WIN! +$5000' : 'ARENA OVER';
