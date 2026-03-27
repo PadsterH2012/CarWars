@@ -2,8 +2,8 @@ import Phaser from 'phaser';
 import type { VehicleLoadout } from '@carwars/shared';
 import { calculateLoadoutCost, validateLoadout } from '../ui/DesignerUI';
 
-const CHASSIS_OPTIONS = ['light', 'mid', 'heavy'];
-const ENGINE_OPTIONS = ['small', 'medium', 'large', 'v8'];
+const CHASSIS_OPTIONS = ['compact', 'mid', 'van', 'pickup'];
+const ENGINE_OPTIONS = ['small', 'medium', 'large', 'super'];
 const WEAPON_OPTIONS = ['mg', 'hmg', 'rl', 'laser', 'oil', 'mine'];
 
 export class VehicleDesignerScene extends Phaser.Scene {

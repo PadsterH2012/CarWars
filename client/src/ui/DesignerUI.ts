@@ -1,8 +1,8 @@
 import type { VehicleLoadout } from '@carwars/shared';
 
 // Mirror cost data from server/src/rules/data
-const CHASSIS_COSTS: Record<string, number> = { light: 2000, mid: 3000, heavy: 5000, van: 4000 };
-const ENGINE_COSTS: Record<string, number> = { small: 1000, medium: 2000, large: 4000, v8: 8000 };
+const CHASSIS_COSTS: Record<string, number> = { compact: 1000, mid: 1500, van: 3000, pickup: 2000 };
+const ENGINE_COSTS: Record<string, number> = { small: 1000, medium: 2000, large: 4000, super: 8000 };
 const SUSPENSION_COSTS: Record<string, number> = { standard: 500, performance: 1500 };
 const TIRE_COST = 100;
 const ARMOR_COST_PER_POINT = 100;
