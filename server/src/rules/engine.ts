@@ -26,20 +26,23 @@ export function createTurnEngine(initialState: ZoneState): TurnEngine {
     },
 
     resolveTick() {
-      // Snapshot current vehicles for combat resolution (use pre-move positions)
       const preMoveVehicles = [...state.vehicles];
 
       // Move all vehicles
       const newVehicles = state.vehicles.map(vehicle => {
         const input = pendingInputs.get(vehicle.id) ?? lastInputs.get(vehicle.id) ?? { speed: 0, steer: 0, fireWeapon: null };
-        lastInputs.set(vehicle.id, input);
+        // Persist speed/steer but NOT fireWeapon — weapons must be declared each tick
+        lastInputs.set(vehicle.id, { speed: input.speed, steer: input.steer, fireWeapon: null });
         return computeMovement(vehicle, input);
       });
 
-      // Resolve combat using pre-move positions for hit detection
+      // Build a mutable damage map: vehicleId -> updated DamageState
+      const damageUpdates = new Map<string, import('@carwars/shared').DamageState>();
+
+      // Resolve combat using pre-move positions
       preMoveVehicles.forEach((attacker) => {
-        const input = pendingInputs.get(attacker.id) ?? lastInputs.get(attacker.id);
-        if (!input?.fireWeapon) return;
+        const input = pendingInputs.get(attacker.id) ?? { speed: 0, steer: 0, fireWeapon: null };
+        if (!input.fireWeapon) return;
 
         const weapon = WEAPONS.find(w => w.id === input.fireWeapon);
         if (!weapon) return;
@@ -50,14 +53,40 @@ export function createTurnEngine(initialState: ZoneState): TurnEngine {
           const dy = target.position.y - attacker.position.y;
           const distance = Math.sqrt(dx * dx + dy * dy);
           const toHit = resolveToHit(attacker, target, weapon, distance);
-          if (toHit.hit) {
-            resolveDamage(target, toHit.location, weapon.damage);
-          }
+          if (!toHit.hit) return;
+
+          const damageResult = resolveDamage(target, toHit.location, weapon.damage);
+
+          // Apply damage to the vehicle's DamageState
+          const currentDamage = damageUpdates.get(target.id) ?? { ...target.stats.damageState };
+          const newArmor = { ...currentDamage.armor };
+          const existing = newArmor[toHit.location] ?? 0;
+          newArmor[toHit.location] = Math.max(0, existing - damageResult.damageDealt);
+
+          damageUpdates.set(target.id, {
+            ...currentDamage,
+            armor: newArmor,
+            engineDamaged: currentDamage.engineDamaged || damageResult.effects.includes('engine_hit'),
+            driverWounded: currentDamage.driverWounded || damageResult.effects.includes('driver_wounded'),
+            tiresBlown: damageResult.effects.includes('tire_blown')
+              ? [...currentDamage.tiresBlown, 0]
+              : currentDamage.tiresBlown
+          });
         });
       });
 
+      // Apply damage updates to newVehicles
+      const finalVehicles = newVehicles.map(v => {
+        const dmg = damageUpdates.get(v.id);
+        if (!dmg) return v;
+        return {
+          ...v,
+          stats: { ...v.stats, damageState: dmg }
+        };
+      });
+
       pendingInputs.clear();
-      state = { ...state, tick: state.tick + 1, vehicles: newVehicles };
+      state = { ...state, tick: state.tick + 1, vehicles: finalVehicles };
       return state;
     },
 
