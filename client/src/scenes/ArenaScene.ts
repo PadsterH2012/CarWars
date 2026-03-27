@@ -36,7 +36,8 @@ export class ArenaScene extends Phaser.Scene {
       fontFamily: 'monospace'
     });
 
-    this.connection = new Connection('ws://localhost:3001');
+    const wsHost = window.location.hostname;
+    this.connection = new Connection(`ws://${wsHost}:3001`);
     this.connection.onOpen(() => {
       this.connection.send({ type: 'join_zone', zoneId: 'arena-1', vehicleId: this.myVehicleId });
     });
