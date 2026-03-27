@@ -1,0 +1,5 @@
+{
+  "name": "carwars",
+  "private": true,
+  "workspaces": ["client", "server", "shared"]
+}
