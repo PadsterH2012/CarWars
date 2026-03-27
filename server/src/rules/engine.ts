@@ -13,6 +13,7 @@ export interface TurnEngine {
   queueInput(vehicleId: string, input: VehicleInput): void;
   resolveTick(): ZoneState;
   getState(): ZoneState;
+  addVehicle(vehicle: VehicleState): void;
 }
 
 export function createTurnEngine(initialState: ZoneState): TurnEngine {
@@ -103,6 +104,10 @@ export function createTurnEngine(initialState: ZoneState): TurnEngine {
 
     getState() {
       return state;
+    },
+
+    addVehicle(vehicle) {
+      state = { ...state, vehicles: [...state.vehicles, vehicle] };
     }
   };
 }
