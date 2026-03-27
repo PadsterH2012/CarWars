@@ -24,9 +24,17 @@ export interface VehicleState {
   stats: VehicleStats;
 }
 
+export interface HazardObject {
+  id: string;
+  type: 'oil' | 'mine';
+  position: Position;
+  ownerId: string;
+}
+
 export interface ZoneState {
   id: string;
   type: ZoneType;
   tick: number;
   vehicles: VehicleState[];
+  hazardObjects: HazardObject[];
 }

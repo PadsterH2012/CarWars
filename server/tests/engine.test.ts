@@ -19,21 +19,21 @@ function makeVehicle(id: string, x: number, y: number): VehicleState {
 
 describe('TurnEngine', () => {
   it('advances tick on each resolution', () => {
-    const engine = createTurnEngine({ id: 'z1', type: 'arena', tick: 0, vehicles: [makeVehicle('v1', 0, 0)] });
+    const engine = createTurnEngine({ id: 'z1', type: 'arena', tick: 0, vehicles: [makeVehicle('v1', 0, 0)], hazardObjects: [] });
     engine.queueInput('v1', { speed: 10, steer: 0, fireWeapon: null });
     const result = engine.resolveTick();
     expect(result.tick).toBe(1);
   });
 
   it('moves all vehicles with queued inputs', () => {
-    const engine = createTurnEngine({ id: 'z1', type: 'arena', tick: 0, vehicles: [makeVehicle('v1', 0, 0)] });
+    const engine = createTurnEngine({ id: 'z1', type: 'arena', tick: 0, vehicles: [makeVehicle('v1', 0, 0)], hazardObjects: [] });
     engine.queueInput('v1', { speed: 10, steer: 0, fireWeapon: null });
     const result = engine.resolveTick();
     expect(result.vehicles[0].position.y).not.toBe(0);
   });
 
   it('maintains last input if no new input queued', () => {
-    const engine = createTurnEngine({ id: 'z1', type: 'arena', tick: 0, vehicles: [makeVehicle('v1', 0, 0)] });
+    const engine = createTurnEngine({ id: 'z1', type: 'arena', tick: 0, vehicles: [makeVehicle('v1', 0, 0)], hazardObjects: [] });
     engine.queueInput('v1', { speed: 10, steer: 0, fireWeapon: null });
     engine.resolveTick();
     const result2 = engine.resolveTick();
@@ -41,7 +41,7 @@ describe('TurnEngine', () => {
   });
 
   it('getState returns current zone state', () => {
-    const engine = createTurnEngine({ id: 'z1', type: 'arena', tick: 0, vehicles: [makeVehicle('v1', 0, 0)] });
+    const engine = createTurnEngine({ id: 'z1', type: 'arena', tick: 0, vehicles: [makeVehicle('v1', 0, 0)], hazardObjects: [] });
     const state = engine.getState();
     expect(state.id).toBe('z1');
     expect(state.vehicles).toHaveLength(1);

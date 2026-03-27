@@ -14,7 +14,7 @@ export class ZoneRunner {
 
   constructor(zoneId: string, zoneType: import('@carwars/shared').ZoneType = 'arena') {
     this.zoneId = zoneId;
-    this.engine = createTurnEngine({ id: zoneId, type: zoneType, tick: 0, vehicles: [] });
+    this.engine = createTurnEngine({ id: zoneId, type: zoneType, tick: 0, vehicles: [], hazardObjects: [] });
   }
 
   addClient(ws: WebSocket): void {

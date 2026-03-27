@@ -10,4 +10,5 @@ export type ServerMessage =
   | { type: 'zone_state'; state: ZoneState }
   | { type: 'damage'; result: DamageResult }
   | { type: 'error'; message: string }
-  | { type: 'zone_change'; destinationZoneId: string; reason: string };
+  | { type: 'zone_change'; destinationZoneId: string; reason: string }
+  | { type: 'zone_end'; winnerId: string | null; reason: string };
