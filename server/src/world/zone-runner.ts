@@ -34,6 +34,11 @@ export class ZoneRunner {
     return this.clients.size === 0;
   }
 
+  shutdown(): void {
+    this.stop();
+    this.clients.clear();
+  }
+
   queueInput(vehicleId: string, input: { speed: number; steer: number; fireWeapon: string | null }): void {
     this.engine.queueInput(vehicleId, input);
   }

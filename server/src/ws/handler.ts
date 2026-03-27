@@ -8,7 +8,7 @@ const clientZones = new Map<WebSocket, string>();
 const clientVehicles = new Map<WebSocket, string>();
 
 export function resetState(): void {
-  zones.forEach(runner => runner.removeClient); // stop all runners
+  zones.forEach(runner => runner.shutdown());
   zones.clear();
   clientZones.clear();
   clientVehicles.clear();
