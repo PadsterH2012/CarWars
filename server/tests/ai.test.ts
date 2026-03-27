@@ -10,7 +10,7 @@ function makeVehicle(id: string, playerId: string, x: number, y: number, facing 
       id, name: 'Car', loadout: {} as any,
       damageState: {
         armor: { front: 4, back: 2, left: 3, right: 3, top: 0, underbody: 0 },
-        engineDamaged: false, driverWounded: false, tiresBlown: []
+        engineDamaged: false, driverWounded: false, tiresBlown: [], destroyed: false
       },
       maxSpeed: 20, handlingClass: 3, weight: 3000
     }

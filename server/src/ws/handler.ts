@@ -46,6 +46,10 @@ function handleMessage(ws: WebSocket, raw: string): void {
   }
 
   if (msg.type === 'join_zone') {
+    if (typeof msg.zoneId !== 'string' || msg.zoneId.length > 64) {
+      send(ws, { type: 'error', message: 'Invalid zoneId' });
+      return;
+    }
     if (!zones.has(msg.zoneId)) {
       zones.set(msg.zoneId, new ZoneRunner(msg.zoneId));
     }
@@ -63,13 +67,17 @@ function handleMessage(ws: WebSocket, raw: string): void {
       send(ws, { type: 'error', message: 'Not in a zone — send join_zone first' });
       return;
     }
+
+    // Validate inputs
+    const speed = Math.max(0, Math.min(25, Number(msg.speed) || 0));
+    const steer = Math.max(-60, Math.min(60, Number(msg.steer) || 0));
+    const fireWeapon = typeof msg.fireWeapon === 'string' && msg.fireWeapon.length <= 20
+      ? msg.fireWeapon
+      : null;
+
     const runner = zones.get(zoneId);
     if (runner) {
-      runner.queueInput(vehicleId, {
-        speed: msg.speed,
-        steer: msg.steer,
-        fireWeapon: msg.fireWeapon
-      });
+      runner.queueInput(vehicleId, { speed, steer, fireWeapon });
     }
     return;
   }

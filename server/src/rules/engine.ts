@@ -26,10 +26,12 @@ export function createTurnEngine(initialState: ZoneState): TurnEngine {
     },
 
     resolveTick() {
-      const preMoveVehicles = [...state.vehicles];
+      const activeVehicles = state.vehicles.filter(v => !v.stats.damageState.destroyed);
+      const destroyedVehicles = state.vehicles.filter(v => v.stats.damageState.destroyed);
+      const preMoveVehicles = [...activeVehicles];
 
-      // Move all vehicles
-      const newVehicles = state.vehicles.map(vehicle => {
+      // Move all active vehicles
+      const newVehicles = activeVehicles.map(vehicle => {
         const input = pendingInputs.get(vehicle.id) ?? lastInputs.get(vehicle.id) ?? { speed: 0, steer: 0, fireWeapon: null };
         // Persist speed/steer but NOT fireWeapon — weapons must be declared each tick
         lastInputs.set(vehicle.id, { speed: input.speed, steer: input.steer, fireWeapon: null });
@@ -63,27 +65,36 @@ export function createTurnEngine(initialState: ZoneState): TurnEngine {
           const existing = newArmor[toHit.location] ?? 0;
           newArmor[toHit.location] = Math.max(0, existing - damageResult.damageDealt);
 
+          // Map hit location to a tire index (0=front-left, 1=front-right, 2=rear-left, 3=rear-right)
+          const tireIndex = (toHit.location === 'front' || toHit.location === 'left') ? 0
+            : (toHit.location === 'right') ? 1
+            : 2;
+
           damageUpdates.set(target.id, {
             ...currentDamage,
             armor: newArmor,
             engineDamaged: currentDamage.engineDamaged || damageResult.effects.includes('engine_hit'),
             driverWounded: currentDamage.driverWounded || damageResult.effects.includes('driver_wounded'),
-            tiresBlown: damageResult.effects.includes('tire_blown')
-              ? [...currentDamage.tiresBlown, 0]
+            destroyed: currentDamage.destroyed || damageResult.effects.includes('destroyed'),
+            tiresBlown: damageResult.effects.includes('tire_blown') && !currentDamage.tiresBlown.includes(tireIndex)
+              ? [...currentDamage.tiresBlown, tireIndex]
               : currentDamage.tiresBlown
           });
         });
       });
 
-      // Apply damage updates to newVehicles
-      const finalVehicles = newVehicles.map(v => {
-        const dmg = damageUpdates.get(v.id);
-        if (!dmg) return v;
-        return {
-          ...v,
-          stats: { ...v.stats, damageState: dmg }
-        };
-      });
+      // Apply damage updates to newVehicles and re-add destroyed vehicles unchanged
+      const finalVehicles = [
+        ...newVehicles.map(v => {
+          const dmg = damageUpdates.get(v.id);
+          if (!dmg) return v;
+          return {
+            ...v,
+            stats: { ...v.stats, damageState: dmg }
+          };
+        }),
+        ...destroyedVehicles
+      ];
 
       pendingInputs.clear();
       state = { ...state, tick: state.tick + 1, vehicles: finalVehicles };

@@ -13,7 +13,7 @@ const baseVehicle: VehicleState = {
     id: 'v1',
     name: 'Test Car',
     loadout: {} as any,
-    damageState: { armor: {}, engineDamaged: false, driverWounded: false, tiresBlown: [] },
+    damageState: { armor: {}, engineDamaged: false, driverWounded: false, tiresBlown: [], destroyed: false },
     maxSpeed: 20,
     handlingClass: 3,
     weight: 3000

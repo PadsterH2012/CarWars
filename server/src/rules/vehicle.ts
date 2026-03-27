@@ -16,7 +16,8 @@ export function deriveStats(id: string, name: string, loadout: VehicleLoadout): 
     armor: { ...loadout.armor },
     engineDamaged: false,
     driverWounded: false,
-    tiresBlown: []
+    tiresBlown: [],
+    destroyed: false
   };
 
   return {

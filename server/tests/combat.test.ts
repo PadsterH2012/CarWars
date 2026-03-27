@@ -7,7 +7,7 @@ const attacker: VehicleState = {
   id: 'a1', playerId: 'p1', driverId: 'd1',
   position: { x: 0, y: 0 }, facing: 0, speed: 10,
   stats: { id: 'a1', name: 'Attacker', loadout: {} as any,
-    damageState: { armor: {}, engineDamaged: false, driverWounded: false, tiresBlown: [] },
+    damageState: { armor: {}, engineDamaged: false, driverWounded: false, tiresBlown: [], destroyed: false },
     maxSpeed: 20, handlingClass: 3, weight: 3000 }
 };
 
@@ -17,7 +17,7 @@ const target: VehicleState = {
   stats: { id: 't1', name: 'Target', loadout: {} as any,
     damageState: {
       armor: { front: 4, back: 2, left: 3, right: 3, top: 0, underbody: 0 },
-      engineDamaged: false, driverWounded: false, tiresBlown: []
+      engineDamaged: false, driverWounded: false, tiresBlown: [], destroyed: false
     },
     maxSpeed: 15, handlingClass: 2, weight: 2500 }
 };

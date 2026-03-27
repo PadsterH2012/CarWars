@@ -31,6 +31,7 @@ export interface DamageState {
   engineDamaged: boolean;
   driverWounded: boolean;
   tiresBlown: number[];
+  destroyed: boolean;
 }
 
 export interface VehicleStats {

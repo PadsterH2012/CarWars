@@ -10,6 +10,18 @@ const OPTIMAL_RANGE = 8;   // inches — ideal engagement distance
 const FIRE_RANGE = 12;     // inches — max range to fire
 const MAX_TURN = 30;       // degrees — max steer per tick
 
+// Select first front-arc weapon with ammo
+function selectWeapon(self: VehicleState): string | null {
+  const mounts = self.stats.loadout?.mounts;
+  if (!mounts || mounts.length === 0) return 'mg'; // fallback for vehicles without loadout
+  const mount = mounts.find(m =>
+    (m.arc === 'front' || m.arc === 'turret') &&
+    m.weaponId !== null &&
+    m.ammo > 0
+  );
+  return mount?.weaponId ?? null;
+}
+
 function distance(a: { x: number; y: number }, b: { x: number; y: number }): number {
   return Math.sqrt((a.x - b.x) ** 2 + (a.y - b.y) ** 2);
 }
@@ -55,7 +67,8 @@ export function computeAiInput(
 
   // Fire if target is in front arc and within range
   const angleDiff = Math.abs(steer);
-  const fireWeapon = dist <= FIRE_RANGE && angleDiff < 45 ? 'mg' : null;
+  const weapon = selectWeapon(self);
+  const fireWeapon = dist <= FIRE_RANGE && angleDiff < 45 && weapon ? weapon : null;
 
   return { speed, steer, fireWeapon };
 }
