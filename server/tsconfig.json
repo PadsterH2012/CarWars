@@ -7,7 +7,6 @@
     "esModuleInterop": true,
     "baseUrl": ".",
     "outDir": "dist",
-    "rootDir": "src",
     "paths": {
       "@carwars/shared": ["../shared/src/index.ts"]
     }
