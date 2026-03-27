@@ -18,6 +18,7 @@ export class ArenaScene extends Phaser.Scene {
   private token = '';
   private lastInputSent = 0;
   private zoneEnded = false;
+  private firePending = false;
 
   constructor() {
     super({ key: 'ArenaScene' });
@@ -31,6 +32,9 @@ export class ArenaScene extends Phaser.Scene {
   create(): void {
     this.cursors = this.input.keyboard!.createCursorKeys();
     this.fireKey = this.input.keyboard!.addKey(Phaser.Input.Keyboard.KeyCodes.SPACE);
+    // JustDown only fires for a single frame (~16ms) but inputs are batched every 100ms.
+    // Use keydown event to accumulate fire intent so it isn't dropped between send ticks.
+    this.fireKey.on('down', () => { this.firePending = true; });
 
     // Inject tilemap JSON into cache (bundled by Vite — no HTTP request needed)
     this.cache.tilemap.add('arena-1', {
@@ -236,7 +240,8 @@ export class ArenaScene extends Phaser.Scene {
     const steer = this.cursors.left?.isDown ? -15
       : this.cursors.right?.isDown ? 15
       : 0;
-    const fireWeapon = Phaser.Input.Keyboard.JustDown(this.fireKey) ? 'mg' : null;
+    const fireWeapon = this.firePending ? 'mg' : null;
+    this.firePending = false;
 
     this.connection.send({
       type: 'input',
