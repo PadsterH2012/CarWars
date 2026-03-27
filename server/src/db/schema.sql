@@ -39,6 +39,19 @@ CREATE TABLE IF NOT EXISTS event_history (
   occurred_at TIMESTAMPTZ DEFAULT NOW()
 );
 
+CREATE TABLE IF NOT EXISTS jobs (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  zone_id TEXT NOT NULL,
+  job_type TEXT NOT NULL,
+  description TEXT NOT NULL,
+  payout INTEGER NOT NULL,
+  division_min INTEGER NOT NULL DEFAULT 5,
+  taken_by UUID REFERENCES players(id) ON DELETE SET NULL,
+  completed BOOLEAN NOT NULL DEFAULT FALSE,
+  created_at TIMESTAMPTZ DEFAULT NOW()
+);
+CREATE INDEX IF NOT EXISTS idx_jobs_zone_id ON jobs(zone_id);
+
 -- Indexes for frequent foreign key lookups
 CREATE INDEX IF NOT EXISTS idx_vehicles_player_id ON vehicles(player_id);
 CREATE INDEX IF NOT EXISTS idx_drivers_player_id ON drivers(player_id);
