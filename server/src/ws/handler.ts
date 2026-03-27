@@ -115,7 +115,7 @@ async function removeClientFromZone(ws: WebSocket): Promise<void> {
 
   if (runner) {
     runner.removeClient(ws);
-    if (runner.isEmpty()) zones.delete(zoneId!);
+    if (runner.isEmpty() && zoneId) zones.delete(zoneId);
   }
 }
 
