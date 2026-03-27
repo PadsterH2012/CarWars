@@ -1,6 +1,7 @@
 import { WebSocket } from 'ws';
 import type { ServerMessage } from '@carwars/shared';
 import { createTurnEngine, TurnEngine } from '../rules/engine';
+import { computeAiInput } from '../ai/driver';
 
 const TICK_MS = 100;
 
@@ -8,6 +9,7 @@ export class ZoneRunner {
   private engine: TurnEngine;
   private clients = new Set<WebSocket>();
   private interval: ReturnType<typeof setInterval> | null = null;
+  private humanInputThisTick = new Set<string>();
   readonly zoneId: string;
 
   constructor(zoneId: string, zoneType: import('@carwars/shared').ZoneType = 'arena') {
@@ -40,6 +42,7 @@ export class ZoneRunner {
   }
 
   queueInput(vehicleId: string, input: { speed: number; steer: number; fireWeapon: string | null }): void {
+    this.humanInputThisTick.add(vehicleId);
     this.engine.queueInput(vehicleId, input);
   }
 
@@ -59,8 +62,19 @@ export class ZoneRunner {
   }
 
   private tick(): void {
-    const state = this.engine.resolveTick();
-    const msg: ServerMessage = { type: 'zone_state', state };
+    // Run AI only for vehicles with no human input this tick
+    const state = this.engine.getState();
+    state.vehicles.forEach(vehicle => {
+      if (!this.humanInputThisTick.has(vehicle.id)) {
+        const enemies = state.vehicles.filter(v => v.playerId !== vehicle.playerId);
+        const aiInput = computeAiInput(vehicle, enemies, 3);
+        this.engine.queueInput(vehicle.id, aiInput);
+      }
+    });
+    this.humanInputThisTick.clear();
+
+    const newState = this.engine.resolveTick();
+    const msg: ServerMessage = { type: 'zone_state', state: newState };
     const data = JSON.stringify(msg);
     this.clients.forEach(ws => {
       if (ws.readyState === WebSocket.OPEN) {
