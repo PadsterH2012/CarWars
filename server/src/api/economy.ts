@@ -148,20 +148,25 @@ jobsRouter.post('/:id/take', async (req: AuthRequest, res) => {
   const db = getDb();
 
   const result = await db.query(
-    `SELECT id, taken_by, completed, division_min FROM jobs WHERE id = $1`,
+    `SELECT id, division_min FROM jobs WHERE id = $1`,
     [id]
   );
   if (!result.rows.length) return res.status(404).json({ error: 'Job not found' });
   const job = result.rows[0];
-  if (job.completed) return res.status(409).json({ error: 'Job already completed' });
-  if (job.taken_by) return res.status(409).json({ error: 'Job already taken' });
 
   const pResult = await db.query(`SELECT division FROM players WHERE id = $1`, [req.playerId]);
-  if (pResult.rows[0]?.division < job.division_min) {
+  if (!pResult.rows.length) return res.status(401).json({ error: 'Player not found' });
+  if (pResult.rows[0].division < job.division_min) {
     return res.status(403).json({ error: 'Division too low' });
   }
 
-  await db.query(`UPDATE jobs SET taken_by = $1 WHERE id = $2`, [req.playerId, id]);
+  const updateResult = await db.query(
+    `UPDATE jobs SET taken_by = $1 WHERE id = $2 AND taken_by IS NULL AND completed = FALSE`,
+    [req.playerId, id]
+  );
+  if (updateResult.rowCount === 0) {
+    return res.status(409).json({ error: 'Job already taken' });
+  }
   return res.json({ ok: true });
 });
 
