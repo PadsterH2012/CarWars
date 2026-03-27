@@ -7,6 +7,26 @@ const zones = new Map<string, TurnEngine>();
 const clientZones = new Map<WebSocket, string>();
 const clientVehicles = new Map<WebSocket, string>();
 
+export function resetState(): void {
+  zones.clear();
+  clientZones.clear();
+  clientVehicles.clear();
+}
+
+function removeClientFromZone(ws: WebSocket): void {
+  const zoneId = clientZones.get(ws);
+  clientZones.delete(ws);
+  clientVehicles.delete(ws);
+
+  if (!zoneId) return;
+
+  // Check if any other client is still in this zone
+  const zoneStillOccupied = [...clientZones.values()].some(id => id === zoneId);
+  if (!zoneStillOccupied) {
+    zones.delete(zoneId);
+  }
+}
+
 function send(ws: WebSocket, msg: ServerMessage): void {
   if (ws.readyState === WebSocket.OPEN) {
     ws.send(JSON.stringify(msg));
@@ -54,8 +74,7 @@ function handleMessage(ws: WebSocket, raw: string): void {
   }
 
   if (msg.type === 'leave_zone') {
-    clientZones.delete(ws);
-    clientVehicles.delete(ws);
+    removeClientFromZone(ws);
     return;
   }
 
@@ -69,8 +88,7 @@ export function createWsServer(port: number): http.Server {
   wss.on('connection', (ws) => {
     ws.on('message', (data) => handleMessage(ws, data.toString()));
     ws.on('close', () => {
-      clientZones.delete(ws);
-      clientVehicles.delete(ws);
+      removeClientFromZone(ws);
     });
   });
 
@@ -83,8 +101,7 @@ export function attachWss(server: http.Server): void {
   wss.on('connection', (ws) => {
     ws.on('message', (data) => handleMessage(ws, data.toString()));
     ws.on('close', () => {
-      clientZones.delete(ws);
-      clientVehicles.delete(ws);
+      removeClientFromZone(ws);
     });
   });
 }

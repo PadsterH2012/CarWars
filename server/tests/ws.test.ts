@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import WebSocket from 'ws';
-import { createWsServer } from '../src/ws/handler';
+import { createWsServer, resetState } from '../src/ws/handler';
 import type { ServerMessage } from '@carwars/shared';
 import * as http from 'http';
 
@@ -18,6 +18,7 @@ describe('WebSocket handler', () => {
   afterAll(async () => {
     ws.close();
     await new Promise<void>(r => server.close(() => r()));
+    resetState();
   });
 
   it('responds with error on unknown message type', async () => {
