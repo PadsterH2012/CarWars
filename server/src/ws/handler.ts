@@ -2,7 +2,7 @@ import { WebSocketServer, WebSocket } from 'ws';
 import * as http from 'http';
 import jwt from 'jsonwebtoken';
 import type { ClientMessage, ServerMessage, VehicleState, VehicleLoadout, DamageState } from '@carwars/shared';
-import { ZoneRunner, ZoneRunnerOptions } from '../world/zone-runner';
+import { ZoneRunner } from '../world/zone-runner';
 import { getDb } from '../db/client';
 import { deriveStats } from '../rules/vehicle';
 
@@ -33,7 +33,7 @@ async function loadVehicleFromDb(vehicleId: string, token: string): Promise<Vehi
   return {
     id: row.id,
     playerId,
-    driverId: null,
+    driverId: '',
     position: { x: 0, y: 0 },
     facing: 0,
     speed: 0,

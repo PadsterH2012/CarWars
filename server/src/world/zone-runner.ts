@@ -95,7 +95,11 @@ export class ZoneRunner {
     const endMsg: ServerMessage = {
       type: 'zone_end',
       winnerId: humanWinnerId,
-      reason: humanWinnerId ? 'last_standing' : 'all_destroyed',
+      reason: winnerPlayerId === null
+        ? 'all_destroyed'
+        : winnerPlayerId === 'ai-team'
+        ? 'ai_victory'
+        : 'last_standing',
     };
     const data = JSON.stringify(endMsg);
     this.clients.forEach(ws => {
