@@ -10,6 +10,7 @@ const WORLD_CENTER_Y = 360;
 export class ArenaScene extends Phaser.Scene {
   private connection!: Connection;
   private vehicleSprites = new Map<string, Phaser.GameObjects.Container>();
+  private hazardSprites = new Map<string, Phaser.GameObjects.GameObject>();
   private zoneState: ZoneState | null = null;
   private cursors!: Phaser.Types.Input.Keyboard.CursorKeys;
   private fireKey!: Phaser.Input.Keyboard.Key;
@@ -73,6 +74,8 @@ export class ArenaScene extends Phaser.Scene {
         this.zoneState = msg.state;
         this.syncSprites(msg.state);
         this.checkBoundary(msg.state);
+      } else if (msg.type === 'zone_end') {
+        this.showZoneEnd(msg.winnerId, msg.reason);
       }
     });
   }
@@ -100,17 +103,21 @@ export class ArenaScene extends Phaser.Scene {
 
       if (!container) {
         const isPlayer = v.id === this.myVehicleId;
-        const color = isPlayer ? 0x00ff88 : 0xff4444;
+        const color = isPlayer ? 0x00ff88 : (v.playerId === 'ai-team' ? 0xff4444 : 0xffaa00);
 
-        const body = this.add.rectangle(0, 0, 20, 32, color);
+        const body = this.add.rectangle(0, 0, 20, 32, color).setName('body');
         const dirIndicator = this.add.triangle(0, -18, -6, 0, 6, 0, 0, -10, 0xffffff);
-        const label = this.add.text(0, 20, v.id, {
-          fontSize: '9px',
-          color: '#ffffff',
-          fontFamily: 'monospace'
+        const label = this.add.text(0, 20, v.id.slice(0, 8), {
+          fontSize: '9px', color: '#ffffff', fontFamily: 'monospace'
         }).setOrigin(0.5);
 
-        container = this.add.container(0, 0, [body, dirIndicator, label]);
+        // Armor bars: front (top of vehicle), back (bottom), left, right
+        const barFront = this.add.rectangle(0, -18, 20, 3, 0x00ff00).setName('bar-front');
+        const barBack  = this.add.rectangle(0,  18, 20, 3, 0x00ff00).setName('bar-back');
+        const barLeft  = this.add.rectangle(-12, 0, 3, 20, 0x00ff00).setName('bar-left');
+        const barRight = this.add.rectangle( 12, 0, 3, 20, 0x00ff00).setName('bar-right');
+
+        container = this.add.container(0, 0, [body, dirIndicator, label, barFront, barBack, barLeft, barRight]);
         this.vehicleSprites.set(v.id, container);
       }
 
@@ -119,7 +126,42 @@ export class ArenaScene extends Phaser.Scene {
       container.setPosition(worldX, worldY);
       container.setRotation(Phaser.Math.DegToRad(v.facing));
 
-      // Camera follows player on first spawn
+      // Update armor bars and body tint
+      const loadout = v.stats.loadout;
+      const damage = v.stats.damageState;
+      if (loadout) {
+        const pct = (loc: keyof typeof loadout.armor) => {
+          const orig = loadout.armor[loc];
+          if (!orig) return 1;
+          return Math.max(0, (damage.armor[loc] ?? orig)) / orig;
+        };
+        const barColor = (p: number) => p > 0.5 ? 0x00ff00 : p > 0.25 ? 0xffaa00 : 0xff2200;
+
+        const barFront = container.getByName('bar-front') as Phaser.GameObjects.Rectangle;
+        const barBack  = container.getByName('bar-back')  as Phaser.GameObjects.Rectangle;
+        const barLeft  = container.getByName('bar-left')  as Phaser.GameObjects.Rectangle;
+        const barRight = container.getByName('bar-right') as Phaser.GameObjects.Rectangle;
+        if (barFront) { const p = pct('front'); barFront.setSize(20 * p, 3).setFillStyle(barColor(p)); }
+        if (barBack)  { const p = pct('back');  barBack.setSize(20 * p, 3).setFillStyle(barColor(p)); }
+        if (barLeft)  { const p = pct('left');  barLeft.setSize(3, 20 * p).setFillStyle(barColor(p)); }
+        if (barRight) { const p = pct('right'); barRight.setSize(3, 20 * p).setFillStyle(barColor(p)); }
+
+        // Tint body: total armor drives color shift toward dark red
+        const totalOrig = loadout.armor.front + loadout.armor.back + loadout.armor.left + loadout.armor.right;
+        const totalRem  = (damage.armor.front  ?? loadout.armor.front) +
+                          (damage.armor.back   ?? loadout.armor.back) +
+                          (damage.armor.left   ?? loadout.armor.left) +
+                          (damage.armor.right  ?? loadout.armor.right);
+        const healthPct = totalOrig > 0 ? totalRem / totalOrig : 1;
+        const body = container.getByName('body') as Phaser.GameObjects.Rectangle;
+        if (body) {
+          const r = Math.floor(255 * (1 - healthPct));
+          const g = Math.floor(healthPct * (v.id === this.myVehicleId ? 255 : 68));
+          const b = Math.floor(healthPct * (v.id === this.myVehicleId ? 136 : 68));
+          body.setFillStyle((r << 16) | (g << 8) | b);
+        }
+      }
+
       if (v.id === this.myVehicleId && !this.cameras.main.following) {
         this.cameras.main.startFollow(container, true);
         this.cameras.main.setBounds(0, 0, 1280, 736);
@@ -132,6 +174,46 @@ export class ArenaScene extends Phaser.Scene {
         this.vehicleSprites.delete(id);
       }
     });
+
+    this.syncHazards(state);
+  }
+
+  private syncHazards(state: ZoneState): void {
+    const seen = new Set<string>();
+    state.hazardObjects.forEach(h => {
+      seen.add(h.id);
+      if (this.hazardSprites.has(h.id)) return;
+      const worldX = WORLD_CENTER_X + h.position.x * PIXELS_PER_INCH;
+      const worldY = WORLD_CENTER_Y + h.position.y * PIXELS_PER_INCH;
+      let sprite: Phaser.GameObjects.GameObject;
+      if (h.type === 'oil') {
+        sprite = this.add.ellipse(worldX, worldY, 32, 16, 0x112211, 0.7);
+      } else {
+        sprite = this.add.circle(worldX, worldY, 6, 0xff2200);
+      }
+      this.hazardSprites.set(h.id, sprite);
+    });
+    this.hazardSprites.forEach((sprite, id) => {
+      if (!seen.has(id)) {
+        (sprite as Phaser.GameObjects.Ellipse | Phaser.GameObjects.Arc).destroy();
+        this.hazardSprites.delete(id);
+      }
+    });
+  }
+
+  private showZoneEnd(winnerId: string | null, reason: string): void {
+    const myVehicle = this.zoneState?.vehicles.find(v => v.id === this.myVehicleId);
+    const isWinner = myVehicle && winnerId && myVehicle.playerId === winnerId;
+    const text = isWinner ? 'YOU WIN! +$5000' : 'ARENA OVER';
+    const color = isWinner ? '#00ff88' : '#ff4444';
+
+    this.add.rectangle(640, 360, 400, 100, 0x000000, 0.8).setScrollFactor(0).setDepth(10);
+    this.add.text(640, 340, text, {
+      fontSize: '36px', color, fontFamily: 'monospace', fontStyle: 'bold'
+    }).setOrigin(0.5).setScrollFactor(0).setDepth(11);
+    this.add.text(640, 390, reason === 'last_standing' ? 'Last vehicle standing' : reason, {
+      fontSize: '16px', color: '#aaaaaa', fontFamily: 'monospace'
+    }).setOrigin(0.5).setScrollFactor(0).setDepth(11);
   }
 
   update(time: number): void {
