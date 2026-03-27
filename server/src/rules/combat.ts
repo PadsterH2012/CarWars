@@ -38,6 +38,7 @@ export function isWeaponInArc(attacker: VehicleState, target: VehicleState, moun
     case 'back':  return relAngle <= -135 || relAngle >= 135;
     case 'left':  return relAngle >= -135 && relAngle <= -45;
     case 'right': return relAngle >= 45 && relAngle <= 135;
+    default: return false;
   }
 }
 

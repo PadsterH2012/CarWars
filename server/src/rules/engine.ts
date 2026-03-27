@@ -1,4 +1,4 @@
-import type { ZoneState, VehicleState, HazardObject } from '@carwars/shared';
+import type { ZoneState, VehicleState, HazardObject, DamageState } from '@carwars/shared';
 import { computeMovement, applyHazardCheck } from './movement';
 import { resolveToHit, resolveDamage, isWeaponInArc, roll2d6 } from './combat';
 import { WEAPONS } from './data/weapons';
@@ -59,7 +59,7 @@ export function createTurnEngine(initialState: ZoneState): TurnEngine {
       });
 
       // Mutable damage and ammo update maps
-      const damageUpdates = new Map<string, import('@carwars/shared').DamageState>();
+      const damageUpdates = new Map<string, DamageState>();
       const ammoUpdates = new Map<string, Map<string, number>>(); // vehicleId -> mountId -> newAmmo
 
       // Resolve combat using pre-move positions
@@ -131,6 +131,8 @@ export function createTurnEngine(initialState: ZoneState): TurnEngine {
       });
 
       // Resolve hazard object triggers (oil slicks, mines)
+      const mineDef = WEAPONS.find(w => w.id === 'mine');
+      const mineDamage = mineDef?.damage ?? 3;
       let remainingHazards = [...state.hazardObjects];
       const triggeredMines = new Set<string>();
 
@@ -157,7 +159,7 @@ export function createTurnEngine(initialState: ZoneState): TurnEngine {
           } else if (hazard.type === 'mine') {
             const currentDamage = damageUpdates.get(vehicle.id) ?? { ...vehicle.stats.damageState };
             const newArmor = { ...currentDamage.armor };
-            newArmor.underbody = Math.max(0, (newArmor.underbody ?? 0) - 3);
+            newArmor.underbody = Math.max(0, (newArmor.underbody ?? 0) - mineDamage);
             damageUpdates.set(vehicle.id, {
               ...currentDamage,
               armor: newArmor,

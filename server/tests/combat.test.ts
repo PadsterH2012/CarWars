@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
-import { resolveToHit, resolveDamage, getAttackLocation } from '../src/rules/combat';
-import type { VehicleState } from '@carwars/shared';
+import { resolveToHit, resolveDamage, getAttackLocation, isWeaponInArc } from '../src/rules/combat';
+import type { VehicleState, WeaponMount } from '@carwars/shared';
 import { WEAPONS } from '../src/rules/data/weapons';
 
 const attacker: VehicleState = {
@@ -21,6 +21,72 @@ const target: VehicleState = {
     },
     maxSpeed: 15, handlingClass: 2, weight: 2500 }
 };
+
+// Helper to build a minimal WeaponMount
+function makeMount(arc: WeaponMount['arc']): WeaponMount {
+  return { id: 'm1', weaponId: 'mg', arc, ammo: 10 };
+}
+
+// Helper to build a vehicle at position with the given compass facing (degrees, 0=north)
+function makeVehicleAt(id: string, x: number, y: number, facing = 0): VehicleState {
+  return {
+    id, playerId: 'p1', driverId: 'd1',
+    position: { x, y }, facing, speed: 0,
+    stats: { id, name: 'Car', loadout: {} as any,
+      damageState: { armor: {}, engineDamaged: false, driverWounded: false, tiresBlown: [], destroyed: false },
+      maxSpeed: 20, handlingClass: 3, weight: 3000 }
+  };
+}
+
+// Coordinate system: facing=0 is north. In math coords, north = +Y.
+// gameAngleToTarget = 0° means target is due north of attacker.
+// relAngle = gameAngleToTarget - attacker.facing (normalised to -180..+180)
+// front arc: relAngle in [-45, +45]  → target north of attacker when facing=0
+// back arc:  relAngle <= -135 or >= 135 → target south of attacker when facing=0
+describe('isWeaponInArc', () => {
+  it('front arc: target directly in front is in arc', () => {
+    // Attacker at (0,0) facing 0 (north). Target due north at (0,10).
+    const a = makeVehicleAt('a', 0, 0, 0);
+    const t = makeVehicleAt('t', 0, 10, 0);
+    expect(isWeaponInArc(a, t, makeMount('front'))).toBe(true);
+  });
+
+  it('front arc: target directly to the side (90°) is NOT in arc', () => {
+    // Attacker facing north. Target due east at (10,0) = 90° off front.
+    const a = makeVehicleAt('a', 0, 0, 0);
+    const t = makeVehicleAt('t', 10, 0, 0);
+    expect(isWeaponInArc(a, t, makeMount('front'))).toBe(false);
+  });
+
+  it('back arc: target directly behind is in arc', () => {
+    // Attacker facing north. Target due south at (0,-10) = 180° relative.
+    const a = makeVehicleAt('a', 0, 0, 0);
+    const t = makeVehicleAt('t', 0, -10, 0);
+    expect(isWeaponInArc(a, t, makeMount('back'))).toBe(true);
+  });
+
+  it('turret: any target is in arc', () => {
+    const a = makeVehicleAt('a', 0, 0, 0);
+    const t = makeVehicleAt('t', 10, 10, 0);
+    expect(isWeaponInArc(a, t, makeMount('turret'))).toBe(true);
+  });
+
+  it('front arc: target at exactly 45° is in arc (boundary inclusive)', () => {
+    // 45° clockwise from north = northeast direction.
+    // In math coords: x = sin(45°) * r, y = cos(45°) * r
+    const a = makeVehicleAt('a', 0, 0, 0);
+    const r = 10;
+    const t = makeVehicleAt('t', Math.sin(Math.PI / 4) * r, Math.cos(Math.PI / 4) * r, 0);
+    expect(isWeaponInArc(a, t, makeMount('front'))).toBe(true);
+  });
+
+  it('default arc: unknown arc value returns false', () => {
+    const a = makeVehicleAt('a', 0, 0, 0);
+    const t = makeVehicleAt('t', 0, 10, 0);
+    const badMount = { id: 'm1', weaponId: 'mg', arc: 'unknown' as any, ammo: 10 };
+    expect(isWeaponInArc(a, t, badMount)).toBe(false);
+  });
+});
 
 describe('combat', () => {
   it('determines attack hits target facing based on relative angle', () => {
