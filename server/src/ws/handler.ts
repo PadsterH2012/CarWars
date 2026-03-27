@@ -8,7 +8,7 @@ import { deriveStats } from '../rules/vehicle';
 
 const JWT_SECRET = process.env.JWT_SECRET ?? 'dev-secret-change-in-prod';
 
-async function loadVehicleFromDb(vehicleId: string, token: string): Promise<VehicleState | null> {
+async function loadVehicleFromDb(vehicleId: string, token: string): Promise<{ vehicle: VehicleState; playerId: string } | null> {
   let playerId: string;
   try {
     const payload = jwt.verify(token, JWT_SECRET) as { playerId: string };
@@ -31,13 +31,16 @@ async function loadVehicleFromDb(vehicleId: string, token: string): Promise<Vehi
   stats.damageState = damageState;
 
   return {
-    id: row.id,
+    vehicle: {
+      id: row.id,
+      playerId,
+      driverId: '',
+      position: { x: 0, y: 0 },
+      facing: 0,
+      speed: 0,
+      stats
+    },
     playerId,
-    driverId: '',
-    position: { x: 0, y: 0 },
-    facing: 0,
-    speed: 0,
-    stats
   };
 }
 
@@ -67,12 +70,14 @@ function makeTestVehicle(id: string, playerId: string, x: number, y: number, fac
 const zones = new Map<string, ZoneRunner>();
 const clientZones = new Map<WebSocket, string>();
 const clientVehicles = new Map<WebSocket, string>();
+const clientPlayers = new Map<WebSocket, string>(); // ws → playerId (DB UUID)
 
 export function resetState(): void {
   zones.forEach(runner => runner.shutdown());
   zones.clear();
   clientZones.clear();
   clientVehicles.clear();
+  clientPlayers.clear();
 }
 
 function send(ws: WebSocket, msg: ServerMessage): void {
@@ -81,19 +86,36 @@ function send(ws: WebSocket, msg: ServerMessage): void {
   }
 }
 
-function removeClientFromZone(ws: WebSocket): void {
+async function removeClientFromZone(ws: WebSocket): Promise<void> {
   const zoneId = clientZones.get(ws);
+  const vehicleId = clientVehicles.get(ws);
+  const playerId = clientPlayers.get(ws);
   clientZones.delete(ws);
   clientVehicles.delete(ws);
+  clientPlayers.delete(ws);
 
-  if (!zoneId) return;
+  const runner = zoneId ? zones.get(zoneId) : undefined;
 
-  const runner = zones.get(zoneId);
+  // Save current damage_state back to DB if we have enough context
+  if (runner && vehicleId && playerId) {
+    const zoneState = runner.getEngine().getState();
+    const vehicle = zoneState.vehicles.find(v => v.id === vehicleId);
+    if (vehicle) {
+      const db = getDb();
+      try {
+        await db.query(
+          'UPDATE vehicles SET damage_state = $1 WHERE id = $2 AND player_id = $3',
+          [JSON.stringify(vehicle.stats.damageState), vehicleId, playerId]
+        );
+      } catch (e) {
+        console.error('Failed to save vehicle damage:', e);
+      }
+    }
+  }
+
   if (runner) {
     runner.removeClient(ws);
-    if (runner.isEmpty()) {
-      zones.delete(zoneId);
-    }
+    if (runner.isEmpty()) zones.delete(zoneId!);
   }
 }
 
@@ -156,7 +178,11 @@ async function handleMessage(ws: WebSocket, raw: string): Promise<void> {
       // Try DB hydration first; fall back to test fixture for dev convenience
       let vehicle: VehicleState | null = null;
       if (msg.token) {
-        vehicle = await loadVehicleFromDb(msg.vehicleId, msg.token);
+        const result = await loadVehicleFromDb(msg.vehicleId, msg.token);
+        if (result) {
+          vehicle = result.vehicle;
+          clientPlayers.set(ws, result.playerId);
+        }
       }
       if (!vehicle) {
         vehicle = makeTestVehicle(msg.vehicleId, 'player', 0, 0, 0);
@@ -190,7 +216,7 @@ async function handleMessage(ws: WebSocket, raw: string): Promise<void> {
   }
 
   if (msg.type === 'leave_zone') {
-    removeClientFromZone(ws);
+    removeClientFromZone(ws).catch(console.error);
     return;
   }
 
@@ -203,7 +229,7 @@ export function createWsServer(port: number): http.Server {
 
   wss.on('connection', (ws) => {
     ws.on('message', (data) => { handleMessage(ws, data.toString()).catch(console.error); });
-    ws.on('close', () => removeClientFromZone(ws));
+    ws.on('close', () => { removeClientFromZone(ws).catch(console.error); });
   });
 
   httpServer.listen(port);
@@ -214,6 +240,6 @@ export function attachWss(server: http.Server): void {
   const wss = new WebSocketServer({ server });
   wss.on('connection', (ws) => {
     ws.on('message', (data) => { handleMessage(ws, data.toString()).catch(console.error); });
-    ws.on('close', () => removeClientFromZone(ws));
+    ws.on('close', () => { removeClientFromZone(ws).catch(console.error); });
   });
 }

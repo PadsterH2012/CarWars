@@ -66,7 +66,7 @@ export class ArenaScene extends Phaser.Scene {
     const wsHost = window.location.hostname;
     this.connection = new Connection(`ws://${wsHost}:3001`);
     this.connection.onOpen(() => {
-      this.connection.send({ type: 'join_zone', zoneId: 'arena-1', vehicleId: this.myVehicleId });
+      this.connection.send({ type: 'join_zone', zoneId: 'arena-1', vehicleId: this.myVehicleId, token: this.token });
     });
     this.connection.onMessage((msg) => {
       if (msg.type === 'zone_state') {
