@@ -1,6 +1,6 @@
-import type { ZoneState, VehicleState } from '@carwars/shared';
-import { computeMovement } from './movement';
-import { resolveToHit, resolveDamage, getAttackLocation } from './combat';
+import type { ZoneState, VehicleState, HazardObject } from '@carwars/shared';
+import { computeMovement, applyHazardCheck } from './movement';
+import { resolveToHit, resolveDamage, isWeaponInArc, roll2d6 } from './combat';
 import { WEAPONS } from './data/weapons';
 
 interface VehicleInput {
@@ -17,7 +17,11 @@ export interface TurnEngine {
 }
 
 export function createTurnEngine(initialState: ZoneState): TurnEngine {
-  let state: ZoneState = { ...initialState, vehicles: [...initialState.vehicles] };
+  let state: ZoneState = {
+    ...initialState,
+    vehicles: [...initialState.vehicles],
+    hazardObjects: [...(initialState.hazardObjects ?? [])],
+  };
   const pendingInputs = new Map<string, VehicleInput>();
   const lastInputs = new Map<string, VehicleInput>();
 
@@ -32,44 +36,82 @@ export function createTurnEngine(initialState: ZoneState): TurnEngine {
       const preMoveVehicles = [...activeVehicles];
 
       // Move all active vehicles
-      const newVehicles = activeVehicles.map(vehicle => {
+      let newVehicles = activeVehicles.map(vehicle => {
         const input = pendingInputs.get(vehicle.id) ?? lastInputs.get(vehicle.id) ?? { speed: 0, steer: 0, fireWeapon: null };
-        // Persist speed/steer but NOT fireWeapon — weapons must be declared each tick
         lastInputs.set(vehicle.id, { speed: input.speed, steer: input.steer, fireWeapon: null });
         return computeMovement(vehicle, input);
       });
 
-      // Build a mutable damage map: vehicleId -> updated DamageState
+      // Apply hazard checks — high-speed tight turns may cause spinout
+      newVehicles = newVehicles.map(vehicle => {
+        const input = pendingInputs.get(vehicle.id) ?? lastInputs.get(vehicle.id) ?? { speed: 0, steer: 0, fireWeapon: null };
+        const hazard = applyHazardCheck(vehicle, { speed: vehicle.speed, steer: input.steer });
+        if (!hazard.required) return vehicle;
+        const roll = roll2d6();
+        if (roll >= hazard.difficulty) return vehicle; // passed
+        // Failed — spinout: random rotation, halve speed
+        const spinAngle = (Math.random() > 0.5 ? 1 : -1) * (60 + Math.floor(Math.random() * 120));
+        return {
+          ...vehicle,
+          facing: (vehicle.facing + spinAngle + 360) % 360,
+          speed: Math.floor(vehicle.speed / 2),
+        };
+      });
+
+      // Mutable damage and ammo update maps
       const damageUpdates = new Map<string, import('@carwars/shared').DamageState>();
+      const ammoUpdates = new Map<string, Map<string, number>>(); // vehicleId -> mountId -> newAmmo
 
       // Resolve combat using pre-move positions
-      preMoveVehicles.forEach((attacker) => {
+      preMoveVehicles.forEach(attacker => {
         const input = pendingInputs.get(attacker.id) ?? { speed: 0, steer: 0, fireWeapon: null };
         if (!input.fireWeapon) return;
 
         const weapon = WEAPONS.find(w => w.id === input.fireWeapon);
         if (!weapon) return;
 
-        preMoveVehicles.forEach((target) => {
+        // Find a mount on the attacker with this weapon and ammo remaining
+        const mountIndex = attacker.stats.loadout?.mounts.findIndex(
+          m => m.weaponId === input.fireWeapon && m.ammo > 0
+        ) ?? -1;
+        if (mountIndex === -1) return;
+        const mount = attacker.stats.loadout!.mounts[mountIndex];
+
+        // Handle dropped weapons (oil, mine) — place hazard at attacker's position
+        if (weapon.special === 'dropped') {
+          if (!ammoUpdates.has(attacker.id)) ammoUpdates.set(attacker.id, new Map());
+          ammoUpdates.get(attacker.id)!.set(mount.id, mount.ammo - 1);
+          const hazId = `${weapon.id}-${attacker.id}-${state.tick}`;
+          state = {
+            ...state,
+            hazardObjects: [
+              ...state.hazardObjects,
+              { id: hazId, type: weapon.id as 'oil' | 'mine', position: { ...attacker.position }, ownerId: attacker.id }
+            ]
+          };
+          return;
+        }
+
+        // Projectile weapon — fire at all enemies in arc within range
+        preMoveVehicles.forEach(target => {
           if (attacker.id === target.id) return;
+          if (!isWeaponInArc(attacker, target, mount)) return;
+
           const dx = target.position.x - attacker.position.x;
           const dy = target.position.y - attacker.position.y;
           const distance = Math.sqrt(dx * dx + dy * dy);
+          if (distance > weapon.longRange) return;
+
           const toHit = resolveToHit(attacker, target, weapon, distance);
           if (!toHit.hit) return;
 
           const damageResult = resolveDamage(target, toHit.location, weapon.damage);
-
-          // Apply damage to the vehicle's DamageState
           const currentDamage = damageUpdates.get(target.id) ?? { ...target.stats.damageState };
           const newArmor = { ...currentDamage.armor };
-          const existing = newArmor[toHit.location] ?? 0;
-          newArmor[toHit.location] = Math.max(0, existing - damageResult.damageDealt);
+          newArmor[toHit.location] = Math.max(0, (newArmor[toHit.location] ?? 0) - damageResult.damageDealt);
 
-          // Map hit location to a tire index (0=front-left, 1=front-right, 2=rear-left, 3=rear-right)
           const tireIndex = (toHit.location === 'front' || toHit.location === 'left') ? 0
-            : (toHit.location === 'right') ? 1
-            : 2;
+            : (toHit.location === 'right') ? 1 : 2;
 
           damageUpdates.set(target.id, {
             ...currentDamage,
@@ -82,23 +124,87 @@ export function createTurnEngine(initialState: ZoneState): TurnEngine {
               : currentDamage.tiresBlown
           });
         });
+
+        // Decrement ammo once per tick per firing vehicle
+        if (!ammoUpdates.has(attacker.id)) ammoUpdates.set(attacker.id, new Map());
+        ammoUpdates.get(attacker.id)!.set(mount.id, mount.ammo - 1);
       });
 
-      // Apply damage updates to newVehicles and re-add destroyed vehicles unchanged
+      // Resolve hazard object triggers (oil slicks, mines)
+      let remainingHazards = [...state.hazardObjects];
+      const triggeredMines = new Set<string>();
+
+      newVehicles.forEach(vehicle => {
+        remainingHazards.forEach(hazard => {
+          const dx = vehicle.position.x - hazard.position.x;
+          const dy = vehicle.position.y - hazard.position.y;
+          if (Math.sqrt(dx * dx + dy * dy) > 0.5) return;
+
+          if (hazard.type === 'oil') {
+            const roll = roll2d6();
+            if (roll < 4) {
+              const idx = newVehicles.findIndex(v => v.id === vehicle.id);
+              if (idx !== -1) {
+                const spinAngle = (Math.random() > 0.5 ? 1 : -1) * 90;
+                newVehicles[idx] = {
+                  ...newVehicles[idx],
+                  facing: (newVehicles[idx].facing + spinAngle + 360) % 360,
+                  speed: Math.floor(newVehicles[idx].speed / 2),
+                };
+              }
+            }
+            // Oil persists
+          } else if (hazard.type === 'mine') {
+            const currentDamage = damageUpdates.get(vehicle.id) ?? { ...vehicle.stats.damageState };
+            const newArmor = { ...currentDamage.armor };
+            newArmor.underbody = Math.max(0, (newArmor.underbody ?? 0) - 3);
+            damageUpdates.set(vehicle.id, {
+              ...currentDamage,
+              armor: newArmor,
+              destroyed: currentDamage.destroyed || (newArmor.underbody ?? 0) <= 0,
+            });
+            triggeredMines.add(hazard.id);
+          }
+        });
+      });
+
+      remainingHazards = remainingHazards.filter(h => !triggeredMines.has(h.id));
+
+      // Apply damage + ammo updates to vehicles
       const finalVehicles = [
         ...newVehicles.map(v => {
           const dmg = damageUpdates.get(v.id);
-          if (!dmg) return v;
-          return {
-            ...v,
-            stats: { ...v.stats, damageState: dmg }
-          };
+          const ammo = ammoUpdates.get(v.id);
+
+          let updated = v;
+          if (dmg) {
+            updated = { ...updated, stats: { ...updated.stats, damageState: dmg } };
+          }
+          if (ammo && updated.stats.loadout) {
+            const newMounts = updated.stats.loadout.mounts.map(m => {
+              const newAmmo = ammo.get(m.id);
+              return newAmmo !== undefined ? { ...m, ammo: Math.max(0, newAmmo) } : m;
+            });
+            updated = {
+              ...updated,
+              stats: {
+                ...updated.stats,
+                loadout: { ...updated.stats.loadout, mounts: newMounts }
+              }
+            };
+          }
+          return updated;
         }),
         ...destroyedVehicles
       ];
 
       pendingInputs.clear();
-      state = { ...state, tick: state.tick + 1, vehicles: finalVehicles };
+      state = {
+        ...state,
+        tick: state.tick + 1,
+        vehicles: finalVehicles,
+        hazardObjects: remainingHazards,
+      };
       return state;
     },
 
