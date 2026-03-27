@@ -56,12 +56,12 @@ export class ArenaScene extends Phaser.Scene {
       fontSize: '24px',
       fontStyle: 'bold',
       fontFamily: 'monospace'
-    });
+    }).setScrollFactor(0);
     this.add.text(16, 48, 'Arrow keys: drive | Space: fire', {
       color: '#888888',
       fontSize: '12px',
       fontFamily: 'monospace'
-    });
+    }).setScrollFactor(0);
 
     const wsHost = window.location.hostname;
     this.connection = new Connection(`ws://${wsHost}:3001`);
@@ -114,10 +114,16 @@ export class ArenaScene extends Phaser.Scene {
         this.vehicleSprites.set(v.id, container);
       }
 
-      const screenX = WORLD_CENTER_X + v.position.x * PIXELS_PER_INCH;
-      const screenY = WORLD_CENTER_Y + v.position.y * PIXELS_PER_INCH;
-      container.setPosition(screenX, screenY);
+      const worldX = WORLD_CENTER_X + v.position.x * PIXELS_PER_INCH;
+      const worldY = WORLD_CENTER_Y + v.position.y * PIXELS_PER_INCH;
+      container.setPosition(worldX, worldY);
       container.setRotation(Phaser.Math.DegToRad(v.facing));
+
+      // Camera follows player on first spawn
+      if (v.id === this.myVehicleId && !this.cameras.main.following) {
+        this.cameras.main.startFollow(container, true);
+        this.cameras.main.setBounds(0, 0, 1280, 736);
+      }
     });
 
     this.vehicleSprites.forEach((container, id) => {
