@@ -2,7 +2,7 @@ import { WebSocketServer, WebSocket } from 'ws';
 import * as http from 'http';
 import jwt from 'jsonwebtoken';
 import type { ClientMessage, ServerMessage, VehicleState, VehicleLoadout, DamageState } from '@carwars/shared';
-import { ZoneRunner } from '../world/zone-runner';
+import { ZoneRunner, ZoneRunnerOptions } from '../world/zone-runner';
 import { getDb } from '../db/client';
 import { deriveStats } from '../rules/vehicle';
 
@@ -112,10 +112,39 @@ async function handleMessage(ws: WebSocket, raw: string): Promise<void> {
       return;
     }
     if (!zones.has(msg.zoneId)) {
-      const runner = new ZoneRunner(msg.zoneId);
-      // Spawn two AI opponents in the arena
-      runner.getEngine().addVehicle(makeTestVehicle('ai-red', 'ai-team', -8, -6, 90));
-      runner.getEngine().addVehicle(makeTestVehicle('ai-blue', 'ai-team', 8, 6, 270));
+      const isArena = msg.zoneId.startsWith('arena');
+      const isHighway = msg.zoneId.startsWith('highway');
+      const zoneType = isArena ? 'arena' : isHighway ? 'highway' : 'town';
+
+      const runner = new ZoneRunner(msg.zoneId, zoneType, isArena ? {
+        onEnd: async (winnerId: string | null) => {
+          if (!winnerId) return;
+          const ARENA_PRIZE = 5000;
+          const db = getDb();
+          try {
+            await db.query('BEGIN');
+            await db.query('UPDATE players SET money = money + $1 WHERE id = $2', [ARENA_PRIZE, winnerId]);
+            await db.query(
+              'INSERT INTO event_history (player_id, event_type, result, money_delta) VALUES ($1, $2, $3, $4)',
+              [winnerId, 'arena_win', JSON.stringify({ zoneId: msg.zoneId }), ARENA_PRIZE]
+            );
+            await db.query('COMMIT');
+          } catch (e) {
+            await db.query('ROLLBACK');
+            console.error('Failed to credit arena prize:', e);
+          }
+        },
+      } : {});
+
+      if (isArena) {
+        runner.getEngine().addVehicle(makeTestVehicle('ai-red', 'ai-team', -8, -6, 90));
+        runner.getEngine().addVehicle(makeTestVehicle('ai-blue', 'ai-team', 8, 6, 270));
+      } else if (isHighway) {
+        runner.getEngine().addVehicle(makeTestVehicle('npc-1', 'npc-traffic', -5, -10, 0));
+        runner.getEngine().addVehicle(makeTestVehicle('npc-2', 'npc-traffic', 5, 0, 0));
+        runner.getEngine().addVehicle(makeTestVehicle('npc-3', 'npc-traffic', 0, 10, 0));
+      }
+
       zones.set(msg.zoneId, runner);
     }
     clientZones.set(ws, msg.zoneId);

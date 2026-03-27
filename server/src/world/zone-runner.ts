@@ -5,22 +5,28 @@ import { computeAiInput } from '../ai/driver';
 
 const TICK_MS = 100;
 
+export interface ZoneRunnerOptions {
+  onEnd?: (winnerId: string | null) => void;
+}
+
 export class ZoneRunner {
   private engine: TurnEngine;
   private clients = new Set<WebSocket>();
   private interval: ReturnType<typeof setInterval> | null = null;
   private humanInputThisTick = new Set<string>();
+  private ended = false;
   readonly zoneId: string;
+  private onEnd?: (winnerId: string | null) => void;
 
-  constructor(zoneId: string, zoneType: import('@carwars/shared').ZoneType = 'arena') {
+  constructor(zoneId: string, zoneType: import('@carwars/shared').ZoneType = 'arena', options: ZoneRunnerOptions = {}) {
     this.zoneId = zoneId;
+    this.onEnd = options.onEnd;
     this.engine = createTurnEngine({ id: zoneId, type: zoneType, tick: 0, vehicles: [], hazardObjects: [] });
   }
 
   addClient(ws: WebSocket): void {
     this.clients.add(ws);
     if (!this.interval) this.start();
-    // Send current state immediately on join
     const msg: ServerMessage = { type: 'zone_state', state: this.engine.getState() };
     if (ws.readyState === WebSocket.OPEN) {
       ws.send(JSON.stringify(msg));
@@ -61,8 +67,46 @@ export class ZoneRunner {
     }
   }
 
+  private checkEndCondition(state: import('@carwars/shared').ZoneState): void {
+    if (this.ended) return;
+    if (state.type !== 'arena') return;
+
+    const allVehicles = state.vehicles;
+    const alive = allVehicles.filter(v => !v.stats.damageState.destroyed);
+
+    // Need at least 2 vehicles to have been added and at least one destroyed
+    if (allVehicles.length < 2) return;
+    if (alive.length === allVehicles.length) return;
+
+    // Group surviving vehicles by playerId
+    const survivorsByPlayer = new Map<string, string[]>();
+    alive.forEach(v => {
+      if (!survivorsByPlayer.has(v.playerId)) survivorsByPlayer.set(v.playerId, []);
+      survivorsByPlayer.get(v.playerId)!.push(v.id);
+    });
+
+    if (survivorsByPlayer.size > 1) return; // battle still ongoing
+
+    this.ended = true;
+    const winnerPlayerId = survivorsByPlayer.size === 1 ? [...survivorsByPlayer.keys()][0] : null;
+    // AI win counts as null (no human prize)
+    const humanWinnerId = winnerPlayerId === 'ai-team' ? null : winnerPlayerId;
+
+    const endMsg: ServerMessage = {
+      type: 'zone_end',
+      winnerId: humanWinnerId,
+      reason: humanWinnerId ? 'last_standing' : 'all_destroyed',
+    };
+    const data = JSON.stringify(endMsg);
+    this.clients.forEach(ws => {
+      if (ws.readyState === WebSocket.OPEN) ws.send(data);
+    });
+
+    this.onEnd?.(humanWinnerId);
+    this.stop();
+  }
+
   private tick(): void {
-    // Run AI only for vehicles with no human input this tick
     const state = this.engine.getState();
     state.vehicles.forEach(vehicle => {
       if (!this.humanInputThisTick.has(vehicle.id)) {
@@ -74,13 +118,14 @@ export class ZoneRunner {
     this.humanInputThisTick.clear();
 
     const newState = this.engine.resolveTick();
+    this.checkEndCondition(newState);
+
     const msg: ServerMessage = { type: 'zone_state', state: newState };
     const data = JSON.stringify(msg);
     this.clients.forEach(ws => {
       if (ws.readyState === WebSocket.OPEN) {
         ws.send(data);
       } else {
-        // Clean up stale connections
         this.clients.delete(ws);
       }
     });
