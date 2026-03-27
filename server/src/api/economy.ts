@@ -142,3 +142,56 @@ jobsRouter.get('/', async (req: AuthRequest, res) => {
   );
   return res.json(result.rows);
 });
+
+jobsRouter.post('/:id/take', async (req: AuthRequest, res) => {
+  const { id } = req.params;
+  const db = getDb();
+
+  const result = await db.query(
+    `SELECT id, taken_by, completed, division_min FROM jobs WHERE id = $1`,
+    [id]
+  );
+  if (!result.rows.length) return res.status(404).json({ error: 'Job not found' });
+  const job = result.rows[0];
+  if (job.completed) return res.status(409).json({ error: 'Job already completed' });
+  if (job.taken_by) return res.status(409).json({ error: 'Job already taken' });
+
+  const pResult = await db.query(`SELECT division FROM players WHERE id = $1`, [req.playerId]);
+  if (pResult.rows[0]?.division < job.division_min) {
+    return res.status(403).json({ error: 'Division too low' });
+  }
+
+  await db.query(`UPDATE jobs SET taken_by = $1 WHERE id = $2`, [req.playerId, id]);
+  return res.json({ ok: true });
+});
+
+jobsRouter.post('/:id/complete', async (req: AuthRequest, res) => {
+  const { id } = req.params;
+  const db = getDb();
+
+  const result = await db.query(
+    `SELECT id, taken_by, completed, payout, job_type, zone_id FROM jobs WHERE id = $1`,
+    [id]
+  );
+  if (!result.rows.length) return res.status(404).json({ error: 'Job not found' });
+  const job = result.rows[0];
+  if (job.completed) return res.status(409).json({ error: 'Already completed' });
+  if (job.taken_by !== req.playerId) return res.status(403).json({ error: 'Not your job' });
+
+  await db.query('BEGIN');
+  try {
+    await db.query(`UPDATE jobs SET completed = TRUE WHERE id = $1`, [id]);
+    await db.query(`UPDATE players SET money = money + $1 WHERE id = $2`, [job.payout, req.playerId]);
+    await db.query(
+      `INSERT INTO event_history (player_id, event_type, result, money_delta) VALUES ($1, $2, $3, $4)`,
+      [req.playerId, job.job_type, JSON.stringify({ jobId: id, zoneId: job.zone_id }), job.payout]
+    );
+    await db.query('COMMIT');
+  } catch (e) {
+    await db.query('ROLLBACK');
+    throw e;
+  }
+
+  const pResult = await db.query(`SELECT money FROM players WHERE id = $1`, [req.playerId]);
+  return res.json({ payout: job.payout, moneyNew: pResult.rows[0].money });
+});
