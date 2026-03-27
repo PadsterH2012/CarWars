@@ -1,16 +1,23 @@
 import { WebSocketServer, WebSocket } from 'ws';
 import * as http from 'http';
 import type { ClientMessage, ServerMessage } from '@carwars/shared';
-import { createTurnEngine, TurnEngine } from '../rules/engine';
+import { ZoneRunner } from '../world/zone-runner';
 
-const zones = new Map<string, TurnEngine>();
+const zones = new Map<string, ZoneRunner>();
 const clientZones = new Map<WebSocket, string>();
 const clientVehicles = new Map<WebSocket, string>();
 
 export function resetState(): void {
+  zones.forEach(runner => runner.removeClient); // stop all runners
   zones.clear();
   clientZones.clear();
   clientVehicles.clear();
+}
+
+function send(ws: WebSocket, msg: ServerMessage): void {
+  if (ws.readyState === WebSocket.OPEN) {
+    ws.send(JSON.stringify(msg));
+  }
 }
 
 function removeClientFromZone(ws: WebSocket): void {
@@ -20,16 +27,12 @@ function removeClientFromZone(ws: WebSocket): void {
 
   if (!zoneId) return;
 
-  // Check if any other client is still in this zone
-  const zoneStillOccupied = [...clientZones.values()].some(id => id === zoneId);
-  if (!zoneStillOccupied) {
-    zones.delete(zoneId);
-  }
-}
-
-function send(ws: WebSocket, msg: ServerMessage): void {
-  if (ws.readyState === WebSocket.OPEN) {
-    ws.send(JSON.stringify(msg));
+  const runner = zones.get(zoneId);
+  if (runner) {
+    runner.removeClient(ws);
+    if (runner.isEmpty()) {
+      zones.delete(zoneId);
+    }
   }
 }
 
@@ -44,14 +47,12 @@ function handleMessage(ws: WebSocket, raw: string): void {
 
   if (msg.type === 'join_zone') {
     if (!zones.has(msg.zoneId)) {
-      zones.set(msg.zoneId, createTurnEngine({
-        id: msg.zoneId, type: 'arena', tick: 0, vehicles: []
-      }));
+      zones.set(msg.zoneId, new ZoneRunner(msg.zoneId));
     }
     clientZones.set(ws, msg.zoneId);
     clientVehicles.set(ws, msg.vehicleId);
-    const engine = zones.get(msg.zoneId)!;
-    send(ws, { type: 'zone_state', state: engine.getState() });
+    const runner = zones.get(msg.zoneId)!;
+    runner.addClient(ws); // sends initial zone_state automatically
     return;
   }
 
@@ -62,9 +63,9 @@ function handleMessage(ws: WebSocket, raw: string): void {
       send(ws, { type: 'error', message: 'Not in a zone — send join_zone first' });
       return;
     }
-    const engine = zones.get(zoneId);
-    if (engine) {
-      engine.queueInput(vehicleId, {
+    const runner = zones.get(zoneId);
+    if (runner) {
+      runner.queueInput(vehicleId, {
         speed: msg.speed,
         steer: msg.steer,
         fireWeapon: msg.fireWeapon
@@ -87,9 +88,7 @@ export function createWsServer(port: number): http.Server {
 
   wss.on('connection', (ws) => {
     ws.on('message', (data) => handleMessage(ws, data.toString()));
-    ws.on('close', () => {
-      removeClientFromZone(ws);
-    });
+    ws.on('close', () => removeClientFromZone(ws));
   });
 
   httpServer.listen(port);
@@ -100,8 +99,6 @@ export function attachWss(server: http.Server): void {
   const wss = new WebSocketServer({ server });
   wss.on('connection', (ws) => {
     ws.on('message', (data) => handleMessage(ws, data.toString()));
-    ws.on('close', () => {
-      removeClientFromZone(ws);
-    });
+    ws.on('close', () => removeClientFromZone(ws));
   });
 }
