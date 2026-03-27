@@ -38,3 +38,9 @@ CREATE TABLE IF NOT EXISTS event_history (
   money_delta INTEGER NOT NULL DEFAULT 0,
   occurred_at TIMESTAMPTZ DEFAULT NOW()
 );
+
+-- Indexes for frequent foreign key lookups
+CREATE INDEX IF NOT EXISTS idx_vehicles_player_id ON vehicles(player_id);
+CREATE INDEX IF NOT EXISTS idx_drivers_player_id ON drivers(player_id);
+CREATE INDEX IF NOT EXISTS idx_drivers_assigned_vehicle_id ON drivers(assigned_vehicle_id);
+CREATE INDEX IF NOT EXISTS idx_event_history_player_id ON event_history(player_id);

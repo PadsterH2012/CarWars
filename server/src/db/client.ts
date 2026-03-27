@@ -7,6 +7,7 @@ export function getDb(): Pool {
     pool = new Pool({
       connectionString: process.env.DATABASE_URL ?? 'postgresql://localhost/carwars'
     });
+    pool.on('error', (err) => console.error('Idle client error', err));
   }
   return pool;
 }
