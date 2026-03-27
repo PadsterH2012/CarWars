@@ -1,4 +1,4 @@
-// Shared types placeholder — expanded in Task 3
-export type PlayerId = string;
-export type VehicleId = string;
-export type ZoneId = string;
+export * from './types/vehicle';
+export * from './types/combat';
+export * from './types/world';
+export * from './types/messages';
