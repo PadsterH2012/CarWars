@@ -77,7 +77,8 @@ economyRouter.post('/repair', async (req: AuthRequest, res) => {
 
 economyRouter.post('/prize', async (req: AuthRequest, res) => {
   const { amount, eventType, zoneId } = req.body;
-  if (!amount || typeof amount !== 'number' || amount <= 0) {
+  const MAX_PRIZE = 50_000;
+  if (!amount || typeof amount !== 'number' || amount <= 0 || amount > MAX_PRIZE) {
     return res.status(400).json({ error: 'Invalid amount' });
   }
 

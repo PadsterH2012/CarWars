@@ -87,6 +87,8 @@ function send(ws: WebSocket, msg: ServerMessage): void {
 }
 
 async function removeClientFromZone(ws: WebSocket): Promise<void> {
+  // Guard against double-invocation (leave_zone message + close event both call this)
+  if (!clientZones.has(ws) && !clientVehicles.has(ws)) return;
   const zoneId = clientZones.get(ws);
   const vehicleId = clientVehicles.get(ws);
   const playerId = clientPlayers.get(ws);
