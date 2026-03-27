@@ -2,6 +2,13 @@ import type { VehicleStats } from './vehicle';
 
 export type ZoneType = 'highway' | 'town' | 'arena';
 
+export interface ZoneMetadata {
+  id: string;
+  type: 'arena' | 'town' | 'highway';
+  name: string;
+  exits: { direction: 'north' | 'south' | 'east' | 'west'; destinationZoneId: string }[];
+}
+
 export interface Position {
   x: number;
   y: number;

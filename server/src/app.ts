@@ -5,6 +5,7 @@ import { vehiclesRouter } from './api/vehicles';
 import { driversRouter } from './api/drivers';
 import { economyRouter, jobsRouter } from './api/economy';
 import { divisionRouter } from './api/division';
+import { zonesRouter } from './api/zones';
 import { requireAuth, AuthRequest } from './api/middleware';
 import { getDb } from './db/client';
 
@@ -21,6 +22,7 @@ export function createApp() {
   app.use('/api/economy', economyRouter);
   app.use('/api/jobs', jobsRouter);
   app.use('/api/division', divisionRouter);
+  app.use('/api/zones', zonesRouter);
 
   app.get('/api/me', requireAuth, async (req: AuthRequest, res) => {
     const db = getDb();

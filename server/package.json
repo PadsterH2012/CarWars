@@ -13,7 +13,6 @@
     "express": "^4.19.0",
     "jsonwebtoken": "^9.0.3",
     "pg": "^8.11.0",
-    "supertest": "^7.2.2",
     "ws": "^8.17.0"
   },
   "devDependencies": {
@@ -24,6 +23,7 @@
     "@types/pg": "^8.11.0",
     "@types/supertest": "^7.2.0",
     "@types/ws": "^8.5.0",
+    "supertest": "^7.2.2",
     "tsx": "^4.7.0",
     "typescript": "^5.4.0",
     "vitest": "^1.4.0"
