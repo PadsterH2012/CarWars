@@ -13,13 +13,16 @@ async function openArena(page: Page, token: string, vehicleId: string) {
   await page.evaluate(({ t, v }) => {
     (window as any).game.scene.start('ArenaScene', { token: t, vehicleId: v });
   }, { t: token, v: vehicleId });
-  await page.waitForTimeout(500);
+  // Match the 2000ms baseline established in 04-arena.spec.ts
+  await page.waitForTimeout(2000);
 }
 
-function interceptWs(page: Page): Promise<string[]> {
+async function interceptWs(page: Page): Promise<string[]> {
   const messages: string[] = [];
-  page.exposeFunction('recordWsMsg3', (msg: string) => messages.push(msg));
-  page.addInitScript(() => {
+  // Both calls must be awaited before any navigation; addInitScript only affects
+  // the next page.goto, so registration must complete before the page loads.
+  await page.exposeFunction('recordWsMsg3', (msg: string) => messages.push(msg));
+  await page.addInitScript(() => {
     const OrigWS = window.WebSocket;
     (window as any).WebSocket = class extends OrigWS {
       constructor(url: string, proto?: string | string[]) {
@@ -30,7 +33,7 @@ function interceptWs(page: Page): Promise<string[]> {
       }
     };
   });
-  return Promise.resolve(messages);
+  return messages;
 }
 
 test('zone_state includes hazardObjects array', async ({ page }) => {
@@ -38,7 +41,6 @@ test('zone_state includes hazardObjects array', async ({ page }) => {
   const vehicleId = await createVehicle(token, 'Hazard Tester');
   const messages = await interceptWs(page);
   await openArena(page, token, vehicleId);
-  await page.waitForTimeout(1000);
 
   const stateMsg = messages.find(m => m.includes('"zone_state"'));
   expect(stateMsg).toBeTruthy();
@@ -57,7 +59,7 @@ test('highway zone has NPC traffic vehicles', async ({ page }) => {
   await page.waitForSelector('canvas', { timeout: 10_000 });
   await page.waitForFunction(() => (window as any).game !== undefined, { timeout: 10_000 });
 
-  // Use raw WebSocket from Node in a page.evaluate to join highway zone
+  // Open a raw WebSocket to join highway zone; resolve only after zone_state arrives
   await page.evaluate(async ({ t, v }) => {
     return new Promise<void>((resolve) => {
       const ws = new WebSocket('ws://localhost:3001');
@@ -66,13 +68,14 @@ test('highway zone has NPC traffic vehicles', async ({ page }) => {
       };
       ws.onmessage = (e) => {
         (window as any).recordWsMsg3(e.data);
-        ws.close();
-        resolve();
+        // Only close once we have a zone_state; earlier messages (e.g. ack) are ignored
+        if (e.data.includes('"zone_state"')) {
+          ws.close();
+          resolve();
+        }
       };
     });
   }, { t: token, v: vehicleId });
-
-  await page.waitForTimeout(500);
 
   const stateMsg = messages.find(m => m.includes('"zone_state"'));
   expect(stateMsg).toBeTruthy();
@@ -81,7 +84,7 @@ test('highway zone has NPC traffic vehicles', async ({ page }) => {
   expect(npcVehicles.length).toBeGreaterThanOrEqual(3);
 });
 
-test('arena broadcasts zone_end when all AI destroyed', async ({ page }) => {
+test('arena zone_state includes AI opponents on join', async ({ page }) => {
   const { token } = await registerViaApi(uniqueUser('end1'));
   const vehicleId = await createVehicle(token, 'Arena Destroyer');
   const messages: string[] = [];

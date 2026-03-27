@@ -121,7 +121,15 @@ jobsRouter.get('/', async (req: AuthRequest, res) => {
   if (!zoneId) return res.status(400).json({ error: 'zoneId required' });
 
   const db = getDb();
-  const existing = await db.query(`SELECT id FROM jobs WHERE zone_id = $1 LIMIT 1`, [zoneId]);
+  // Get player division first — needed for both re-seed check and result filtering
+  const pResult = await db.query(`SELECT division FROM players WHERE id = $1`, [req.playerId]);
+  const playerDiv = pResult.rows[0]?.division ?? 5;
+
+  // Re-seed if no jobs are available for this player's division level
+  const existing = await db.query(
+    `SELECT id FROM jobs WHERE zone_id = $1 AND taken_by IS NULL AND completed = FALSE AND division_min <= $2 LIMIT 1`,
+    [zoneId, playerDiv]
+  );
   if (!existing.rows.length && STATIC_JOBS[zoneId]) {
     for (const job of STATIC_JOBS[zoneId]) {
       await db.query(
@@ -130,9 +138,6 @@ jobsRouter.get('/', async (req: AuthRequest, res) => {
       );
     }
   }
-
-  const pResult = await db.query(`SELECT division FROM players WHERE id = $1`, [req.playerId]);
-  const playerDiv = pResult.rows[0]?.division ?? 5;
 
   const result = await db.query(
     `SELECT id, job_type, description, payout, division_min

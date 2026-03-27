@@ -1,9 +1,16 @@
 /**
  * Phase 3 API tests — job take/complete, damage persistence, repair after damage.
  * Pure fetch, no browser needed.
+ *
+ * Job tests are serial: they share the seeded job pool in town-1 (3 jobs).
+ * Running them serially prevents races where two tests compete for the same job.
+ * If all seeded jobs are already taken from a prior run, job tests skip gracefully.
  */
 import { test, expect } from '@playwright/test';
 import { uniqueUser, registerViaApi, createVehicle } from './helpers';
+
+// Run job tests serially to avoid competing for the shared seeded job pool
+test.describe.configure({ mode: 'serial' });
 
 const API = 'http://localhost:3001';
 
@@ -47,7 +54,7 @@ test('job complete awards payout', async () => {
   const jobId = job.id;
   const payout = job.payout;
 
-  // Take then complete
+  // Take then complete; new player starts with $25000
   await fetch(`${API}/api/jobs/${jobId}/take`, {
     method: 'POST',
     headers: { Authorization: `Bearer ${token}` },
@@ -60,6 +67,7 @@ test('job complete awards payout', async () => {
   expect(completeRes.status).toBe(200);
   const body = await completeRes.json();
   expect(body.payout).toBe(payout);
+  // Starting balance is 25000 (defined in DB migrations)
   expect(body.moneyNew).toBe(25000 + payout);
 });
 
@@ -125,5 +133,6 @@ test('prize credits money and adds event history', async () => {
     body: JSON.stringify({ amount: 3000, eventType: 'arena_win', zoneId: 'arena-1' }),
   });
   expect(res.status).toBe(200);
+  // New player starts with $25000 (defined in DB migrations); prize adds $3000
   expect((await res.json()).moneyNew).toBe(28000);
 });
