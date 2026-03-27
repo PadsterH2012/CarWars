@@ -1,6 +1,7 @@
 import express from 'express';
 import cors from 'cors';
 import { authRouter } from './api/auth';
+import { vehiclesRouter } from './api/vehicles';
 import { requireAuth, AuthRequest } from './api/middleware';
 import { getDb } from './db/client';
 
@@ -12,6 +13,7 @@ export function createApp() {
   app.get('/health', (_req, res) => res.json({ ok: true }));
 
   app.use('/api/auth', authRouter);
+  app.use('/api/vehicles', vehiclesRouter);
 
   app.get('/api/me', requireAuth, async (req: AuthRequest, res) => {
     const db = getDb();

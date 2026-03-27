@@ -1,7 +1,45 @@
 import { WebSocketServer, WebSocket } from 'ws';
 import * as http from 'http';
-import type { ClientMessage, ServerMessage, VehicleState } from '@carwars/shared';
+import jwt from 'jsonwebtoken';
+import type { ClientMessage, ServerMessage, VehicleState, VehicleLoadout, DamageState } from '@carwars/shared';
 import { ZoneRunner } from '../world/zone-runner';
+import { getDb } from '../db/client';
+import { deriveStats } from '../rules/vehicle';
+
+const JWT_SECRET = process.env.JWT_SECRET ?? 'dev-secret-change-in-prod';
+
+async function loadVehicleFromDb(vehicleId: string, token: string): Promise<VehicleState | null> {
+  let playerId: string;
+  try {
+    const payload = jwt.verify(token, JWT_SECRET) as { playerId: string };
+    playerId = payload.playerId;
+  } catch {
+    return null;
+  }
+
+  const db = getDb();
+  const result = await db.query(
+    `SELECT id, name, loadout, damage_state FROM vehicles WHERE id = $1 AND player_id = $2`,
+    [vehicleId, playerId]
+  );
+  if (!result.rows.length) return null;
+
+  const row = result.rows[0];
+  const loadout = row.loadout as VehicleLoadout;
+  const damageState = row.damage_state as DamageState;
+  const stats = deriveStats(row.id, row.name, loadout);
+  stats.damageState = damageState;
+
+  return {
+    id: row.id,
+    playerId,
+    driverId: null,
+    position: { x: 0, y: 0 },
+    facing: 0,
+    speed: 0,
+    stats
+  };
+}
 
 function makeTestVehicle(id: string, playerId: string, x: number, y: number, facing = 0): VehicleState {
   return {
@@ -59,7 +97,7 @@ function removeClientFromZone(ws: WebSocket): void {
   }
 }
 
-function handleMessage(ws: WebSocket, raw: string): void {
+async function handleMessage(ws: WebSocket, raw: string): Promise<void> {
   let msg: ClientMessage;
   try {
     msg = JSON.parse(raw) as ClientMessage;
@@ -86,7 +124,15 @@ function handleMessage(ws: WebSocket, raw: string): void {
     // Spawn the player's vehicle if not already in the zone
     const existing = runner.getEngine().getState().vehicles.find(v => v.id === msg.vehicleId);
     if (!existing) {
-      runner.getEngine().addVehicle(makeTestVehicle(msg.vehicleId, 'player', 0, 0, 0));
+      // Try DB hydration first; fall back to test fixture for dev convenience
+      let vehicle: VehicleState | null = null;
+      if (msg.token) {
+        vehicle = await loadVehicleFromDb(msg.vehicleId, msg.token);
+      }
+      if (!vehicle) {
+        vehicle = makeTestVehicle(msg.vehicleId, 'player', 0, 0, 0);
+      }
+      runner.getEngine().addVehicle(vehicle);
     }
     runner.addClient(ws); // sends initial zone_state automatically
     return;
@@ -127,7 +173,7 @@ export function createWsServer(port: number): http.Server {
   const wss = new WebSocketServer({ server: httpServer });
 
   wss.on('connection', (ws) => {
-    ws.on('message', (data) => handleMessage(ws, data.toString()));
+    ws.on('message', (data) => { handleMessage(ws, data.toString()).catch(console.error); });
     ws.on('close', () => removeClientFromZone(ws));
   });
 
@@ -138,7 +184,7 @@ export function createWsServer(port: number): http.Server {
 export function attachWss(server: http.Server): void {
   const wss = new WebSocketServer({ server });
   wss.on('connection', (ws) => {
-    ws.on('message', (data) => handleMessage(ws, data.toString()));
+    ws.on('message', (data) => { handleMessage(ws, data.toString()).catch(console.error); });
     ws.on('close', () => removeClientFromZone(ws));
   });
 }
