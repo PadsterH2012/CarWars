@@ -37,3 +37,23 @@ export function applyHazardCheck(vehicle: VehicleState, input: MovementInput): H
     : 0;
   return { required, difficulty };
 }
+
+export type ManeuverType = 'bend' | 'drift' | 'swerve' | 'controlled_skid' | 'bootlegger' | 'pivot' | 't_stop';
+
+export interface ManeuverResult {
+  type: ManeuverType;
+  dValue: number;  // hazard D-value added to hazard accumulator
+}
+
+/**
+ * Classifies a steering input into a maneuver type with its Compendium D-value.
+ * @param speed Vehicle speed (mph) — reserved for future speed-dependent maneuvers
+ * @param absSteering Absolute value of steering input (0-60 degrees)
+ */
+export function classifyManeuver(speed: number, absSteering: number): ManeuverResult {
+  if (absSteering === 0) return { type: 'bend', dValue: 1 };
+  if (absSteering <= 15) return { type: 'bend', dValue: 1 };
+  if (absSteering <= 30) return { type: 'drift', dValue: 2 };
+  if (absSteering <= 45) return { type: 'swerve', dValue: 3 };
+  return { type: 'controlled_skid', dValue: 3 };
+}

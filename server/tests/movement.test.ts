@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest';
-import { computeMovement, applyHazardCheck } from '../src/rules/movement';
+import { computeMovement, applyHazardCheck, classifyManeuver } from '../src/rules/movement';
+import type { ManeuverType } from '../src/rules/movement';
 import type { VehicleState } from '@carwars/shared';
 
 const baseVehicle: VehicleState = {
@@ -45,5 +46,37 @@ describe('movement', () => {
     const input = { speed: 5, steer: 15 };
     const hazard = applyHazardCheck(baseVehicle, input);
     expect(hazard.required).toBe(false);
+  });
+});
+
+describe('maneuver classifier', () => {
+  it('gentle steer is a bend (D1)', () => {
+    const result = classifyManeuver(10, 15);
+    expect(result.type).toBe('bend');
+    expect(result.dValue).toBe(1);
+  });
+
+  it('moderate steer is a drift (D2)', () => {
+    const result = classifyManeuver(20, 25);
+    expect(result.type).toBe('drift');
+    expect(result.dValue).toBe(2);
+  });
+
+  it('sharp steer is a swerve (D3)', () => {
+    const result = classifyManeuver(30, 40);
+    expect(result.type).toBe('swerve');
+    expect(result.dValue).toBe(3);
+  });
+
+  it('maximum steer is a controlled skid (D3)', () => {
+    const result = classifyManeuver(40, 55);
+    expect(result.type).toBe('controlled_skid');
+    expect(result.dValue).toBe(3);
+  });
+
+  it('no steer at any speed is a bend (D1)', () => {
+    const result = classifyManeuver(60, 0);
+    expect(result.type).toBe('bend');
+    expect(result.dValue).toBe(1);
   });
 });
