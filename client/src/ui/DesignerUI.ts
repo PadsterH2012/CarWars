@@ -20,6 +20,9 @@ export const BODY_TYPES = [
   { id: 'light_cycle',   label: 'Lt Cycle' },
   { id: 'med_cycle',     label: 'Md Cycle' },
   { id: 'hvy_cycle',     label: 'Hvy Cycle' },
+  { id: 'trike',         label: 'Trike' },
+  { id: 'truck',         label: 'Truck' },
+  { id: 'trailer',       label: 'Trailer' },
 ] as const;
 
 export const POWER_PLANTS = [

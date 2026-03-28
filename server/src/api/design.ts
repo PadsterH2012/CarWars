@@ -38,8 +38,8 @@ designRouter.post('/', (req, res) => {
     }
   }
 
-  // tireCount mirrors the rule in deriveStats: cycles have 2 wheels, cars have 4
-  const tireCount = body.isCycle ? 2 : 4;
+  // tireCount mirrors the rule in deriveStats: cycles have 2, cars have 4, trikes have 3
+  const tireCount = body.tireCount ?? (body.isCycle ? 2 : 4);
 
   const loadout = {
     chassisId: 'standard', engineId: 'medium', suspensionId: 'standard',

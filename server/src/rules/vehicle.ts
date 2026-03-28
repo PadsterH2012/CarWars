@@ -42,8 +42,8 @@ export function deriveStats(id: string, name: string, loadout: VehicleLoadout): 
     const tire = TIRES.find(t => t.id === tireTypeName);
     if (!tire) throw new Error(`Unknown tireType: ${tireTypeName}`);
 
-    // Weight = body + plant + tires (cycles have 2, cars have 4)
-    const tireCount = body.isCycle ? 2 : 4;
+    // Weight = body + plant + tires (cycles have 2, cars have 4; tireCount overrides)
+    const tireCount = body.tireCount ?? (body.isCycle ? 2 : 4);
     totalWeight = body.baseWeight + plant.weight + tire.weightPerTire * tireCount;
 
     // Add armor weight
@@ -55,7 +55,7 @@ export function deriveStats(id: string, name: string, loadout: VehicleLoadout): 
     maxSpeed = computeTopSpeed(plant.powerFactors, totalWeight);
 
     // HC from suspension, adjusted by body category
-    const isVanSize = ['van', 'pickup', 'camper'].includes(loadout.bodyType as string);
+    const isVanSize = ['van', 'pickup', 'camper', 'truck', 'trailer'].includes(loadout.bodyType as string);
     const isSub = body.isCycle || loadout.bodyType === 'subcompact';
     handlingClass = isSub ? suspension.subHC : isVanSize ? suspension.vanHC : suspension.carHC;
     handlingClass += tire.hcModifier;

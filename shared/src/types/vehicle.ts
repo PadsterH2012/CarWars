@@ -13,7 +13,8 @@ export interface ArmorDistribution {
 export type BodyType =
   | 'subcompact' | 'compact' | 'mid_sized' | 'sedan' | 'luxury'
   | 'station_wagon' | 'pickup' | 'camper' | 'van'
-  | 'light_cycle' | 'med_cycle' | 'hvy_cycle';
+  | 'light_cycle' | 'med_cycle' | 'hvy_cycle'
+  | 'trike' | 'truck' | 'trailer';
 
 export type ChassisType = 'light' | 'standard' | 'heavy' | 'extra_heavy';
 
