@@ -31,9 +31,15 @@ describe('weapons catalog', () => {
     expect(hr.damageDice).toBe(3);
   });
 
-  it('spikedropper is a dropped weapon with no damage dice', () => {
+  it('spikedropper is in the dropped category with back-arc restriction', () => {
     const sd = WEAPONS.find(w => w.id === 'sd')!;
     expect(sd.category).toBe('dropped');
+    expect(sd.allowedArcs).toEqual(['back']);
+  });
+
+  it('all weapon IDs are unique', () => {
+    const ids = WEAPONS.map(w => w.id);
+    expect(new Set(ids).size).toBe(ids.length);
   });
 });
 

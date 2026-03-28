@@ -10,7 +10,7 @@ export interface WeaponDef {
   toHit: number;           // base target number (2d6 must meet or beat)
   damageDice: number;      // number of d6 to roll
   damageMod: number;       // flat modifier added to damage roll
-  // Legacy flat damage field — kept for backward compat, equals damageDice (average)
+  // Legacy flat damage field — kept for backward compat; for most weapons equals damageDice, for weapons with damageMod it equals damageDice + damageMod
   damage: number;
   dp: number;              // weapon DP before destroyed
   spaces: number;
@@ -24,7 +24,7 @@ export interface WeaponDef {
   burstEffect: boolean;
   areaEffect: boolean;
   powerDrain: number;      // power units per shot (0 for non-lasers)
-  allowedArcs: ArcType[];  // arcs this weapon may be mounted in (empty = all)
+  allowedArcs: ArcType[];  // arcs this weapon may be mounted in; empty array = unrestricted (any arc)
   special?: 'dropped' | 'area' | 'fire';
 }
 

@@ -30,7 +30,7 @@ export const WEAPONS: WeaponDef[] = [
   {
     id: 'gl', name: 'Grenade Launcher', category: 'large_bore',
     toHit: 7, damageDice: 1, damageMod: 2, damage: 2,
-    dp: 2, spaces: 2, weight: 200, cost: 1000, shotsPerMag: 10, ammoWeight: 4, ammoCost: 0,
+    dp: 2, spaces: 2, weight: 200, cost: 1000, shotsPerMag: 10, ammoWeight: 4, ammoCost: 0,  // grenades: cost included in weapon base price
     shortRange: 4, longRange: 8, burstEffect: false, areaEffect: false, powerDrain: 0, allowedArcs: [],
   },
   {
@@ -81,25 +81,29 @@ export const WEAPONS: WeaponDef[] = [
   {
     id: 'll', name: 'Light Laser', category: 'laser',
     toHit: 6, damageDice: 1, damageMod: 0, damage: 1,
-    dp: 2, spaces: 1, weight: 200, cost: 3000, shotsPerMag: 999, ammoWeight: 0, ammoCost: 0,
+    dp: 2, spaces: 1, weight: 200, cost: 3000, shotsPerMag: 999,  // sentinel: power-limited, not ammo-limited
+    ammoWeight: 0, ammoCost: 0,
     shortRange: 8, longRange: 16, burstEffect: false, areaEffect: true, powerDrain: 1, allowedArcs: [],
   },
   {
     id: 'ml', name: 'Medium Laser', category: 'laser',
     toHit: 6, damageDice: 2, damageMod: 0, damage: 2,
-    dp: 2, spaces: 2, weight: 350, cost: 5500, shotsPerMag: 999, ammoWeight: 0, ammoCost: 0,
+    dp: 2, spaces: 2, weight: 350, cost: 5500, shotsPerMag: 999,  // sentinel: power-limited, not ammo-limited
+    ammoWeight: 0, ammoCost: 0,
     shortRange: 10, longRange: 20, burstEffect: false, areaEffect: true, powerDrain: 2, allowedArcs: [],
   },
   {
     id: 'l', name: 'Laser', category: 'laser',
     toHit: 6, damageDice: 3, damageMod: 0, damage: 3,
-    dp: 2, spaces: 2, weight: 500, cost: 8000, shotsPerMag: 999, ammoWeight: 0, ammoCost: 0,
+    dp: 2, spaces: 2, weight: 500, cost: 8000, shotsPerMag: 999,  // sentinel: power-limited, not ammo-limited
+    ammoWeight: 0, ammoCost: 0,
     shortRange: 10, longRange: 20, burstEffect: false, areaEffect: true, powerDrain: 2, allowedArcs: [],
   },
   {
     id: 'hl', name: 'Heavy Laser', category: 'laser',
     toHit: 6, damageDice: 4, damageMod: 0, damage: 4,
-    dp: 2, spaces: 3, weight: 1000, cost: 12000, shotsPerMag: 999, ammoWeight: 0, ammoCost: 0,
+    dp: 2, spaces: 3, weight: 1000, cost: 12000, shotsPerMag: 999,  // sentinel: power-limited, not ammo-limited
+    ammoWeight: 0, ammoCost: 0,
     shortRange: 12, longRange: 24, burstEffect: false, areaEffect: true, powerDrain: 3, allowedArcs: [],
   },
   // ── Flamers ───────────────────────────────────────────────────────────

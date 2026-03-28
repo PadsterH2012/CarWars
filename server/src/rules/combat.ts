@@ -3,8 +3,7 @@ import type { VehicleState, ArmorLocation, ToHitResult, DamageResult, WeaponDef,
 export function getAttackLocation(attacker: VehicleState, target: VehicleState): ArmorLocation {
   const dx = target.position.x - attacker.position.x;
   const dy = target.position.y - attacker.position.y;
-  // Game uses Y-down (positive Y = south); negate dy so atan2 converts correctly
-  const attackAngle = (Math.atan2(-dy, dx) * 180 / Math.PI + 360) % 360;
+  const attackAngle = (Math.atan2(dy, dx) * 180 / Math.PI + 360) % 360;
   const targetMathFacing = (90 - target.facing + 360) % 360;
   const relativeAngle = (attackAngle - targetMathFacing + 360) % 360;
 
@@ -28,8 +27,7 @@ export function isWeaponInArc(attacker: VehicleState, target: VehicleState, moun
 
   const dx = target.position.x - attacker.position.x;
   const dy = target.position.y - attacker.position.y;
-  // Game uses Y-down (positive Y = south); negate dy so atan2 converts correctly
-  const mathAngle = Math.atan2(-dy, dx) * 180 / Math.PI;
+  const mathAngle = Math.atan2(dy, dx) * 180 / Math.PI;
   const gameAngleToTarget = (90 - mathAngle + 360) % 360;
 
   // Angle relative to attacker's facing, in range -180 to +180
@@ -50,6 +48,11 @@ export function resolveToHit(
   weapon: WeaponDef,
   distance: number
 ): ToHitResult {
+  // Dropped weapons are not aimed — they are never resolved through this function
+  if (weapon.category === 'dropped') {
+    return { roll: 0, modifier: 0, hit: false, location: 'front' };
+  }
+
   // Base target number from weapon
   let targetNumber = weapon.toHit;
 
@@ -59,7 +62,7 @@ export function resolveToHit(
   }
   if (distance > weapon.shortRange) targetNumber += 2;
 
-  // Speed differential
+  // Speed differential (Compendium to-hit modifier table: >30 mph diff = +2, >15 mph = +1)
   const speedDiff = Math.abs(attacker.speed - target.speed);
   if (speedDiff > 30) targetNumber += 2;
   else if (speedDiff > 15) targetNumber += 1;
