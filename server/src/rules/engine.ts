@@ -177,7 +177,8 @@ export function createTurnEngine(initialState: ZoneState): TurnEngine {
 
       // Apply fire damage to burning vehicles (Car Wars: 1 armor point per tick from a random facing)
       newVehicles.forEach(vehicle => {
-        if (!vehicle.stats.damageState.onFire) return;
+        const alreadyOnFire = damageUpdates.get(vehicle.id)?.onFire ?? vehicle.stats.damageState.onFire;
+        if (!alreadyOnFire) return;
 
         // For now, fire always burns (future: check fire extinguisher accessory)
         const currentDamage = damageUpdates.get(vehicle.id) ?? { ...vehicle.stats.damageState };
@@ -200,6 +201,12 @@ export function createTurnEngine(initialState: ZoneState): TurnEngine {
           armor: newArmor,
           onFire: true,
         });
+
+        // Check if fire just burned off the last armor point
+        const totalArmor = Object.values(newArmor).reduce((s, v) => s + (v ?? 0), 0);
+        if (totalArmor === 0) {
+          damageUpdates.set(vehicle.id, { ...currentDamage, armor: newArmor, onFire: true, destroyed: true });
+        }
       });
 
       // Apply damage + ammo updates to vehicles

@@ -127,7 +127,33 @@ describe('fire damage tick', () => {
     const after = engine.resolveTick();
     const v = after.vehicles.find(v => v.id === 'v-fire')!;
     const totalArmorAfter = Object.values(v.stats.damageState.armor).reduce((s, n) => s + (n ?? 0), 0);
-    // Started with 4+4+4+4+2+2=20, should have lost at least 1
-    expect(totalArmorAfter).toBeLessThan(20);
+    // Started with 4+4+4+4+2+2=20, exactly 1 armor point lost per tick
+    expect(totalArmorAfter).toBe(19);
+    expect(v.stats.damageState.onFire).toBe(true);
+  });
+
+  it('vehicle with no armor is destroyed by fire', () => {
+    const burnedOutVehicle: VehicleState = {
+      id: 'v-burnout', playerId: 'p1', driverId: 'd1',
+      position: { x: 0, y: 0 }, facing: 0, speed: 0,
+      stats: {
+        id: 'v-burnout', name: 'Burned Out', loadout: {} as any,
+        damageState: {
+          armor: { front: 0, back: 0, left: 0, right: 0, top: 0, underbody: 0 },
+          engineDamaged: false, driverWounded: false, tiresBlown: [], destroyed: false,
+          onFire: true, engineDP: 8, internalDamage: [],
+        },
+        maxSpeed: 15, handlingClass: 3, weight: 3000, acceleration: 5,
+      }
+    };
+    const zoneState: ZoneState = {
+      id: 'zone-1', tick: 0,
+      vehicles: [burnedOutVehicle],
+      hazardObjects: [],
+    };
+    const engine = createTurnEngine(zoneState);
+    const after = engine.resolveTick();
+    const v = after.vehicles.find(v => v.id === 'v-burnout')!;
+    expect(v.stats.damageState.destroyed).toBe(true);
   });
 });
