@@ -166,3 +166,40 @@ describe('combat', () => {
     expect(result.penetrated).toBe(true);
   });
 });
+
+describe('to-hit modifiers', () => {
+  it('adds +2 when driver is wounded', () => {
+    const woundedAttacker = {
+      ...attacker,
+      stats: { ...attacker.stats, damageState: { ...attacker.stats.damageState, driverWounded: true } }
+    };
+    const mg = WEAPONS.find(w => w.id === 'mg')!;
+    // Call many times — check that average modifier is higher
+    let totalMod = 0;
+    for (let i = 0; i < 20; i++) {
+      const res = resolveToHit(woundedAttacker, target, mg, 4);
+      totalMod += res.modifier;
+    }
+    expect(totalMod / 20).toBeGreaterThan(1.5); // driver wounded adds +2
+  });
+
+  it('out-of-range shot always misses', () => {
+    const mg = WEAPONS.find(w => w.id === 'mg')!;
+    const result = resolveToHit(attacker, target, mg, 999);
+    expect(result.hit).toBe(false);
+  });
+
+  it('subcompact target adds +1 to target number', () => {
+    const subcompactTarget = {
+      ...target,
+      stats: {
+        ...target.stats,
+        loadout: { ...target.stats.loadout, bodyType: 'subcompact' as const }
+      }
+    };
+    const mg = WEAPONS.find(w => w.id === 'mg')!;
+    const result = resolveToHit(attacker, subcompactTarget, mg, 4);
+    // modifier should be at least 1 (subcompact bonus)
+    expect(result.modifier).toBeGreaterThanOrEqual(1);
+  });
+});

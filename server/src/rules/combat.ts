@@ -62,10 +62,21 @@ export function resolveToHit(
   }
   if (distance > weapon.shortRange) targetNumber += 2;
 
+  // Target speed modifier (Compendium: target moving > 60 mph = +1)
+  if (target.speed > 60) targetNumber += 1;
+
   // Speed differential (Compendium to-hit modifier table: >30 mph diff = +2, >15 mph = +1)
   const speedDiff = Math.abs(attacker.speed - target.speed);
   if (speedDiff > 30) targetNumber += 2;
   else if (speedDiff > 15) targetNumber += 1;
+
+  // Target size modifier (Compendium: subcompact/cycle = +1, van/pickup/camper = -1)
+  const targetBody = target.stats.loadout?.bodyType;
+  if (targetBody === 'subcompact' || targetBody === 'light_cycle' || targetBody === 'med_cycle' || targetBody === 'hvy_cycle') {
+    targetNumber += 1;
+  } else if (['van', 'pickup', 'camper'].includes(targetBody ?? '')) {
+    targetNumber -= 1;
+  }
 
   if (attacker.stats.damageState.driverWounded) targetNumber += 2;
 
