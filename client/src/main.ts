@@ -16,4 +16,4 @@ const config: Phaser.Types.Core.GameConfig = {
   scene: [LoginScene, GarageScene, TownScene, JobBoardScene, VehicleDesignerScene, ArenaScene]
 };
 
-new Phaser.Game(config);
+(window as any).game = new Phaser.Game(config);

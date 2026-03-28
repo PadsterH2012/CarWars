@@ -6,8 +6,8 @@ export interface AiInput {
   fireWeapon: string | null;
 }
 
-const OPTIMAL_RANGE = 8;   // inches — ideal engagement distance
-const FIRE_RANGE = 12;     // inches — max range to fire
+const OPTIMAL_RANGE = 12;  // inches — ideal engagement distance
+const FIRE_RANGE = 16;     // inches — max range to fire
 const MAX_TURN = 30;       // degrees — max steer per tick
 
 // Select first front-arc weapon with ammo
@@ -47,8 +47,8 @@ export function computeAiInput(
   const dist = Math.sqrt(dx * dx + dy * dy);
 
   // Desired heading toward target in game degrees (north=0, clockwise)
-  // atan2 returns math angle (east=0, counter-clockwise) — convert to game angle
-  const mathAngle = Math.atan2(dy, dx) * 180 / Math.PI;
+  // Physics uses Y-down (positive Y = south). atan2 assumes Y-up, so negate dy to compensate.
+  const mathAngle = Math.atan2(-dy, dx) * 180 / Math.PI;
   const desiredFacing = (90 - mathAngle + 360) % 360;
 
   // Compute shortest turn from current facing to desired facing
@@ -58,7 +58,7 @@ export function computeAiInput(
   // Speed: close to optimal range
   let speed: number;
   if (dist > OPTIMAL_RANGE + 2) {
-    speed = Math.min(self.stats.maxSpeed, self.speed + 5);
+    speed = self.stats.maxSpeed; // snap to full speed when chasing — gradual accel lets player escape
   } else if (dist < OPTIMAL_RANGE - 2) {
     speed = Math.max(0, self.speed - 5);
   } else {

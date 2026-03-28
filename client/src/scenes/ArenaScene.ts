@@ -19,6 +19,7 @@ export class ArenaScene extends Phaser.Scene {
   private lastInputSent = 0;
   private zoneEnded = false;
   private firePending = false;
+  private minimapGfx!: Phaser.GameObjects.Graphics;
 
   constructor() {
     super({ key: 'ArenaScene' });
@@ -68,6 +69,12 @@ export class ArenaScene extends Phaser.Scene {
       fontSize: '12px',
       fontFamily: 'monospace'
     }).setScrollFactor(0);
+
+    this.minimapGfx = this.add.graphics().setScrollFactor(0).setDepth(20);
+    // Minimap label
+    this.add.text(1144, 4, 'MAP', {
+      fontSize: '9px', color: '#666666', fontFamily: 'monospace'
+    }).setScrollFactor(0).setDepth(20);
 
     const wsHost = window.location.hostname;
     this.connection = new Connection(`ws://${wsHost}:3001`);
@@ -185,6 +192,31 @@ export class ArenaScene extends Phaser.Scene {
     });
 
     this.syncHazards(state);
+    this.drawMinimap(state);
+  }
+
+  private drawMinimap(state: ZoneState): void {
+    const MM_X = 1144, MM_Y = 16, MM_SIZE = 120, MM_SCALE = 3;
+    const gfx = this.minimapGfx;
+    gfx.clear();
+
+    // Background + border
+    gfx.fillStyle(0x000000, 0.65);
+    gfx.fillRect(MM_X, MM_Y, MM_SIZE, MM_SIZE);
+    gfx.lineStyle(1, 0x444466, 1);
+    gfx.strokeRect(MM_X, MM_Y, MM_SIZE, MM_SIZE);
+
+    const cx = MM_X + MM_SIZE / 2;
+    const cy = MM_Y + MM_SIZE / 2;
+
+    state.vehicles.forEach(v => {
+      const isPlayer = v.id === this.myVehicleId;
+      const color = isPlayer ? 0x00ff88 : (v.playerId === 'ai-team' ? 0xff4444 : 0xffaa00);
+      const dotX = Math.max(MM_X + 2, Math.min(MM_X + MM_SIZE - 2, cx + v.position.x * MM_SCALE));
+      const dotY = Math.max(MM_Y + 2, Math.min(MM_Y + MM_SIZE - 2, cy + v.position.y * MM_SCALE));
+      gfx.fillStyle(color, 1);
+      gfx.fillCircle(dotX, dotY, isPlayer ? 4 : 3);
+    });
   }
 
   private syncHazards(state: ZoneState): void {
@@ -243,19 +275,48 @@ export class ArenaScene extends Phaser.Scene {
     this.firePending = false;
 
     if (fireWeapon) {
-      // Muzzle flash: bright line in facing direction from the vehicle's nose
       const myVehicle = this.zoneState.vehicles.find(v => v.id === this.myVehicleId);
       const mySprite = this.vehicleSprites.get(this.myVehicleId);
       if (myVehicle && mySprite) {
-        // facing 0 = north = screen up = math angle -90°
+        const PIXELS_PER_INCH = 32;
+        const FIRE_RANGE_PX = 16 * PIXELS_PER_INCH; // matches server FIRE_RANGE
         const rad = Phaser.Math.DegToRad(myVehicle.facing - 90);
-        const flash = this.add.line(
-          mySprite.x, mySprite.y,
-          0, 0,
-          Math.cos(rad) * 80, Math.sin(rad) * 80,
-          0xffff00
-        ).setLineWidth(3).setDepth(5);
-        this.time.delayedCall(120, () => flash.destroy());
+        const facingDx = Math.cos(rad);
+        const facingDy = Math.sin(rad);
+
+        // Find closest enemy in front arc (within ±45° and fire range)
+        let tracerEndX = facingDx * FIRE_RANGE_PX;
+        let tracerEndY = facingDy * FIRE_RANGE_PX;
+        let hitTarget = false;
+
+        const enemies = this.zoneState.vehicles.filter(v => v.id !== this.myVehicleId);
+        let closestDist = Infinity;
+        for (const enemy of enemies) {
+          const eSprite = this.vehicleSprites.get(enemy.id);
+          if (!eSprite) continue;
+          const ex = eSprite.x - mySprite.x;
+          const ey = eSprite.y - mySprite.y;
+          const dist = Math.sqrt(ex * ex + ey * ey);
+          if (dist > FIRE_RANGE_PX || dist === 0) continue;
+          // Angle between facing direction and direction to enemy
+          const dot = (ex / dist) * facingDx + (ey / dist) * facingDy;
+          if (dot < Math.cos(Phaser.Math.DegToRad(45))) continue; // outside ±45° arc
+          if (dist < closestDist) {
+            closestDist = dist;
+            tracerEndX = ex;
+            tracerEndY = ey;
+            hitTarget = true;
+          }
+        }
+
+        const color = hitTarget ? 0xff4400 : 0xffff00;
+        const flash = this.add.graphics().setDepth(5);
+        flash.lineStyle(hitTarget ? 2 : 1, color, 1);
+        flash.beginPath();
+        flash.moveTo(mySprite.x, mySprite.y);
+        flash.lineTo(mySprite.x + tracerEndX, mySprite.y + tracerEndY);
+        flash.strokePath();
+        this.time.delayedCall(150, () => flash.destroy());
       }
     }
 

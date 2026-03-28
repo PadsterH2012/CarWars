@@ -44,7 +44,7 @@ async function loadVehicleFromDb(vehicleId: string, token: string): Promise<{ ve
   };
 }
 
-function makeTestVehicle(id: string, playerId: string, x: number, y: number, facing = 0): VehicleState {
+function makeTestVehicle(id: string, playerId: string, x: number, y: number, facing = 0, maxSpeed = 15): VehicleState {
   return {
     id, playerId, driverId: `driver_${id}`,
     position: { x, y }, facing, speed: 0,
@@ -62,7 +62,7 @@ function makeTestVehicle(id: string, playerId: string, x: number, y: number, fac
         armor: { front: 6, back: 4, left: 4, right: 4, top: 2, underbody: 2 },
         engineDamaged: false, driverWounded: false, tiresBlown: [], destroyed: false
       },
-      maxSpeed: 15, handlingClass: 3, weight: 3000
+      maxSpeed, handlingClass: 3, weight: 3000
     }
   };
 }
@@ -161,8 +161,8 @@ async function handleMessage(ws: WebSocket, raw: string): Promise<void> {
       } : {});
 
       if (isArena) {
-        runner.getEngine().addVehicle(makeTestVehicle('ai-red', 'ai-team', -8, -6, 90));
-        runner.getEngine().addVehicle(makeTestVehicle('ai-blue', 'ai-team', 8, 6, 270));
+        runner.getEngine().addVehicle(makeTestVehicle('ai-red', 'ai-team', -5, -4, 135, 20));
+        runner.getEngine().addVehicle(makeTestVehicle('ai-blue', 'ai-team', 5, 4, 315, 20));
       } else if (isHighway) {
         runner.getEngine().addVehicle(makeTestVehicle('npc-1', 'npc-traffic', -5, -10, 0));
         runner.getEngine().addVehicle(makeTestVehicle('npc-2', 'npc-traffic', 5, 0, 0));

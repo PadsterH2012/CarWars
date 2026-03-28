@@ -1,5 +1,12 @@
 {
   "name": "carwars",
   "private": true,
-  "workspaces": ["client", "server", "shared"]
+  "workspaces": [
+    "client",
+    "server",
+    "shared"
+  ],
+  "devDependencies": {
+    "@playwright/test": "^1.58.2"
+  }
 }
