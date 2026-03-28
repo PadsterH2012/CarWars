@@ -17,12 +17,17 @@ export function roll2d6(): number {
   return Math.floor(Math.random() * 6) + 1 + Math.floor(Math.random() * 6) + 1;
 }
 
+/**
+ * Roll dice damage: sum of `dice` d6 rolls plus `mod` flat modifier.
+ * Returns at minimum 1 — damage is always at least 1 point.
+ * Pass dice=0 for modifier-only weapons; result is Math.max(1, mod).
+ */
 export function rollDamage(dice: number, mod: number): number {
   let total = mod;
   for (let i = 0; i < dice; i++) {
     total += Math.floor(Math.random() * 6) + 1;
   }
-  return Math.max(1, total); // minimum 1 damage
+  return Math.max(1, total); // Car Wars rule: minimum damage is always 1, regardless of modifiers
 }
 
 /**

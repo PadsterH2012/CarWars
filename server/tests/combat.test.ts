@@ -242,6 +242,12 @@ describe('dice-based damage', () => {
       expect(d).toBeLessThanOrEqual(4);
     }
   });
+
+  it('rollDamage with zero dice returns at least 1', () => {
+    // Zero-dice weapons use modifier only; clamp ensures minimum 1
+    expect(rollDamage(0, 0)).toBe(1);
+    expect(rollDamage(0, 5)).toBe(5);
+  });
 });
 
 describe('vehicular fire on armor breach', () => {
@@ -263,5 +269,48 @@ describe('vehicular fire on armor breach', () => {
       if (result.effects.includes('on_fire')) fireCount++;
     }
     expect(fireCount).toBeGreaterThan(0);
+  });
+
+  it('fire effect is absent when armor is not breached', () => {
+    const toughTarget = {
+      ...target,
+      stats: {
+        ...target.stats,
+        damageState: {
+          ...target.stats.damageState,
+          armor: { front: 100, back: 0, left: 0, right: 0, top: 0, underbody: 0 }
+        }
+      }
+    };
+    // 5 damage vs 100 armor: no breach, no fire
+    const result = resolveDamage(toughTarget, 'front', 5);
+    expect(result.penetrated).toBe(false);
+    expect(result.effects).not.toContain('on_fire');
+    expect(result.effects).not.toContain('explosion');
+  });
+
+  it('explosion effect co-occurs with on_fire on fire roll of 6', () => {
+    // Run many times on a guaranteed breach — explosion should occur at least once
+    const fragileTarget = {
+      ...target,
+      stats: {
+        ...target.stats,
+        damageState: {
+          ...target.stats.damageState,
+          armor: { front: 1, back: 0, left: 0, right: 0, top: 0, underbody: 0 }
+        }
+      }
+    };
+    let explosionCount = 0;
+    for (let i = 0; i < 200; i++) {
+      const result = resolveDamage(fragileTarget, 'front', 5);
+      if (result.effects.includes('explosion')) {
+        explosionCount++;
+        // When explosion occurs, on_fire must also be present
+        expect(result.effects).toContain('on_fire');
+      }
+    }
+    // ~16.7% chance of explosion on each breach; expect at least some in 200 trials
+    expect(explosionCount).toBeGreaterThan(0);
   });
 });

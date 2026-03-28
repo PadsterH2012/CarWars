@@ -105,6 +105,7 @@ export function createTurnEngine(initialState: ZoneState): TurnEngine {
           const toHit = resolveToHit(attacker, target, weapon, distance);
           if (!toHit.hit) return;
 
+          // damageDice === 0 means fixed-damage weapon (e.g. legacy entries); fall back to flat damage field
           const rolledDamage = weapon.damageDice > 0 ? rollDamage(weapon.damageDice, weapon.damageMod) : (weapon.damage ?? 1);
           const damageResult = resolveDamage(target, toHit.location, rolledDamage);
           const currentDamage = damageUpdates.get(target.id) ?? { ...target.stats.damageState };
