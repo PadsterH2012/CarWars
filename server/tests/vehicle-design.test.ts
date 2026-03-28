@@ -2,6 +2,7 @@ import { describe, it, expect } from 'vitest';
 
 // These types must exist in @carwars/shared after this task
 import type { VehicleLoadout, DamageState } from '@carwars/shared';
+import { deriveStats } from '../src/rules/vehicle';
 import { BODIES } from '../src/rules/data/bodies';
 import { POWER_PLANTS } from '../src/rules/data/power-plants';
 import { SUSPENSIONS } from '../src/rules/data/suspensions';
@@ -94,5 +95,64 @@ describe('tires catalog', () => {
   it('standard tire has 4 DP', () => {
     const std = TIRES.find(t => t.id === 'standard')!;
     expect(std.dp).toBe(4);
+  });
+});
+
+function makeMidSizedLoadout(): VehicleLoadout {
+  return {
+    // Legacy fields kept for compat
+    chassisId: 'mid', engineId: 'medium', suspensionId: 'standard',
+    tires: [
+      { id: 't0', blown: false }, { id: 't1', blown: false },
+      { id: 't2', blown: false }, { id: 't3', blown: false },
+    ],
+    mounts: [],
+    armor: { front: 4, back: 2, left: 2, right: 2, top: 1, underbody: 1 },
+    totalCost: 5000,
+    // New Compendium fields
+    bodyType: 'mid_sized',
+    chassisType: 'standard',
+    suspensionType: 'standard',
+    tireType: 'standard',
+    armorType: 'ablative',
+    powerPlantType: 'medium',
+  };
+}
+
+describe('deriveStats with Compendium fields', () => {
+  it('computes maxSpeed using power factor formula', () => {
+    const stats = deriveStats('v1', 'TestCar', makeMidSizedLoadout());
+    expect(stats.maxSpeed).toBeGreaterThan(100);
+    expect(stats.maxSpeed).toBeLessThan(200);
+  });
+
+  it('derives HC from suspension type', () => {
+    // standard suspension for mid-sized car = HC 2
+    const stats = deriveStats('v1', 'TestCar', makeMidSizedLoadout());
+    expect(stats.handlingClass).toBe(2);
+  });
+
+  it('computes acceleration from power factors vs weight', () => {
+    const stats = deriveStats('v1', 'TestCar', makeMidSizedLoadout());
+    // mid_sized body(1600) + medium plant(700) + 4 standard tires(30*4=120) + armor weight
+    // armor: front(4)+back(2)+left(2)+right(2)+top(1)+underbody(1)=12 pts × 8 lbs/pt = 96
+    // total ≈ 2516 lbs
+    // PF=1400, weight≈2516 → PF(1400) >= weight/2(1258) but PF < weight → acceleration=10
+    expect(stats.acceleration).toBe(10);
+  });
+
+  it('falls back to legacy engine lookup when bodyType is absent', () => {
+    const legacyLoadout: VehicleLoadout = {
+      chassisId: 'mid', engineId: 'medium', suspensionId: 'standard',
+      tires: [{ id: 't0', blown: false }, { id: 't1', blown: false },
+               { id: 't2', blown: false }, { id: 't3', blown: false }],
+      mounts: [],
+      armor: { front: 4, back: 2, left: 2, right: 2, top: 1, underbody: 1 },
+      totalCost: 5000,
+    };
+    // Should not throw — uses legacy path
+    const stats = deriveStats('v1', 'LegacyCar', legacyLoadout);
+    expect(stats.maxSpeed).toBeGreaterThan(0);
+    expect(stats.acceleration).toBe(5); // legacy default
   });
 });
