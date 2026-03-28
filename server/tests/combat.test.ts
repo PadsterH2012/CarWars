@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { resolveToHit, resolveDamage, getAttackLocation, isWeaponInArc } from '../src/rules/combat';
+import { resolveToHit, resolveDamage, getAttackLocation, isWeaponInArc, rollDamage } from '../src/rules/combat';
 import type { VehicleState, WeaponMount } from '@carwars/shared';
 import { WEAPONS } from '../src/rules/data/weapons';
 
@@ -222,5 +222,46 @@ describe('to-hit modifiers', () => {
     // But attacker not wounded, within short range → modifier = 3
     const result = resolveToHit(attacker, fastTarget, mg, 4);
     expect(result.modifier).toBe(3);
+  });
+});
+
+describe('dice-based damage', () => {
+  it('rollDamage for 3d6 returns value between 3 and 18', () => {
+    for (let i = 0; i < 50; i++) {
+      const d = rollDamage(3, 0);
+      expect(d).toBeGreaterThanOrEqual(3);
+      expect(d).toBeLessThanOrEqual(18);
+    }
+  });
+
+  it('rollDamage with negative modifier is clamped to minimum 1', () => {
+    // 1d6 - 2: min 1 (clamped), max 4
+    for (let i = 0; i < 50; i++) {
+      const d = rollDamage(1, -2);
+      expect(d).toBeGreaterThanOrEqual(1);
+      expect(d).toBeLessThanOrEqual(4);
+    }
+  });
+});
+
+describe('vehicular fire on armor breach', () => {
+  it('returns onFire effect when fire roll triggers', () => {
+    const fragileTarget = {
+      ...target,
+      stats: {
+        ...target.stats,
+        damageState: {
+          ...target.stats.damageState,
+          armor: { front: 1, back: 0, left: 0, right: 0, top: 0, underbody: 0 }
+        }
+      }
+    };
+    // Fire 100 times with 5 damage — always breaches, fire triggers on 5-6 of d6 (~33%)
+    let fireCount = 0;
+    for (let i = 0; i < 100; i++) {
+      const result = resolveDamage(fragileTarget, 'front', 5);
+      if (result.effects.includes('on_fire')) fireCount++;
+    }
+    expect(fireCount).toBeGreaterThan(0);
   });
 });

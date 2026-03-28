@@ -1,6 +1,6 @@
 import type { ZoneState, VehicleState, HazardObject, DamageState } from '@carwars/shared';
 import { computeMovement, applyHazardCheck } from './movement';
-import { resolveToHit, resolveDamage, isWeaponInArc, roll2d6 } from './combat';
+import { resolveToHit, resolveDamage, isWeaponInArc, roll2d6, rollDamage } from './combat';
 import { WEAPONS } from './data/weapons';
 
 interface VehicleInput {
@@ -105,7 +105,8 @@ export function createTurnEngine(initialState: ZoneState): TurnEngine {
           const toHit = resolveToHit(attacker, target, weapon, distance);
           if (!toHit.hit) return;
 
-          const damageResult = resolveDamage(target, toHit.location, weapon.damage);
+          const rolledDamage = weapon.damageDice > 0 ? rollDamage(weapon.damageDice, weapon.damageMod) : (weapon.damage ?? 1);
+          const damageResult = resolveDamage(target, toHit.location, rolledDamage);
           const currentDamage = damageUpdates.get(target.id) ?? { ...target.stats.damageState };
           const newArmor = { ...currentDamage.armor };
           newArmor[toHit.location] = Math.max(0, (newArmor[toHit.location] ?? 0) - damageResult.damageDealt);
@@ -119,6 +120,7 @@ export function createTurnEngine(initialState: ZoneState): TurnEngine {
             engineDamaged: currentDamage.engineDamaged || damageResult.effects.includes('engine_hit'),
             driverWounded: currentDamage.driverWounded || damageResult.effects.includes('driver_wounded'),
             destroyed: currentDamage.destroyed || damageResult.effects.includes('destroyed'),
+            onFire: (currentDamage.onFire ?? false) || damageResult.effects.includes('on_fire'),
             tiresBlown: damageResult.effects.includes('tire_blown') && !currentDamage.tiresBlown.includes(tireIndex)
               ? [...currentDamage.tiresBlown, tireIndex]
               : currentDamage.tiresBlown

@@ -17,6 +17,14 @@ export function roll2d6(): number {
   return Math.floor(Math.random() * 6) + 1 + Math.floor(Math.random() * 6) + 1;
 }
 
+export function rollDamage(dice: number, mod: number): number {
+  let total = mod;
+  for (let i = 0; i < dice; i++) {
+    total += Math.floor(Math.random() * 6) + 1;
+  }
+  return Math.max(1, total); // minimum 1 damage
+}
+
 /**
  * Returns whether a target is within the weapon mount's firing arc.
  * Arc angles are relative to the attacker's facing direction.
@@ -100,10 +108,18 @@ export function resolveDamage(
   const effects: string[] = [];
 
   if (penetrated) {
+    const excess = Math.abs(remaining);
+
+    // Internal component damage by facing
     if (location === 'front' || location === 'back') effects.push('engine_hit');
     if (location === 'left' || location === 'right') effects.push('tire_blown');
-    if (remaining < -3) effects.push('driver_wounded');
-    if (remaining < -6) effects.push('destroyed');
+    if (excess > 3) effects.push('driver_wounded');
+    if (excess > 6) effects.push('destroyed');
+
+    // Vehicular fire table (1d6): 5 = fire, 6 = fire + explosion
+    const fireRoll = Math.floor(Math.random() * 6) + 1;
+    if (fireRoll === 5) effects.push('on_fire');
+    if (fireRoll === 6) effects.push('on_fire', 'explosion');
   }
 
   return {
