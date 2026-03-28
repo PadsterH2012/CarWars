@@ -1,4 +1,6 @@
 import { describe, it, expect } from 'vitest';
+import request from 'supertest';
+import { createApp } from '../src/app';
 
 // These types must exist in @carwars/shared after this task
 import type { VehicleLoadout, DamageState } from '@carwars/shared';
@@ -214,5 +216,34 @@ describe('deriveStats with Compendium fields', () => {
     };
     const stats = deriveStats('v1', 'Rocket', overpoweredLoadout);
     expect(stats.acceleration).toBe(15);
+  });
+});
+
+describe('POST /api/vehicles/design', () => {
+  const app = createApp();
+
+  it('returns derived stats for a valid loadout spec', async () => {
+    const res = await request(app).post('/api/vehicles/design').send({
+      bodyType: 'mid_sized',
+      chassisType: 'standard',
+      suspensionType: 'standard',
+      powerPlantType: 'medium',
+      tireType: 'standard',
+      armorType: 'ablative',
+      armor: { front: 4, back: 2, left: 2, right: 2, top: 1, underbody: 1 },
+    });
+    expect(res.status).toBe(200);
+    expect(res.body).toHaveProperty('maxSpeed');
+    expect(res.body).toHaveProperty('handlingClass');
+    expect(res.body).toHaveProperty('acceleration');
+    expect(res.body).toHaveProperty('totalWeight');
+    expect(res.body).toHaveProperty('totalCost');
+  });
+
+  it('returns 400 if bodyType is missing', async () => {
+    const res = await request(app).post('/api/vehicles/design').send({
+      powerPlantType: 'medium',
+    });
+    expect(res.status).toBe(400);
   });
 });

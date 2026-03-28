@@ -6,6 +6,7 @@ import { driversRouter } from './api/drivers';
 import { economyRouter, jobsRouter } from './api/economy';
 import { divisionRouter } from './api/division';
 import { zonesRouter } from './api/zones';
+import { designRouter } from './api/design';
 import { requireAuth, AuthRequest } from './api/middleware';
 import { getDb } from './db/client';
 
@@ -17,6 +18,7 @@ export function createApp() {
   app.get('/health', (_req, res) => res.json({ ok: true }));
 
   app.use('/api/auth', authRouter);
+  app.use('/api/vehicles/design', designRouter);
   app.use('/api/vehicles', vehiclesRouter);
   app.use('/api/drivers', driversRouter);
   app.use('/api/economy', economyRouter);

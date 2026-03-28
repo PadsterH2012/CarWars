@@ -1,0 +1,63 @@
+import { Router } from 'express';
+import type { BodyType, ChassisType, SuspensionType, TireType, ArmorType, PowerPlantType, ArmorDistribution } from '@carwars/shared';
+import { BODIES } from '../rules/data/bodies';
+import { POWER_PLANTS } from '../rules/data/power-plants';
+import { SUSPENSIONS } from '../rules/data/suspensions';
+import { TIRES } from '../rules/data/tires';
+import { deriveStats } from '../rules/vehicle';
+
+export const designRouter = Router();
+
+designRouter.post('/', (req, res) => {
+  const { bodyType, chassisType, suspensionType, powerPlantType, tireType, armorType, armor } = req.body;
+
+  if (!bodyType || !powerPlantType) {
+    return res.status(400).json({ error: 'bodyType and powerPlantType are required' });
+  }
+
+  const body = BODIES.find(b => b.id === bodyType);
+  if (!body) return res.status(400).json({ error: `Unknown bodyType: ${bodyType}` });
+
+  const plant = POWER_PLANTS.find(p => p.id === powerPlantType);
+  if (!plant) return res.status(400).json({ error: `Unknown powerPlantType: ${powerPlantType}` });
+
+  const susp = SUSPENSIONS.find(s => s.id === (suspensionType ?? 'standard'));
+  if (!susp) return res.status(400).json({ error: `Unknown suspensionType: ${suspensionType}` });
+
+  const tire = TIRES.find(t => t.id === (tireType ?? 'standard'));
+  if (!tire) return res.status(400).json({ error: `Unknown tireType: ${tireType}` });
+
+  const armorDist: ArmorDistribution = armor ?? { front: 0, back: 0, left: 0, right: 0, top: 0, underbody: 0 };
+  const tireCount = body.isCycle ? 2 : 4;
+
+  const loadout = {
+    chassisId: 'standard', engineId: 'medium', suspensionId: 'standard',
+    tires: Array.from({ length: tireCount }, (_, i) => ({ id: `t${i}`, blown: false })),
+    mounts: [],
+    armor: armorDist,
+    totalCost: 0,
+    bodyType: bodyType as BodyType,
+    chassisType: (chassisType ?? 'standard') as ChassisType,
+    suspensionType: (suspensionType ?? 'standard') as SuspensionType,
+    tireType: (tireType ?? 'standard') as TireType,
+    armorType: (armorType ?? 'ablative') as ArmorType,
+    powerPlantType: powerPlantType as PowerPlantType,
+  };
+
+  try {
+    const stats = deriveStats('design-preview', 'Preview', loadout);
+
+    const armorPts = Object.values(armorDist).reduce((s, v) => s + (v as number), 0);
+    const totalCost = body.price + plant.cost + tire.costPerTire * tireCount + armorPts * body.armorCostPerPt;
+
+    return res.json({
+      maxSpeed: stats.maxSpeed,
+      acceleration: stats.acceleration,
+      handlingClass: stats.handlingClass,
+      totalWeight: stats.weight,
+      totalCost,
+    });
+  } catch (e: any) {
+    return res.status(400).json({ error: e.message });
+  }
+});
