@@ -242,6 +242,23 @@ export class ArenaScene extends Phaser.Scene {
     const fireWeapon = this.firePending ? 'mg' : null;
     this.firePending = false;
 
+    if (fireWeapon) {
+      // Muzzle flash: bright line in facing direction from the vehicle's nose
+      const myVehicle = this.zoneState.vehicles.find(v => v.id === this.myVehicleId);
+      const mySprite = this.vehicleSprites.get(this.myVehicleId);
+      if (myVehicle && mySprite) {
+        // facing 0 = north = screen up = math angle -90°
+        const rad = Phaser.Math.DegToRad(myVehicle.facing - 90);
+        const flash = this.add.line(
+          mySprite.x, mySprite.y,
+          0, 0,
+          Math.cos(rad) * 80, Math.sin(rad) * 80,
+          0xffff00
+        ).setLineWidth(3).setDepth(5);
+        this.time.delayedCall(120, () => flash.destroy());
+      }
+    }
+
     this.connection.send({
       type: 'input',
       tick: this.zoneState.tick,
