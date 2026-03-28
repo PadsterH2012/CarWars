@@ -540,11 +540,8 @@ export class VehicleDesignerScene extends Phaser.Scene {
 
   private async refreshStats(): Promise<void> {
     const reqId = ++this.statsReqId;
-    this.statsSpeedText.setText('Max Speed:  Calculating...');
-    this.statsAccelText.setText('Accel:      ...');
-    this.statsHcText.setText('HC:         ...');
-    this.statsWeightText.setText('Weight:     ...');
-    this.statsCostText.setText('Cost:       ...');
+    // Don't wipe existing values — show a subtle indicator instead so stats remain readable
+    this.statusText.setColor('#555577').setText('Updating...');
 
     try {
       const host = window.location.hostname;
