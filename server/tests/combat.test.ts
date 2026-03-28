@@ -3,6 +3,40 @@ import { resolveToHit, resolveDamage, getAttackLocation, isWeaponInArc } from '.
 import type { VehicleState, WeaponMount } from '@carwars/shared';
 import { WEAPONS } from '../src/rules/data/weapons';
 
+describe('weapons catalog', () => {
+  it('machine gun has correct Compendium stats', () => {
+    const mg = WEAPONS.find(w => w.id === 'mg')!;
+    expect(mg.toHit).toBe(7);
+    expect(mg.damageDice).toBe(1);
+    expect(mg.damageMod).toBe(0);
+    expect(mg.spaces).toBe(1);
+    expect(mg.shotsPerMag).toBe(20);
+  });
+
+  it('vulcan MG has 2d damage', () => {
+    const vmg = WEAPONS.find(w => w.id === 'vmg')!;
+    expect(vmg.toHit).toBe(6);
+    expect(vmg.damageDice).toBe(2);
+  });
+
+  it('medium laser drains 2 power units', () => {
+    const ml = WEAPONS.find(w => w.id === 'ml')!;
+    expect(ml.powerDrain).toBe(2);
+    expect(ml.damageDice).toBe(2);
+  });
+
+  it('heavy rocket has to-hit 9', () => {
+    const hr = WEAPONS.find(w => w.id === 'hr')!;
+    expect(hr.toHit).toBe(9);
+    expect(hr.damageDice).toBe(3);
+  });
+
+  it('spikedropper is a dropped weapon with no damage dice', () => {
+    const sd = WEAPONS.find(w => w.id === 'sd')!;
+    expect(sd.category).toBe('dropped');
+  });
+});
+
 const attacker: VehicleState = {
   id: 'a1', playerId: 'p1', driverId: 'd1',
   position: { x: 0, y: 0 }, facing: 0, speed: 10,

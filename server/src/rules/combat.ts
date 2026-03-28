@@ -3,7 +3,8 @@ import type { VehicleState, ArmorLocation, ToHitResult, DamageResult, WeaponDef,
 export function getAttackLocation(attacker: VehicleState, target: VehicleState): ArmorLocation {
   const dx = target.position.x - attacker.position.x;
   const dy = target.position.y - attacker.position.y;
-  const attackAngle = (Math.atan2(dy, dx) * 180 / Math.PI + 360) % 360;
+  // Game uses Y-down (positive Y = south); negate dy so atan2 converts correctly
+  const attackAngle = (Math.atan2(-dy, dx) * 180 / Math.PI + 360) % 360;
   const targetMathFacing = (90 - target.facing + 360) % 360;
   const relativeAngle = (attackAngle - targetMathFacing + 360) % 360;
 
@@ -27,7 +28,8 @@ export function isWeaponInArc(attacker: VehicleState, target: VehicleState, moun
 
   const dx = target.position.x - attacker.position.x;
   const dy = target.position.y - attacker.position.y;
-  const mathAngle = Math.atan2(dy, dx) * 180 / Math.PI;
+  // Game uses Y-down (positive Y = south); negate dy so atan2 converts correctly
+  const mathAngle = Math.atan2(-dy, dx) * 180 / Math.PI;
   const gameAngleToTarget = (90 - mathAngle + 360) % 360;
 
   // Angle relative to attacker's facing, in range -180 to +180
@@ -48,11 +50,19 @@ export function resolveToHit(
   weapon: WeaponDef,
   distance: number
 ): ToHitResult {
-  let targetNumber = distance <= weapon.shortRange ? 7 : 9;
+  // Base target number from weapon
+  let targetNumber = weapon.toHit;
 
+  // Out of range — automatic miss
+  if (distance > weapon.longRange) {
+    return { roll: 0, modifier: 99, hit: false, location: 'front' };
+  }
+  if (distance > weapon.shortRange) targetNumber += 2;
+
+  // Speed differential
   const speedDiff = Math.abs(attacker.speed - target.speed);
-  if (speedDiff > 15) targetNumber += 2;
-  else if (speedDiff > 5) targetNumber += 1;
+  if (speedDiff > 30) targetNumber += 2;
+  else if (speedDiff > 15) targetNumber += 1;
 
   if (attacker.stats.damageState.driverWounded) targetNumber += 2;
 
@@ -60,7 +70,7 @@ export function resolveToHit(
   const hit = roll >= targetNumber;
   const location = hit ? getAttackLocation(attacker, target) : 'front';
 
-  return { roll, modifier: targetNumber - 7, hit, location };
+  return { roll, modifier: targetNumber - weapon.toHit, hit, location };
 }
 
 export function resolveDamage(
