@@ -1,4 +1,4 @@
-import type { ZoneState, VehicleState, HazardObject, DamageState } from '@carwars/shared';
+import type { ZoneState, VehicleState, HazardObject, DamageState, ArmorLocation } from '@carwars/shared';
 import { computeMovement, applyHazardCheck } from './movement';
 import { resolveToHit, resolveDamage, isWeaponInArc, roll2d6, rollDamage } from './combat';
 import { WEAPONS } from './data/weapons';
@@ -174,6 +174,33 @@ export function createTurnEngine(initialState: ZoneState): TurnEngine {
       });
 
       remainingHazards = remainingHazards.filter(h => !triggeredMines.has(h.id));
+
+      // Apply fire damage to burning vehicles (Car Wars: 1 armor point per tick from a random facing)
+      newVehicles.forEach(vehicle => {
+        if (!vehicle.stats.damageState.onFire) return;
+
+        // For now, fire always burns (future: check fire extinguisher accessory)
+        const currentDamage = damageUpdates.get(vehicle.id) ?? { ...vehicle.stats.damageState };
+
+        // Pick a random armor location that still has armor
+        const locations: ArmorLocation[] = ['front', 'back', 'left', 'right', 'top', 'underbody'];
+        const burnable = locations.filter(loc => (currentDamage.armor[loc] ?? 0) > 0);
+        if (burnable.length === 0) {
+          // All armor gone — fire destroys internals
+          damageUpdates.set(vehicle.id, { ...currentDamage, destroyed: true });
+          return;
+        }
+
+        const loc = burnable[Math.floor(Math.random() * burnable.length)] as ArmorLocation;
+        const newArmor = { ...currentDamage.armor };
+        newArmor[loc] = Math.max(0, (newArmor[loc] ?? 0) - 1);
+
+        damageUpdates.set(vehicle.id, {
+          ...currentDamage,
+          armor: newArmor,
+          onFire: true,
+        });
+      });
 
       // Apply damage + ammo updates to vehicles
       const finalVehicles = [

@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { createTurnEngine } from '../src/rules/engine';
-import type { VehicleState, WeaponMount } from '@carwars/shared';
+import type { VehicleState, WeaponMount, ZoneState } from '@carwars/shared';
 import { WEAPONS } from '../src/rules/data/weapons';
 
 function makeVehicle(id: string, x: number, y: number): VehicleState {
@@ -96,5 +96,38 @@ describe('TurnEngine', () => {
     const updatedVehicle = result.vehicles.find(v => v.id === 'v1')!;
     const expectedUnderbody = Math.max(0, initialUnderbody - mineDef.damage);
     expect(updatedVehicle.stats.damageState.armor.underbody).toBe(expectedUnderbody);
+  });
+});
+
+// Helper function for fire damage test
+function makeBurningVehicle(): VehicleState {
+  return {
+    id: 'v-fire', playerId: 'p1', driverId: 'd1',
+    position: { x: 0, y: 0 }, facing: 0, speed: 0,
+    stats: {
+      id: 'v-fire', name: 'Burning Car', loadout: {} as any,
+      damageState: {
+        armor: { front: 4, back: 4, left: 4, right: 4, top: 2, underbody: 2 },
+        engineDamaged: false, driverWounded: false, tiresBlown: [], destroyed: false,
+        onFire: true, engineDP: 8, internalDamage: [],
+      },
+      maxSpeed: 15, handlingClass: 3, weight: 3000, acceleration: 5,
+    }
+  };
+}
+
+describe('fire damage tick', () => {
+  it('burning vehicle loses armor each tick', () => {
+    const zoneState: ZoneState = {
+      id: 'zone-1', tick: 0,
+      vehicles: [makeBurningVehicle()],
+      hazardObjects: [],
+    };
+    const engine = createTurnEngine(zoneState);
+    const after = engine.resolveTick();
+    const v = after.vehicles.find(v => v.id === 'v-fire')!;
+    const totalArmorAfter = Object.values(v.stats.damageState.armor).reduce((s, n) => s + (n ?? 0), 0);
+    // Started with 4+4+4+4+2+2=20, should have lost at least 1
+    expect(totalArmorAfter).toBeLessThan(20);
   });
 });
