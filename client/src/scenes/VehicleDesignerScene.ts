@@ -547,7 +547,7 @@ export class VehicleDesignerScene extends Phaser.Scene {
       const host = window.location.hostname;
       const res = await fetch(`http://${host}:3001/api/vehicles/design`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${this.token}` },
         body: JSON.stringify(this.buildDesignPayload()),
       });
 
