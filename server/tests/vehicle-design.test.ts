@@ -22,7 +22,7 @@ describe('shared type additions', () => {
       suspensionType: 'standard',
       tireType: 'standard',
       armorType: 'ablative',
-      powerPlantType: 'medium',
+      powerPlantType: 'elec_medium',
     };
     expect(loadout.bodyType).toBe('mid_sized');
   });
@@ -63,15 +63,15 @@ describe('bodies catalog', () => {
 });
 
 describe('power plants catalog', () => {
-  it('medium plant has correct power factors and DP', () => {
-    const med = POWER_PLANTS.find(p => p.id === 'medium')!;
+  it('elec_medium plant has correct power factors and DP', () => {
+    const med = POWER_PLANTS.find(p => p.id === 'elec_medium')!;
     expect(med.powerFactors).toBe(1400);
     expect(med.dp).toBe(8);
     expect(med.spaces).toBe(4);
   });
 
-  it('thundercat has highest power factors', () => {
-    const tc = POWER_PLANTS.find(p => p.id === 'thundercat')!;
+  it('elec_thundercat has highest power factors', () => {
+    const tc = POWER_PLANTS.find(p => p.id === 'elec_thundercat')!;
     expect(tc.powerFactors).toBe(6700);
   });
 });
@@ -117,7 +117,7 @@ function makeMidSizedLoadout(): VehicleLoadout {
     suspensionType: 'standard',
     tireType: 'standard',
     armorType: 'ablative',
-    powerPlantType: 'medium',
+    powerPlantType: 'elec_medium',
   };
 }
 
@@ -154,7 +154,7 @@ describe('deriveStats with Compendium fields', () => {
       suspensionType: 'standard',
       tireType: 'standard',
       armorType: 'ablative',
-      powerPlantType: 'small',
+      powerPlantType: 'elec_small',
     };
     // standard suspension: subHC = 3, carHC = 2
     const stats = deriveStats('c1', 'TestCycle', cycleLoadout);
@@ -191,7 +191,7 @@ describe('deriveStats with Compendium fields', () => {
       suspensionType: 'standard',
       tireType: 'standard',
       armorType: 'ablative',
-      powerPlantType: 'small',
+      powerPlantType: 'elec_small',
     };
     const stats = deriveStats('v1', 'Underpowered', underpoweredLoadout);
     expect(stats.acceleration).toBe(0);
@@ -212,7 +212,7 @@ describe('deriveStats with Compendium fields', () => {
       suspensionType: 'standard',
       tireType: 'standard',
       armorType: 'ablative',
-      powerPlantType: 'thundercat',
+      powerPlantType: 'elec_thundercat',
     };
     const stats = deriveStats('v1', 'Rocket', overpoweredLoadout);
     expect(stats.acceleration).toBe(15);
@@ -227,7 +227,7 @@ describe('POST /api/vehicles/design', () => {
       bodyType: 'mid_sized',
       chassisType: 'standard',
       suspensionType: 'standard',
-      powerPlantType: 'medium',
+      powerPlantType: 'elec_medium',
       tireType: 'standard',
       armorType: 'ablative',
       armor: { front: 4, back: 2, left: 2, right: 2, top: 1, underbody: 1 },
@@ -242,7 +242,7 @@ describe('POST /api/vehicles/design', () => {
 
   it('returns 400 if bodyType is missing', async () => {
     const res = await request(app).post('/api/vehicles/design').send({
-      powerPlantType: 'medium',
+      powerPlantType: 'elec_medium',
     });
     expect(res.status).toBe(400);
   });
@@ -250,7 +250,7 @@ describe('POST /api/vehicles/design', () => {
   it('returns 400 for unknown bodyType', async () => {
     const res = await request(app).post('/api/vehicles/design').send({
       bodyType: 'tank',
-      powerPlantType: 'medium',
+      powerPlantType: 'elec_medium',
     });
     expect(res.status).toBe(400);
     expect(res.body.error).toMatch(/Unknown bodyType/);
@@ -259,7 +259,7 @@ describe('POST /api/vehicles/design', () => {
   it('returns 400 when armor contains non-numeric value', async () => {
     const res = await request(app).post('/api/vehicles/design').send({
       bodyType: 'mid_sized',
-      powerPlantType: 'medium',
+      powerPlantType: 'elec_medium',
       armor: { front: 'lots', back: 0, left: 0, right: 0, top: 0, underbody: 0 },
     });
     expect(res.status).toBe(400);
