@@ -1,12 +1,34 @@
-export type ArmorLocation = 'front' | 'back' | 'left' | 'right' | 'top' | 'underbody';
+// Standard 6-surface armor locations (cars, trucks, vans)
+export type StandardSurface = 'front' | 'back' | 'left' | 'right' | 'top' | 'underbody';
+
+// Trailer/bus 10-position armor — sides, top, underbody each split front/back half
+export type TrailerSurface =
+  | 'front_front' | 'front_back'
+  | 'right_front' | 'right_back'
+  | 'left_front' | 'left_back'
+  | 'top_front' | 'top_back'
+  | 'underbody_front' | 'underbody_back';
+
+// Combined type — cycles/trikes only use the first 4 StandardSurface values
+export type ArmorLocation = StandardSurface | TrailerSurface;
 
 export interface ArmorDistribution {
-  front: number;
-  back: number;
-  left: number;
-  right: number;
-  top: number;
-  underbody: number;
+  front?: number;
+  back?: number;
+  left?: number;
+  right?: number;
+  top?: number;
+  underbody?: number;
+  front_front?: number;
+  front_back?: number;
+  right_front?: number;
+  right_back?: number;
+  left_front?: number;
+  left_back?: number;
+  top_front?: number;
+  top_back?: number;
+  underbody_front?: number;
+  underbody_back?: number;
 }
 
 // New union types for vehicle design
