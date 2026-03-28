@@ -86,7 +86,7 @@ export function createTurnEngine(initialState: ZoneState): TurnEngine {
         const mount = attacker.stats.loadout!.mounts[mountIndex];
 
         // Handle dropped weapons (oil, mine) — place hazard at attacker's position
-        if (weapon.special === 'dropped') {
+        if (weapon.category === 'dropped') {
           if (!ammoUpdates.has(attacker.id)) ammoUpdates.set(attacker.id, new Map());
           ammoUpdates.get(attacker.id)!.set(mount.id, mount.ammo - 1);
           const hazId = `${weapon.id}-${attacker.id}-${state.tick}`;
