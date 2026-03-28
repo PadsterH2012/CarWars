@@ -39,6 +39,7 @@ export class VehicleDesignerScene extends Phaser.Scene {
   private armor = { front: 20, back: 15, left: 15, right: 15 };
   private vehicleName   = 'My Car';
   private derivedCost   = 0;
+  private statsReqId    = 0;
 
   // Button maps for in-place updates
   private bodyBtns       = new Map<string, Phaser.GameObjects.Text>();
@@ -218,6 +219,7 @@ export class VehicleDesignerScene extends Phaser.Scene {
     if (mountIdx >= 0) {
       // Remove
       this.mounts.splice(mountIdx, 1);
+      this.statusText.setText('');
     } else {
       if (this.mounts.length >= 3) {
         this.statusText.setColor('#ff4444').setText('Max 3 weapons');
@@ -339,6 +341,23 @@ export class VehicleDesignerScene extends Phaser.Scene {
     }).setInteractive();
     backBtn.on('pointerdown', () => this.scene.start('GarageScene', { token: this.token }));
 
+    // Vehicle name display
+    const nameDisplay = this.add.text(640, 640, `Name: ${this.vehicleName}`, {
+      color: '#cccccc', fontSize: '13px', fontFamily: 'monospace'
+    }).setOrigin(0.5);
+
+    const renameBtn = this.add.text(900, 640, '[RENAME]', {
+      color: '#aaaaff', fontSize: '13px', fontFamily: 'monospace',
+      backgroundColor: '#111133', padding: { x: 6, y: 3 }
+    }).setInteractive();
+    renameBtn.on('pointerdown', () => {
+      const name = window.prompt('Enter vehicle name:', this.vehicleName);
+      if (name && name.trim()) {
+        this.vehicleName = name.trim();
+        nameDisplay.setText(`Name: ${this.vehicleName}`);
+      }
+    });
+
     // Build button
     const buildBtn = this.add.text(640, 685, '[ BUILD THIS CAR ]', {
       color: SEL_COLOR, fontSize: '18px', fontFamily: 'monospace',
@@ -349,7 +368,8 @@ export class VehicleDesignerScene extends Phaser.Scene {
 
   // ─── API CALLS ────────────────────────────────────────────────────────────
 
-  async refreshStats(): Promise<void> {
+  private async refreshStats(): Promise<void> {
+    const reqId = ++this.statsReqId;
     this.statsSpeedText.setText('Max Speed:  Calculating...');
     this.statsAccelText.setText('Accel:      ...');
     this.statsHcText.setText('HC:         ...');
@@ -364,6 +384,8 @@ export class VehicleDesignerScene extends Phaser.Scene {
         body: JSON.stringify(this.buildDesignPayload()),
       });
 
+      if (reqId !== this.statsReqId) return;
+
       if (res.ok) {
         const data = await res.json() as {
           maxSpeed: number;
@@ -372,6 +394,7 @@ export class VehicleDesignerScene extends Phaser.Scene {
           totalWeight: number;
           totalCost: number;
         };
+        if (reqId !== this.statsReqId) return;
         this.derivedCost = data.totalCost ?? 0;
         this.statsSpeedText.setText(`Max Speed:  ${data.maxSpeed} mph`);
         this.statsAccelText.setText(`Accel:      ${data.acceleration} mph/turn`);
@@ -387,20 +410,21 @@ export class VehicleDesignerScene extends Phaser.Scene {
       } else {
         const err = await res.json() as { error?: string };
         const msg = err.error ?? 'Design error';
-        this.statsSpeedText.setColor('#ff4444').setText(msg);
-        this.statsAccelText.setText('');
-        this.statsHcText.setText('');
-        this.statsWeightText.setText('');
-        this.statsCostText.setText('');
-        // Reset text color after setting error
-        this.time.delayedCall(100, () => this.statsSpeedText.setColor('#cccccc'));
+        this.statsSpeedText.setText('--');
+        this.statsAccelText.setText('--');
+        this.statsHcText.setText('--');
+        this.statsWeightText.setText('--');
+        this.statsCostText.setText('--');
+        this.statusText.setColor('#ff4444').setText(msg);
       }
     } catch {
-      this.statsSpeedText.setText('Network error');
-      this.statsAccelText.setText('');
-      this.statsHcText.setText('');
-      this.statsWeightText.setText('');
-      this.statsCostText.setText('');
+      if (reqId !== this.statsReqId) return;
+      this.statsSpeedText.setText('--');
+      this.statsAccelText.setText('--');
+      this.statsHcText.setText('--');
+      this.statsWeightText.setText('--');
+      this.statsCostText.setText('--');
+      this.statusText.setColor('#ff4444').setText('Network error');
     }
   }
 
@@ -437,21 +461,8 @@ export class VehicleDesignerScene extends Phaser.Scene {
         body: JSON.stringify({
           name: this.vehicleName,
           loadout: {
-            chassisId:     this.bodyType,
-            engineId:      this.powerPlantType,
-            suspensionId:  this.suspensionType,
-            tires: [
-              { id: 't0', blown: false }, { id: 't1', blown: false },
-              { id: 't2', blown: false }, { id: 't3', blown: false },
-            ],
-            mounts: this.mounts,
-            armor: { ...this.armor, top: 0, underbody: 0 },
+            ...this.buildDesignPayload(),
             totalCost: this.derivedCost,
-            bodyType:       this.bodyType,
-            powerPlantType: this.powerPlantType,
-            suspensionType: this.suspensionType,
-            tireType:       this.tireType,
-            armorType:      this.armorType,
           },
         }),
       });
