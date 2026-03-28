@@ -122,8 +122,7 @@ function makeMidSizedLoadout(): VehicleLoadout {
 describe('deriveStats with Compendium fields', () => {
   it('computes maxSpeed using power factor formula', () => {
     const stats = deriveStats('v1', 'TestCar', makeMidSizedLoadout());
-    expect(stats.maxSpeed).toBeGreaterThan(100);
-    expect(stats.maxSpeed).toBeLessThan(200);
+    expect(stats.maxSpeed).toBe(127.5);
   });
 
   it('derives HC from suspension type', () => {
@@ -173,5 +172,47 @@ describe('deriveStats with Compendium fields', () => {
     const stats = deriveStats('v1', 'LegacyCar', legacyLoadout);
     expect(stats.maxSpeed).toBeGreaterThan(0);
     expect(stats.acceleration).toBe(5); // legacy default
+  });
+
+  it('returns acceleration 0 when severely underpowered (PF < weight/3)', () => {
+    // Use a van (2000) + small plant (500) → 2000+500+4×30+12pts×14lbs = 2000+500+120+168 = 2788
+    // weight/3 = 929. PF=800 < 929 → acceleration = 0
+    const underpoweredLoadout: VehicleLoadout = {
+      chassisId: 'mid', engineId: 'small', suspensionId: 'standard',
+      tires: [{ id: 't0', blown: false }, { id: 't1', blown: false },
+               { id: 't2', blown: false }, { id: 't3', blown: false }],
+      mounts: [],
+      armor: { front: 4, back: 2, left: 2, right: 2, top: 1, underbody: 1 },
+      totalCost: 2000,
+      bodyType: 'van',
+      chassisType: 'standard',
+      suspensionType: 'standard',
+      tireType: 'standard',
+      armorType: 'ablative',
+      powerPlantType: 'small',
+    };
+    const stats = deriveStats('v1', 'Underpowered', underpoweredLoadout);
+    expect(stats.acceleration).toBe(0);
+  });
+
+  it('returns acceleration 15 when PF >= total weight', () => {
+    // subcompact + thundercat: 1000+2000+4×30+12pts×5lbs = 1000+2000+120+60 = 3180
+    // PF=6700 >= 3180 → acceleration = 15
+    const overpoweredLoadout: VehicleLoadout = {
+      chassisId: 'sub', engineId: 'thundercat', suspensionId: 'standard',
+      tires: [{ id: 't0', blown: false }, { id: 't1', blown: false },
+               { id: 't2', blown: false }, { id: 't3', blown: false }],
+      mounts: [],
+      armor: { front: 4, back: 2, left: 2, right: 2, top: 1, underbody: 1 },
+      totalCost: 20000,
+      bodyType: 'subcompact',
+      chassisType: 'standard',
+      suspensionType: 'standard',
+      tireType: 'standard',
+      armorType: 'ablative',
+      powerPlantType: 'thundercat',
+    };
+    const stats = deriveStats('v1', 'Rocket', overpoweredLoadout);
+    expect(stats.acceleration).toBe(15);
   });
 });

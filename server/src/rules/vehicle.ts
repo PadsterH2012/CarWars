@@ -24,6 +24,7 @@ export function deriveStats(id: string, name: string, loadout: VehicleLoadout): 
   let handlingClass: number;
   let totalWeight: number;
   let acceleration: number;
+  let engineDP = 8;
 
   if (loadout.bodyType && loadout.powerPlantType) {
     // === Compendium path ===
@@ -33,11 +34,13 @@ export function deriveStats(id: string, name: string, loadout: VehicleLoadout): 
     const plant = POWER_PLANTS.find(p => p.id === loadout.powerPlantType);
     if (!plant) throw new Error(`Unknown powerPlantType: ${loadout.powerPlantType}`);
 
-    const suspension = SUSPENSIONS.find(s => s.id === (loadout.suspensionType ?? 'standard'));
-    if (!suspension) throw new Error(`Unknown suspensionType: ${loadout.suspensionType}`);
+    const suspType = loadout.suspensionType ?? 'standard';
+    const suspension = SUSPENSIONS.find(s => s.id === suspType);
+    if (!suspension) throw new Error(`Unknown suspensionType: ${suspType}`);
 
-    const tire = TIRES.find(t => t.id === (loadout.tireType ?? 'standard'));
-    if (!tire) throw new Error(`Unknown tireType: ${loadout.tireType}`);
+    const tireTypeName = loadout.tireType ?? 'standard';
+    const tire = TIRES.find(t => t.id === tireTypeName);
+    if (!tire) throw new Error(`Unknown tireType: ${tireTypeName}`);
 
     // Weight = body + plant + tires (cycles have 2, cars have 4)
     const tireCount = body.isCycle ? 2 : 4;
@@ -47,11 +50,12 @@ export function deriveStats(id: string, name: string, loadout: VehicleLoadout): 
     const armorPts = Object.values(loadout.armor).reduce((s, v) => s + v, 0);
     totalWeight += armorPts * body.armorWtPerPt;
 
+    engineDP = plant.dp;
     acceleration = computeAcceleration(plant.powerFactors, totalWeight);
     maxSpeed = computeTopSpeed(plant.powerFactors, totalWeight);
 
     // HC from suspension, adjusted by body category
-    const isVanSize = ['van', 'pickup', 'camper', 'station_wagon'].includes(loadout.bodyType);
+    const isVanSize = ['van', 'pickup', 'camper'].includes(loadout.bodyType as string);
     const isSub = body.isCycle || loadout.bodyType === 'subcompact';
     handlingClass = isSub ? suspension.subHC : isVanSize ? suspension.vanHC : suspension.carHC;
     handlingClass += tire.hcModifier;
@@ -77,9 +81,7 @@ export function deriveStats(id: string, name: string, loadout: VehicleLoadout): 
     tiresBlown: [],
     destroyed: false,
     onFire: false,
-    engineDP: loadout.powerPlantType
-      ? (POWER_PLANTS.find(p => p.id === loadout.powerPlantType)?.dp ?? 8)
-      : 8,
+    engineDP,
     internalDamage: [],
   };
 
