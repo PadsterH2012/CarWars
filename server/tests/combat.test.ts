@@ -8,7 +8,7 @@ const attacker: VehicleState = {
   position: { x: 0, y: 0 }, facing: 0, speed: 10,
   stats: { id: 'a1', name: 'Attacker', loadout: {} as any,
     damageState: { armor: {}, engineDamaged: false, driverWounded: false, tiresBlown: [], destroyed: false },
-    maxSpeed: 20, handlingClass: 3, weight: 3000 }
+    maxSpeed: 20, handlingClass: 3, acceleration: 5, weight: 3000 }
 };
 
 const target: VehicleState = {
@@ -19,7 +19,7 @@ const target: VehicleState = {
       armor: { front: 4, back: 2, left: 3, right: 3, top: 0, underbody: 0 },
       engineDamaged: false, driverWounded: false, tiresBlown: [], destroyed: false
     },
-    maxSpeed: 15, handlingClass: 2, weight: 2500 }
+    maxSpeed: 15, handlingClass: 2, acceleration: 5, weight: 2500 }
 };
 
 // Helper to build a minimal WeaponMount
@@ -34,7 +34,7 @@ function makeVehicleAt(id: string, x: number, y: number, facing = 0): VehicleSta
     position: { x, y }, facing, speed: 0,
     stats: { id, name: 'Car', loadout: {} as any,
       damageState: { armor: {}, engineDamaged: false, driverWounded: false, tiresBlown: [], destroyed: false },
-      maxSpeed: 20, handlingClass: 3, weight: 3000 }
+      maxSpeed: 20, handlingClass: 3, acceleration: 5, weight: 3000 }
   };
 }
 

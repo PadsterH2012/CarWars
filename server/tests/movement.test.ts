@@ -16,6 +16,7 @@ const baseVehicle: VehicleState = {
     damageState: { armor: {}, engineDamaged: false, driverWounded: false, tiresBlown: [], destroyed: false },
     maxSpeed: 20,
     handlingClass: 3,
+    acceleration: 5,
     weight: 3000
   }
 };
