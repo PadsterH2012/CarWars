@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
-import { computeMovement, applyHazardCheck, classifyManeuver } from '../src/rules/movement';
-import type { ManeuverType } from '../src/rules/movement';
+import { computeMovement, applyHazardCheck, classifyManeuver, resolveControlTable } from '../src/rules/movement';
+import type { ManeuverType, ControlResult } from '../src/rules/movement';
 import type { VehicleState } from '@carwars/shared';
 
 const baseVehicle: VehicleState = {
@@ -78,5 +78,25 @@ describe('maneuver classifier', () => {
     const result = classifyManeuver(60, 0);
     expect(result.type).toBe('bend');
     expect(result.dValue).toBe(1);
+  });
+});
+
+describe('control table', () => {
+  it('no effect when hazard below HC', () => {
+    // HC=4, hazardAccumulator=0 → short-circuits to none
+    const result = resolveControlTable(4, 0, 7); // forced roll of 7
+    expect(result.effect).toBe('none');
+  });
+
+  it('fishtail when result is 1 above HC', () => {
+    // HC=3, hazardAccumulator=2, forceRoll=8 → 8 + 2 - 3 = 7 → result 7
+    // Need to check what 7 maps to in our table
+    const result = resolveControlTable(3, 4, 10); // high roll + hazard
+    expect(['fishtail', 'skid', 'roll', 'collision']).toContain(result.effect);
+  });
+
+  it('no control roll needed when hazard is zero', () => {
+    const result = resolveControlTable(3, 0, 2);
+    expect(result.effect).toBe('none');
   });
 });

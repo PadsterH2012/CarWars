@@ -1,5 +1,5 @@
 import type { ZoneState, VehicleState, HazardObject, DamageState, ArmorLocation } from '@carwars/shared';
-import { computeMovement, applyHazardCheck } from './movement';
+import { computeMovement, classifyManeuver, resolveControlTable } from './movement';
 import { resolveToHit, resolveDamage, isWeaponInArc, roll2d6, rollDamage } from './combat';
 import { WEAPONS } from './data/weapons';
 
@@ -42,14 +42,21 @@ export function createTurnEngine(initialState: ZoneState): TurnEngine {
         return computeMovement(vehicle, input);
       });
 
-      // Apply hazard checks — high-speed tight turns may cause spinout
+      // Apply hazard checks — maneuver D-values feed the Compendium control table
       newVehicles = newVehicles.map(vehicle => {
         const input = pendingInputs.get(vehicle.id) ?? lastInputs.get(vehicle.id) ?? { speed: 0, steer: 0, fireWeapon: null };
-        const hazard = applyHazardCheck(vehicle, { speed: vehicle.speed, steer: input.steer });
-        if (!hazard.required) return vehicle;
-        const roll = roll2d6();
-        if (roll >= hazard.difficulty) return vehicle; // passed
-        // Failed — spinout: random rotation, halve speed
+        const maneuver = classifyManeuver(vehicle.speed, Math.abs(input.steer));
+        const control = resolveControlTable(vehicle.stats.handlingClass, maneuver.dValue);
+
+        if (control.effect === 'none') return vehicle;
+
+        // Fishtail: apply random small spin
+        if (control.effect === 'fishtail') {
+          const spin = (Math.random() > 0.5 ? 1 : -1) * 15;
+          return { ...vehicle, facing: (vehicle.facing + spin + 360) % 360 };
+        }
+
+        // Skid or worse: larger spin, halve speed
         const spinAngle = (Math.random() > 0.5 ? 1 : -1) * (60 + Math.floor(Math.random() * 120));
         return {
           ...vehicle,

@@ -57,3 +57,28 @@ export function classifyManeuver(speed: number, absSteering: number): ManeuverRe
   if (absSteering <= 45) return { type: 'swerve', dValue: 3 };
   return { type: 'controlled_skid', dValue: 3 };
 }
+
+export interface ControlResult {
+  effect: 'none' | 'fishtail' | 'skid' | 'roll' | 'collision';
+  severity: number;
+}
+
+/**
+ * Resolves the Compendium control table.
+ * @param hc Current handling class
+ * @param hazardAccumulator D-points accumulated this turn
+ * @param forcedRoll Optional forced 2d6 roll (for testing); uses random if omitted
+ */
+export function resolveControlTable(hc: number, hazardAccumulator: number, forcedRoll?: number): ControlResult {
+  if (hazardAccumulator === 0) return { effect: 'none', severity: 0 };
+
+  const roll = forcedRoll ?? (Math.floor(Math.random() * 6) + 1 + Math.floor(Math.random() * 6) + 1);
+  const result = roll + hazardAccumulator - hc;
+
+  if (result <= 0)  return { effect: 'none', severity: 0 };
+  if (result === 1) return { effect: 'fishtail', severity: 1 };
+  if (result === 2) return { effect: 'skid', severity: 2 };
+  if (result === 3) return { effect: 'skid', severity: 3 };
+  if (result === 4) return { effect: 'roll', severity: 4 };
+  return                  { effect: 'collision', severity: result };
+}
