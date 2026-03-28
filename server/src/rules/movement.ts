@@ -82,3 +82,26 @@ export function resolveControlTable(hc: number, hazardAccumulator: number, force
   if (result === 4) return { effect: 'roll', severity: 4 };
   return                  { effect: 'collision', severity: result };
 }
+
+export interface CollisionResult {
+  damageA: number;   // damage to vehicle A (attacker / rear-ender)
+  damageB: number;   // damage to vehicle B (target / front vehicle)
+  closingSpeed: number;
+}
+
+export function resolveCollision(
+  speedA: number,
+  speedB: number,
+  type: 'head_on' | 'same_dir' | 't_bone',
+  attackerHasRamplate = false
+): CollisionResult {
+  const closingSpeed = type === 'head_on'
+    ? speedA + speedB
+    : Math.abs(speedA - speedB);
+
+  const baseDamage = Math.floor(closingSpeed / 5);
+  const damageB = baseDamage;
+  const damageA = attackerHasRamplate ? Math.floor(baseDamage / 2) : baseDamage;
+
+  return { damageA, damageB, closingSpeed };
+}

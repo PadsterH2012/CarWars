@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { computeMovement, applyHazardCheck, classifyManeuver, resolveControlTable } from '../src/rules/movement';
+import { computeMovement, applyHazardCheck, classifyManeuver, resolveControlTable, resolveCollision } from '../src/rules/movement';
 import type { ManeuverType, ControlResult } from '../src/rules/movement';
 import type { VehicleState } from '@carwars/shared';
 
@@ -98,5 +98,28 @@ describe('control table', () => {
   it('no control roll needed when hazard is zero', () => {
     const result = resolveControlTable(3, 0, 2);
     expect(result.effect).toBe('none');
+  });
+});
+
+describe('collision resolver', () => {
+  it('head-on collision uses sum of speeds', () => {
+    const result = resolveCollision(30, 20, 'head_on');
+    // closing speed = 50 → damage = floor(50 / 5) = 10 per vehicle
+    expect(result.damageA).toBe(10);
+    expect(result.damageB).toBe(10);
+  });
+
+  it('same-direction collision uses speed difference', () => {
+    const result = resolveCollision(30, 20, 'same_dir');
+    // closing speed = 10 → damage = floor(10 / 5) = 2
+    expect(result.damageA).toBe(2);
+    expect(result.damageB).toBe(2);
+  });
+
+  it('ramplate halves damage for attacker', () => {
+    const result = resolveCollision(30, 0, 'head_on', true);
+    // closing speed = 30 → base = 6; ramplate → attacker takes 3
+    expect(result.damageA).toBe(3);
+    expect(result.damageB).toBe(6);
   });
 });
