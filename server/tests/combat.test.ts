@@ -174,13 +174,11 @@ describe('to-hit modifiers', () => {
       stats: { ...attacker.stats, damageState: { ...attacker.stats.damageState, driverWounded: true } }
     };
     const mg = WEAPONS.find(w => w.id === 'mg')!;
-    // Call many times — check that average modifier is higher
-    let totalMod = 0;
-    for (let i = 0; i < 20; i++) {
-      const res = resolveToHit(woundedAttacker, target, mg, 4);
-      totalMod += res.modifier;
-    }
-    expect(totalMod / 20).toBeGreaterThan(1.5); // driver wounded adds +2
+    // Use a fixed-distance shot within short range — only driverWounded modifier applies
+    // attacker speed=10, target speed=5 → diff=5 (<15), not wounded normally
+    // wound adds +2, so modifier should be exactly 2
+    const result = resolveToHit(woundedAttacker, target, mg, 4);
+    expect(result.modifier).toBe(2);
   });
 
   it('out-of-range shot always misses', () => {
@@ -198,8 +196,31 @@ describe('to-hit modifiers', () => {
       }
     };
     const mg = WEAPONS.find(w => w.id === 'mg')!;
+    // attacker not wounded, speeds: 10 vs 5 (diff<15), within short range → only +1 from size
     const result = resolveToHit(attacker, subcompactTarget, mg, 4);
-    // modifier should be at least 1 (subcompact bonus)
-    expect(result.modifier).toBeGreaterThanOrEqual(1);
+    expect(result.modifier).toBe(1);
+  });
+
+  it('van target subtracts -1 from target number', () => {
+    const vanTarget = {
+      ...target,
+      stats: {
+        ...target.stats,
+        loadout: { ...target.stats.loadout, bodyType: 'van' as const }
+      }
+    };
+    const mg = WEAPONS.find(w => w.id === 'mg')!;
+    // attacker not wounded, speeds: 10 vs 5 (diff<15), within short range → only -1 from size
+    const result = resolveToHit(attacker, vanTarget, mg, 4);
+    expect(result.modifier).toBe(-1);
+  });
+
+  it('fast target (>60 mph) adds +1', () => {
+    const fastTarget = { ...target, speed: 65 };
+    const mg = WEAPONS.find(w => w.id === 'mg')!;
+    // attacker speed=10, target speed=65: diff=55 (>30 mph → +2), also target >60 (+1) → total +3
+    // But attacker not wounded, within short range → modifier = 3
+    const result = resolveToHit(attacker, fastTarget, mg, 4);
+    expect(result.modifier).toBe(3);
   });
 });

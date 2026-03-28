@@ -62,6 +62,7 @@ export function resolveToHit(
   }
   if (distance > weapon.shortRange) targetNumber += 2;
 
+  // Target absolute speed and speed differential are independent and can both apply
   // Target speed modifier (Compendium: target moving > 60 mph = +1)
   if (target.speed > 60) targetNumber += 1;
 
@@ -74,9 +75,10 @@ export function resolveToHit(
   const targetBody = target.stats.loadout?.bodyType;
   if (targetBody === 'subcompact' || targetBody === 'light_cycle' || targetBody === 'med_cycle' || targetBody === 'hvy_cycle') {
     targetNumber += 1;
-  } else if (['van', 'pickup', 'camper'].includes(targetBody ?? '')) {
+  } else if (targetBody && ['van', 'pickup', 'camper'].includes(targetBody)) {
     targetNumber -= 1;
   }
+  // standard-sized bodies (compact, mid_sized, sedan, luxury, station_wagon): no size modifier
 
   if (attacker.stats.damageState.driverWounded) targetNumber += 2;
 
