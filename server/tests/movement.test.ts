@@ -88,11 +88,11 @@ describe('control table', () => {
     expect(result.effect).toBe('none');
   });
 
-  it('fishtail when result is 1 above HC', () => {
-    // HC=3, hazardAccumulator=2, forceRoll=8 → 8 + 2 - 3 = 7 → result 7
-    // Need to check what 7 maps to in our table
-    const result = resolveControlTable(3, 4, 10); // high roll + hazard
-    expect(['fishtail', 'skid', 'roll', 'collision']).toContain(result.effect);
+  it('fishtail when control result equals 1', () => {
+    // roll=3, hazard=2, hc=4 → 3+2-4=1 → fishtail
+    const result = resolveControlTable(4, 2, 3);
+    expect(result.effect).toBe('fishtail');
+    expect(result.severity).toBe(1);
   });
 
   it('no control roll needed when hazard is zero', () => {

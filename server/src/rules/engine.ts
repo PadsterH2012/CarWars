@@ -46,7 +46,8 @@ export function createTurnEngine(initialState: ZoneState): TurnEngine {
       newVehicles = newVehicles.map(vehicle => {
         const input = pendingInputs.get(vehicle.id) ?? lastInputs.get(vehicle.id) ?? { speed: 0, steer: 0, fireWeapon: null };
         const maneuver = classifyManeuver(vehicle.speed, Math.abs(input.steer));
-        const control = resolveControlTable(vehicle.stats.handlingClass, maneuver.dValue);
+        const hazardAccumulator = maneuver.dValue; // extend here when collision/obstacle D-values are added
+        const control = resolveControlTable(vehicle.stats.handlingClass, hazardAccumulator);
 
         if (control.effect === 'none') return vehicle;
 
