@@ -60,9 +60,6 @@ export class VehicleDesignerScene extends Phaser.Scene {
   private weaponBtns     = new Map<string, Phaser.GameObjects.Text>();
   private arcBtns        = new Map<string, Phaser.GameObjects.Text>();
 
-  // Armor value texts (panel center labels for schematic)
-  private armorTexts = new Map<string, Phaser.GameObjects.Text>();
-
   // Stats panel texts
   private statsSpeedText!:  Phaser.GameObjects.Text;
   private statsAccelText!:  Phaser.GameObjects.Text;
@@ -72,6 +69,7 @@ export class VehicleDesignerScene extends Phaser.Scene {
   private statusText!:      Phaser.GameObjects.Text;
 
   // Schematic state
+  private schematicCy = 0;
   private selectedArmorFace: 'front' | 'back' | 'left' | 'right' = 'front';
   private schematicGfx!: Phaser.GameObjects.Graphics;
   private schematicTexts = new Map<string, Phaser.GameObjects.Text>();
@@ -322,6 +320,7 @@ export class VehicleDesignerScene extends Phaser.Scene {
   private buildSchematic(topY: number): void {
     const cx = 985;
     const cy = topY + 90; // ~490 with topY=400
+    this.schematicCy = cy;
 
     // Graphics layer for fills and borders (redrawn each update)
     this.schematicGfx = this.add.graphics();
@@ -345,15 +344,11 @@ export class VehicleDesignerScene extends Phaser.Scene {
         this.armorEditText.setText(String(this.armor[key]));
         this.redrawSchematic();
       });
-      zone.on('pointerover', () => { zone.setData('hover', true); this.redrawSchematic(); });
-      zone.on('pointerout',  () => { zone.setData('hover', false); this.redrawSchematic(); });
-
       // Armor value text centered on panel
       const txt = this.add.text(lx, ly, String(this.armor[key]), {
         fontSize: '11px', fontFamily: 'monospace', color: '#ffffff',
       }).setOrigin(0.5).setDepth(1);
       this.schematicTexts.set(key, txt);
-      this.armorTexts.set(key, txt);
     });
 
     // Selected face label + ± controls below the diagram
@@ -371,7 +366,6 @@ export class VehicleDesignerScene extends Phaser.Scene {
       if (this.armor[key] > 0) {
         this.armor[key]--;
         this.armorEditText.setText(String(this.armor[key]));
-        this.schematicTexts.get(key)?.setText(String(this.armor[key]));
         this.redrawSchematic();
         this.scheduleStatsRefresh();
       }
@@ -390,7 +384,6 @@ export class VehicleDesignerScene extends Phaser.Scene {
       if (this.armor[key] < 99) {
         this.armor[key]++;
         this.armorEditText.setText(String(this.armor[key]));
-        this.schematicTexts.get(key)?.setText(String(this.armor[key]));
         this.redrawSchematic();
         this.scheduleStatsRefresh();
       }
@@ -404,17 +397,7 @@ export class VehicleDesignerScene extends Phaser.Scene {
     if (!this.schematicGfx) return;
 
     const cx = 985;
-    // Recalculate cy to match buildSchematic (topY is stats section end ~400)
-    // Stats section: y=55+22+5*20+30+22 = 55+22+100+30+22 = 229, then armor heading at y=229
-    // buildSchematic called with topY = y after armor heading = 229+22 = 251... but let's keep consistent
-    // Actually buildRightPanel sets y=55, adds stats (5 rows * 20 + 30 = 130), then +30 for cost gap,
-    // then armor heading at y=55+22+20+20+20+20+20+30+22=229
-    // buildSchematic(topY=229), cy = 229 + 90 = 319... that seems low.
-    // Let me retrace: y=55, +22=77 (stats heading), then 5 texts each +20 = 77+100=177, then cost +30 = 207,
-    // then armor heading +22 = 229. buildSchematic(229): cy = 229+90 = 319.
-    // That matches the layout. Keep consistent with buildSchematic.
-    const topY = 229;
-    const cy = topY + 90;
+    const cy = this.schematicCy;
 
     this.schematicGfx.clear();
 
@@ -473,9 +456,14 @@ export class VehicleDesignerScene extends Phaser.Scene {
       dropped:    0x888888,
     };
 
+    const arcDotOffset = new Map<string, number>();
     this.mounts.forEach(mount => {
-      const pos = mountPositions[mount.arc];
+      const pos = mountPositions[mount.arc as keyof typeof mountPositions];
       if (!pos) return;
+
+      const count = arcDotOffset.get(mount.arc) ?? 0;
+      arcDotOffset.set(mount.arc, count + 1);
+      const offsetX = (count % 2 === 0 ? 1 : -1) * Math.floor(count / 2) * 8;
 
       // Look up weapon category from WEAPONS list
       const weaponDef = WEAPONS.find(w => w.id === mount.weaponId);
@@ -483,9 +471,9 @@ export class VehicleDesignerScene extends Phaser.Scene {
       const dotColor = categoryColors[category] ?? 0xffffff;
 
       this.schematicGfx.fillStyle(dotColor, 1);
-      this.schematicGfx.fillCircle(pos.x, pos.y, 5);
+      this.schematicGfx.fillCircle(pos.x + offsetX, pos.y, 5);
       this.schematicGfx.lineStyle(1, 0x000000, 0.6);
-      this.schematicGfx.strokeCircle(pos.x, pos.y, 5);
+      this.schematicGfx.strokeCircle(pos.x + offsetX, pos.y, 5);
     });
   }
 
@@ -527,6 +515,15 @@ export class VehicleDesignerScene extends Phaser.Scene {
       backgroundColor: SEL_BG, padding: { x: 16, y: 6 },
     }).setOrigin(0.5).setInteractive();
     buildBtn.on('pointerdown', () => this.saveVehicle());
+  }
+
+  // ─── LIFECYCLE ────────────────────────────────────────────────────────────
+
+  shutdown(): void {
+    if (this.statsDebounceTimer) {
+      clearTimeout(this.statsDebounceTimer);
+      this.statsDebounceTimer = null;
+    }
   }
 
   // ─── DEBOUNCE ─────────────────────────────────────────────────────────────
