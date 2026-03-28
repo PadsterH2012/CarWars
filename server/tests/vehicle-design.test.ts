@@ -233,11 +233,11 @@ describe('POST /api/vehicles/design', () => {
       armor: { front: 4, back: 2, left: 2, right: 2, top: 1, underbody: 1 },
     });
     expect(res.status).toBe(200);
-    expect(res.body).toHaveProperty('maxSpeed');
-    expect(res.body).toHaveProperty('handlingClass');
-    expect(res.body).toHaveProperty('acceleration');
-    expect(res.body).toHaveProperty('totalWeight');
-    expect(res.body).toHaveProperty('totalCost');
+    expect(res.body.maxSpeed).toBe(127.5);       // deterministic PF formula
+    expect(res.body.acceleration).toBe(10);
+    expect(res.body.handlingClass).toBe(2);
+    expect(res.body.totalWeight).toBeGreaterThan(0);
+    expect(res.body.totalCost).toBeGreaterThan(0);
   });
 
   it('returns 400 if bodyType is missing', async () => {
@@ -245,5 +245,24 @@ describe('POST /api/vehicles/design', () => {
       powerPlantType: 'medium',
     });
     expect(res.status).toBe(400);
+  });
+
+  it('returns 400 for unknown bodyType', async () => {
+    const res = await request(app).post('/api/vehicles/design').send({
+      bodyType: 'tank',
+      powerPlantType: 'medium',
+    });
+    expect(res.status).toBe(400);
+    expect(res.body.error).toMatch(/Unknown bodyType/);
+  });
+
+  it('returns 400 when armor contains non-numeric value', async () => {
+    const res = await request(app).post('/api/vehicles/design').send({
+      bodyType: 'mid_sized',
+      powerPlantType: 'medium',
+      armor: { front: 'lots', back: 0, left: 0, right: 0, top: 0, underbody: 0 },
+    });
+    expect(res.status).toBe(400);
+    expect(res.body.error).toMatch(/armor\.front/);
   });
 });

@@ -28,6 +28,17 @@ designRouter.post('/', (req, res) => {
   if (!tire) return res.status(400).json({ error: `Unknown tireType: ${tireType}` });
 
   const armorDist: ArmorDistribution = armor ?? { front: 0, back: 0, left: 0, right: 0, top: 0, underbody: 0 };
+
+  // Validate armor values are non-negative numbers
+  const armorFields = ['front', 'back', 'left', 'right', 'top', 'underbody'] as const;
+  for (const field of armorFields) {
+    const val = armorDist[field];
+    if (typeof val !== 'number' || !isFinite(val) || val < 0) {
+      return res.status(400).json({ error: `armor.${field} must be a non-negative number` });
+    }
+  }
+
+  // tireCount mirrors the rule in deriveStats: cycles have 2 wheels, cars have 4
   const tireCount = body.isCycle ? 2 : 4;
 
   const loadout = {
@@ -37,7 +48,7 @@ designRouter.post('/', (req, res) => {
     armor: armorDist,
     totalCost: 0,
     bodyType: bodyType as BodyType,
-    chassisType: (chassisType ?? 'standard') as ChassisType,
+    chassisType: (chassisType ?? 'standard') as ChassisType,  // carried through for future use; not yet applied in deriveStats
     suspensionType: (suspensionType ?? 'standard') as SuspensionType,
     tireType: (tireType ?? 'standard') as TireType,
     armorType: (armorType ?? 'ablative') as ArmorType,
