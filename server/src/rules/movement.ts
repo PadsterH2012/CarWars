@@ -89,6 +89,13 @@ export interface CollisionResult {
   closingSpeed: number;
 }
 
+/**
+ * Calculates collision damage for two vehicles.
+ * @param speedA Speed of vehicle A (attacker / rear-ender) in mph
+ * @param speedB Speed of vehicle B (target / front vehicle) in mph
+ * @param type Collision type: head_on sums speeds; same_dir and t_bone use the absolute difference
+ * @param attackerHasRamplate If true, vehicle A takes half damage (floor)
+ */
 export function resolveCollision(
   speedA: number,
   speedB: number,
