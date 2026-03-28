@@ -174,7 +174,6 @@ export class ArenaScene extends Phaser.Scene {
 
       if (v.id === this.myVehicleId && !this.cameras.main.following) {
         this.cameras.main.startFollow(container, true);
-        this.cameras.main.setBounds(0, 0, 1280, 736);
       }
     });
 

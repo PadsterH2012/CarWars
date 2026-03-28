@@ -35,7 +35,7 @@ async function loadVehicleFromDb(vehicleId: string, token: string): Promise<{ ve
       id: row.id,
       playerId,
       driverId: '',
-      position: { x: 0, y: 0 },
+      position: { x: 640, y: 360 },
       facing: 0,
       speed: 0,
       stats
@@ -161,12 +161,12 @@ async function handleMessage(ws: WebSocket, raw: string): Promise<void> {
       } : {});
 
       if (isArena) {
-        runner.getEngine().addVehicle(makeTestVehicle('ai-red', 'ai-team', -8, -6, 90));
-        runner.getEngine().addVehicle(makeTestVehicle('ai-blue', 'ai-team', 8, 6, 270));
+        runner.getEngine().addVehicle(makeTestVehicle('ai-red', 'ai-team', 400, 200, 90));
+        runner.getEngine().addVehicle(makeTestVehicle('ai-blue', 'ai-team', 880, 520, 270));
       } else if (isHighway) {
-        runner.getEngine().addVehicle(makeTestVehicle('npc-1', 'npc-traffic', -5, -10, 0));
-        runner.getEngine().addVehicle(makeTestVehicle('npc-2', 'npc-traffic', 5, 0, 0));
-        runner.getEngine().addVehicle(makeTestVehicle('npc-3', 'npc-traffic', 0, 10, 0));
+        runner.getEngine().addVehicle(makeTestVehicle('npc-1', 'npc-traffic', 400, 200, 0));
+        runner.getEngine().addVehicle(makeTestVehicle('npc-2', 'npc-traffic', 640, 100, 0));
+        runner.getEngine().addVehicle(makeTestVehicle('npc-3', 'npc-traffic', 880, 300, 0));
       }
 
       zones.set(msg.zoneId, runner);
