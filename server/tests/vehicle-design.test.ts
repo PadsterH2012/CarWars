@@ -141,6 +141,25 @@ describe('deriveStats with Compendium fields', () => {
     expect(stats.acceleration).toBe(10);
   });
 
+  it('uses subHC for cycle bodies', () => {
+    const cycleLoadout: VehicleLoadout = {
+      chassisId: 'light', engineId: 'small', suspensionId: 'standard',
+      tires: [{ id: 't0', blown: false }, { id: 't1', blown: false }],
+      mounts: [],
+      armor: { front: 2, back: 1, left: 1, right: 1, top: 0, underbody: 0 },
+      totalCost: 2000,
+      bodyType: 'light_cycle',
+      chassisType: 'standard',
+      suspensionType: 'standard',
+      tireType: 'standard',
+      armorType: 'ablative',
+      powerPlantType: 'small',
+    };
+    // standard suspension: subHC = 3, carHC = 2
+    const stats = deriveStats('c1', 'TestCycle', cycleLoadout);
+    expect(stats.handlingClass).toBe(3);
+  });
+
   it('falls back to legacy engine lookup when bodyType is absent', () => {
     const legacyLoadout: VehicleLoadout = {
       chassisId: 'mid', engineId: 'medium', suspensionId: 'standard',

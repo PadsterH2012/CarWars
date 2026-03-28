@@ -52,7 +52,7 @@ export function deriveStats(id: string, name: string, loadout: VehicleLoadout): 
 
     // HC from suspension, adjusted by body category
     const isVanSize = ['van', 'pickup', 'camper', 'station_wagon'].includes(loadout.bodyType);
-    const isSub = loadout.bodyType === 'subcompact';
+    const isSub = body.isCycle || loadout.bodyType === 'subcompact';
     handlingClass = isSub ? suspension.subHC : isVanSize ? suspension.vanHC : suspension.carHC;
     handlingClass += tire.hcModifier;
     handlingClass = Math.max(1, Math.min(6, handlingClass));
