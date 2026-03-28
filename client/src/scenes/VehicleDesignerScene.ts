@@ -24,6 +24,13 @@ const STAT_STYLE: Phaser.Types.GameObjects.Text.TextStyle = {
   fontSize: '13px', fontFamily: 'monospace', color: '#cccccc',
 };
 
+function armorColor(pts: number): number {
+  if (pts >= 15) return 0x00aa44;  // green
+  if (pts >= 5)  return 0xaaaa00;  // yellow
+  if (pts >= 1)  return 0xaa4400;  // orange
+  return 0x440000;                  // dark red
+}
+
 export class VehicleDesignerScene extends Phaser.Scene {
   private token = '';
 
@@ -41,6 +48,9 @@ export class VehicleDesignerScene extends Phaser.Scene {
   private derivedCost   = 0;
   private statsReqId    = 0;
 
+  // Debounce timer for stats refresh
+  private statsDebounceTimer: ReturnType<typeof setTimeout> | null = null;
+
   // Button maps for in-place updates
   private bodyBtns       = new Map<string, Phaser.GameObjects.Text>();
   private powerBtns      = new Map<string, Phaser.GameObjects.Text>();
@@ -50,7 +60,7 @@ export class VehicleDesignerScene extends Phaser.Scene {
   private weaponBtns     = new Map<string, Phaser.GameObjects.Text>();
   private arcBtns        = new Map<string, Phaser.GameObjects.Text>();
 
-  // Armor value texts
+  // Armor value texts (panel center labels for schematic)
   private armorTexts = new Map<string, Phaser.GameObjects.Text>();
 
   // Stats panel texts
@@ -60,6 +70,13 @@ export class VehicleDesignerScene extends Phaser.Scene {
   private statsWeightText!: Phaser.GameObjects.Text;
   private statsCostText!:   Phaser.GameObjects.Text;
   private statusText!:      Phaser.GameObjects.Text;
+
+  // Schematic state
+  private selectedArmorFace: 'front' | 'back' | 'left' | 'right' = 'front';
+  private schematicGfx!: Phaser.GameObjects.Graphics;
+  private schematicTexts = new Map<string, Phaser.GameObjects.Text>();
+  private selectedFaceLabel!: Phaser.GameObjects.Text;
+  private armorEditText!: Phaser.GameObjects.Text;
 
   constructor() { super({ key: 'VehicleDesignerScene' }); }
 
@@ -81,8 +98,11 @@ export class VehicleDesignerScene extends Phaser.Scene {
     this.buildRightPanel();
     this.buildBottomButtons();
 
-    // Trigger initial stats fetch
+    // Trigger initial stats fetch (immediate, no debounce)
     this.refreshStats();
+
+    // Draw initial schematic after objects are created
+    this.redrawSchematic();
   }
 
   // ─── LEFT PANEL (x=10..430) ──────────────────────────────────────────────
@@ -95,35 +115,35 @@ export class VehicleDesignerScene extends Phaser.Scene {
     this.add.text(x0, y, 'Body Type:', LABEL_STYLE);
     y += 18;
     y = this.buildOptionGrid(BODY_TYPES, x0, y, 3, this.bodyBtns, () => this.bodyType,
-      (id) => { this.bodyType = id; this.updateOptionBtns(this.bodyBtns, () => this.bodyType); this.refreshStats(); });
+      (id) => { this.bodyType = id; this.updateOptionBtns(this.bodyBtns, () => this.bodyType); this.scheduleStatsRefresh(); });
 
     y += 6;
     // Power Plant
     this.add.text(x0, y, 'Power Plant:', LABEL_STYLE);
     y += 18;
     y = this.buildOptionGrid(POWER_PLANTS, x0, y, 3, this.powerBtns, () => this.powerPlantType,
-      (id) => { this.powerPlantType = id; this.updateOptionBtns(this.powerBtns, () => this.powerPlantType); this.refreshStats(); });
+      (id) => { this.powerPlantType = id; this.updateOptionBtns(this.powerBtns, () => this.powerPlantType); this.scheduleStatsRefresh(); });
 
     y += 6;
     // Suspension
     this.add.text(x0, y, 'Suspension:', LABEL_STYLE);
     y += 18;
     y = this.buildOptionGrid(SUSPENSIONS, x0, y, 3, this.suspBtns, () => this.suspensionType,
-      (id) => { this.suspensionType = id; this.updateOptionBtns(this.suspBtns, () => this.suspensionType); this.refreshStats(); });
+      (id) => { this.suspensionType = id; this.updateOptionBtns(this.suspBtns, () => this.suspensionType); this.scheduleStatsRefresh(); });
 
     y += 6;
     // Tires
     this.add.text(x0, y, 'Tires:', LABEL_STYLE);
     y += 18;
     y = this.buildOptionGrid(TIRE_TYPES, x0, y, 3, this.tireBtns, () => this.tireType,
-      (id) => { this.tireType = id; this.updateOptionBtns(this.tireBtns, () => this.tireType); this.refreshStats(); });
+      (id) => { this.tireType = id; this.updateOptionBtns(this.tireBtns, () => this.tireType); this.scheduleStatsRefresh(); });
 
     y += 6;
     // Armor Type
     this.add.text(x0, y, 'Armor Type:', LABEL_STYLE);
     y += 18;
     this.buildOptionGrid(ARMOR_TYPES, x0, y, 3, this.armorTypeBtns, () => this.armorType,
-      (id) => { this.armorType = id; this.updateOptionBtns(this.armorTypeBtns, () => this.armorType); this.refreshStats(); });
+      (id) => { this.armorType = id; this.updateOptionBtns(this.armorTypeBtns, () => this.armorType); this.scheduleStatsRefresh(); });
   }
 
   /**
@@ -234,7 +254,8 @@ export class VehicleDesignerScene extends Phaser.Scene {
       this.mounts.push(newMount);
     }
     this.updateWeaponButtons();
-    this.refreshStats();
+    this.redrawSchematic();
+    this.scheduleStatsRefresh();
   }
 
   private cycleArc(weaponId: string): void {
@@ -243,7 +264,8 @@ export class VehicleDesignerScene extends Phaser.Scene {
     const currentIdx = ARCS.indexOf(mount.arc);
     mount.arc = ARCS[(currentIdx + 1) % ARCS.length] as ArcType;
     this.updateWeaponButtons();
-    this.refreshStats();
+    this.redrawSchematic();
+    this.scheduleStatsRefresh();
   }
 
   private updateWeaponButtons(): void {
@@ -282,48 +304,189 @@ export class VehicleDesignerScene extends Phaser.Scene {
     this.statsWeightText = this.add.text(x0, y, 'Weight:     --',  STAT_STYLE); y += 20;
     this.statsCostText   = this.add.text(x0, y, 'Cost:       --',  STAT_STYLE); y += 30;
 
-    // Armor section
-    this.add.text(x0, y, '── ARMOR (pts) ──', {
+    // Armor section heading
+    this.add.text(x0, y, '── ARMOR ──', {
       color: HEADING_COLOR, fontSize: '13px', fontFamily: 'monospace',
     });
     y += 22;
 
-    type ArmorFace = 'front' | 'back' | 'left' | 'right';
-    const armorFaces: Array<{ key: ArmorFace; label: string }> = [
-      { key: 'front', label: 'Front' },
-      { key: 'back',  label: 'Back ' },
-      { key: 'left',  label: 'Left ' },
-      { key: 'right', label: 'Right' },
+    // Build the schematic (creates graphics + interactive zones + texts)
+    this.buildSchematic(y);
+  }
+
+  /**
+   * Build the top-down vehicle schematic in the right panel.
+   * All interactive zones and text labels are created here once.
+   * Visual state (colors, borders) is handled by redrawSchematic().
+   */
+  private buildSchematic(topY: number): void {
+    const cx = 985;
+    const cy = topY + 90; // ~490 with topY=400
+
+    // Graphics layer for fills and borders (redrawn each update)
+    this.schematicGfx = this.add.graphics();
+
+    // Panel definitions: key → rect [rx, ry, rw, rh]
+    type FaceKey = 'front' | 'back' | 'left' | 'right';
+    const panels: Array<{ key: FaceKey; rx: number; ry: number; rw: number; rh: number; lx: number; ly: number }> = [
+      { key: 'front', rx: cx - 50, ry: cy - 90, rw: 100, rh: 30,  lx: cx,      ly: cy - 75 },
+      { key: 'back',  rx: cx - 50, ry: cy + 60, rw: 100, rh: 30,  lx: cx,      ly: cy + 75 },
+      { key: 'left',  rx: cx - 80, ry: cy - 40, rw: 30,  rh: 80,  lx: cx - 65, ly: cy      },
+      { key: 'right', rx: cx + 50, ry: cy - 40, rw: 30,  rh: 80,  lx: cx + 65, ly: cy      },
     ];
 
-    armorFaces.forEach(({ key, label }: { key: ArmorFace; label: string }) => {
-      this.add.text(x0, y, `${label}:`, STAT_STYLE);
-
-      const minusBtn = this.add.text(x0 + 80, y, '[−]', {
-        fontSize: '13px', fontFamily: 'monospace', color: '#ff6666',
-        backgroundColor: '#330011', padding: { x: 4, y: 2 },
-      }).setInteractive();
-      minusBtn.on('pointerdown', () => {
-        if (this.armor[key] > 0) { this.armor[key]--; this.updateArmorText(key); this.refreshStats(); }
+    // Create interactive hit zones (invisible rects) and value labels
+    panels.forEach(({ key, rx, ry, rw, rh, lx, ly }) => {
+      // Invisible hit zone
+      const zone = this.add.zone(rx, ry, rw, rh).setOrigin(0, 0).setInteractive();
+      zone.on('pointerdown', () => {
+        this.selectedArmorFace = key;
+        this.selectedFaceLabel.setText(`Selected: ${key.toUpperCase()}`);
+        this.armorEditText.setText(String(this.armor[key]));
+        this.redrawSchematic();
       });
+      zone.on('pointerover', () => { zone.setData('hover', true); this.redrawSchematic(); });
+      zone.on('pointerout',  () => { zone.setData('hover', false); this.redrawSchematic(); });
 
-      const valText = this.add.text(x0 + 120, y, String(this.armor[key]).padStart(2, ' '), STAT_STYLE);
-      this.armorTexts.set(key, valText);
+      // Armor value text centered on panel
+      const txt = this.add.text(lx, ly, String(this.armor[key]), {
+        fontSize: '11px', fontFamily: 'monospace', color: '#ffffff',
+      }).setOrigin(0.5).setDepth(1);
+      this.schematicTexts.set(key, txt);
+      this.armorTexts.set(key, txt);
+    });
 
-      const plusBtn = this.add.text(x0 + 145, y, '[+]', {
-        fontSize: '13px', fontFamily: 'monospace', color: '#66ff88',
-        backgroundColor: '#002211', padding: { x: 4, y: 2 },
-      }).setInteractive();
-      plusBtn.on('pointerdown', () => {
-        if (this.armor[key] < 99) { this.armor[key]++; this.updateArmorText(key); this.refreshStats(); }
-      });
+    // Selected face label + ± controls below the diagram
+    const controlY = cy + 110;
+    this.selectedFaceLabel = this.add.text(cx, controlY, `Selected: ${this.selectedArmorFace.toUpperCase()}`, {
+      fontSize: '12px', fontFamily: 'monospace', color: LABEL_COLOR,
+    }).setOrigin(0.5);
 
-      y += 24;
+    const minusBtn = this.add.text(cx - 40, controlY + 22, '[−]', {
+      fontSize: '13px', fontFamily: 'monospace', color: '#ff6666',
+      backgroundColor: '#330011', padding: { x: 4, y: 2 },
+    }).setInteractive().setOrigin(0.5);
+    minusBtn.on('pointerdown', () => {
+      const key = this.selectedArmorFace;
+      if (this.armor[key] > 0) {
+        this.armor[key]--;
+        this.armorEditText.setText(String(this.armor[key]));
+        this.schematicTexts.get(key)?.setText(String(this.armor[key]));
+        this.redrawSchematic();
+        this.scheduleStatsRefresh();
+      }
+    });
+
+    this.armorEditText = this.add.text(cx, controlY + 22, String(this.armor[this.selectedArmorFace]), {
+      fontSize: '13px', fontFamily: 'monospace', color: '#cccccc',
+    }).setOrigin(0.5);
+
+    const plusBtn = this.add.text(cx + 40, controlY + 22, '[+]', {
+      fontSize: '13px', fontFamily: 'monospace', color: '#66ff88',
+      backgroundColor: '#002211', padding: { x: 4, y: 2 },
+    }).setInteractive().setOrigin(0.5);
+    plusBtn.on('pointerdown', () => {
+      const key = this.selectedArmorFace;
+      if (this.armor[key] < 99) {
+        this.armor[key]++;
+        this.armorEditText.setText(String(this.armor[key]));
+        this.schematicTexts.get(key)?.setText(String(this.armor[key]));
+        this.redrawSchematic();
+        this.scheduleStatsRefresh();
+      }
     });
   }
 
-  private updateArmorText(key: 'front' | 'back' | 'left' | 'right'): void {
-    this.armorTexts.get(key)?.setText(String(this.armor[key]).padStart(2, ' '));
+  /**
+   * Redraw the schematic graphics: panel fills, selection border, car body, weapon dots.
+   */
+  private redrawSchematic(): void {
+    if (!this.schematicGfx) return;
+
+    const cx = 985;
+    // Recalculate cy to match buildSchematic (topY is stats section end ~400)
+    // Stats section: y=55+22+5*20+30+22 = 55+22+100+30+22 = 229, then armor heading at y=229
+    // buildSchematic called with topY = y after armor heading = 229+22 = 251... but let's keep consistent
+    // Actually buildRightPanel sets y=55, adds stats (5 rows * 20 + 30 = 130), then +30 for cost gap,
+    // then armor heading at y=55+22+20+20+20+20+20+30+22=229
+    // buildSchematic(topY=229), cy = 229 + 90 = 319... that seems low.
+    // Let me retrace: y=55, +22=77 (stats heading), then 5 texts each +20 = 77+100=177, then cost +30 = 207,
+    // then armor heading +22 = 229. buildSchematic(229): cy = 229+90 = 319.
+    // That matches the layout. Keep consistent with buildSchematic.
+    const topY = 229;
+    const cy = topY + 90;
+
+    this.schematicGfx.clear();
+
+    // Car body interior (darker background)
+    this.schematicGfx.fillStyle(0x1a1a3a, 1);
+    this.schematicGfx.fillRect(cx - 50, cy - 60, 100, 120);
+    this.schematicGfx.lineStyle(1, 0x444466, 1);
+    this.schematicGfx.strokeRect(cx - 50, cy - 60, 100, 120);
+
+    // Panel definitions
+    type FaceKey = 'front' | 'back' | 'left' | 'right';
+    const panels: Array<{ key: FaceKey; rx: number; ry: number; rw: number; rh: number }> = [
+      { key: 'front', rx: cx - 50, ry: cy - 90, rw: 100, rh: 30  },
+      { key: 'back',  rx: cx - 50, ry: cy + 60, rw: 100, rh: 30  },
+      { key: 'left',  rx: cx - 80, ry: cy - 40, rw: 30,  rh: 80  },
+      { key: 'right', rx: cx + 50, ry: cy - 40, rw: 30,  rh: 80  },
+    ];
+
+    panels.forEach(({ key, rx, ry, rw, rh }) => {
+      const pts = this.armor[key];
+      const fillCol = armorColor(pts);
+
+      // Fill
+      this.schematicGfx.fillStyle(fillCol, 0.85);
+      this.schematicGfx.fillRect(rx, ry, rw, rh);
+
+      // Normal border
+      this.schematicGfx.lineStyle(1, 0x666666, 1);
+      this.schematicGfx.strokeRect(rx, ry, rw, rh);
+
+      // Selected highlight border
+      if (key === this.selectedArmorFace) {
+        this.schematicGfx.lineStyle(2, 0xffffff, 1);
+        this.schematicGfx.strokeRect(rx, ry, rw, rh);
+      }
+
+      // Update value label text
+      this.schematicTexts.get(key)?.setText(String(pts));
+    });
+
+    // Weapon mount dots
+    const mountPositions: Record<string, { x: number; y: number }> = {
+      front:  { x: cx,      y: cy - 30 },
+      back:   { x: cx,      y: cy + 30 },
+      left:   { x: cx - 25, y: cy      },
+      right:  { x: cx + 25, y: cy      },
+      turret: { x: cx,      y: cy      },
+    };
+
+    const categoryColors: Record<string, number> = {
+      small_bore: 0xffff00,
+      large_bore: 0xff8800,
+      rocket:     0xff4444,
+      laser:      0x00ffff,
+      flamer:     0xff6600,
+      dropped:    0x888888,
+    };
+
+    this.mounts.forEach(mount => {
+      const pos = mountPositions[mount.arc];
+      if (!pos) return;
+
+      // Look up weapon category from WEAPONS list
+      const weaponDef = WEAPONS.find(w => w.id === mount.weaponId);
+      const category = weaponDef?.category ?? 'small_bore';
+      const dotColor = categoryColors[category] ?? 0xffffff;
+
+      this.schematicGfx.fillStyle(dotColor, 1);
+      this.schematicGfx.fillCircle(pos.x, pos.y, 5);
+      this.schematicGfx.lineStyle(1, 0x000000, 0.6);
+      this.schematicGfx.strokeCircle(pos.x, pos.y, 5);
+    });
   }
 
   // ─── BOTTOM BUTTONS ───────────────────────────────────────────────────────
@@ -364,6 +527,16 @@ export class VehicleDesignerScene extends Phaser.Scene {
       backgroundColor: SEL_BG, padding: { x: 16, y: 6 },
     }).setOrigin(0.5).setInteractive();
     buildBtn.on('pointerdown', () => this.saveVehicle());
+  }
+
+  // ─── DEBOUNCE ─────────────────────────────────────────────────────────────
+
+  private scheduleStatsRefresh(): void {
+    if (this.statsDebounceTimer) clearTimeout(this.statsDebounceTimer);
+    this.statsDebounceTimer = setTimeout(() => {
+      this.statsDebounceTimer = null;
+      this.refreshStats();
+    }, 150);
   }
 
   // ─── API CALLS ────────────────────────────────────────────────────────────
