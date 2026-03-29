@@ -86,4 +86,52 @@ describe('economy', () => {
       .send({ vehicleId });
     expect(res.status).toBe(402);
   });
+
+  it('repair restores blown tires and deducts tire cost', async () => {
+    const db = getDb();
+    await db.query(
+      `UPDATE vehicles SET damage_state = $1 WHERE id = $2`,
+      [JSON.stringify({
+        armor: { front: 6, back: 4, left: 4, right: 4, top: 2, underbody: 2 },
+        engineDamaged: false, driverWounded: false, tiresBlown: [0, 1], destroyed: false
+      }), vehicleId]
+    );
+    await db.query(`UPDATE players SET money = 25000 WHERE id = $1`, [playerId]);
+
+    const res = await request(app)
+      .post('/api/economy/repair')
+      .set('Authorization', `Bearer ${token}`)
+      .send({ vehicleId });
+
+    expect(res.status).toBe(200);
+    expect(res.body.cost).toBe(300); // 2 tires × $150
+    const vRes = await db.query(`SELECT damage_state FROM vehicles WHERE id = $1`, [vehicleId]);
+    expect(vRes.rows[0].damage_state.tiresBlown).toEqual([]);
+  });
+
+  it('repair restores ammo and charges ammoCost per round', async () => {
+    const db = getDb();
+    // Deplete ammo on mount m0 (mg, ammoCost: $25/round, original: 50 rounds)
+    await db.query(
+      `UPDATE vehicles SET
+         damage_state = $1,
+         loadout = jsonb_set(loadout, '{mounts,0,ammo}', '10')
+       WHERE id = $2`,
+      [JSON.stringify({
+        armor: { front: 6, back: 4, left: 4, right: 4, top: 2, underbody: 2 },
+        engineDamaged: false, driverWounded: false, tiresBlown: [], destroyed: false
+      }), vehicleId]
+    );
+    await db.query(`UPDATE players SET money = 25000 WHERE id = $1`, [playerId]);
+
+    const res = await request(app)
+      .post('/api/economy/repair')
+      .set('Authorization', `Bearer ${token}`)
+      .send({ vehicleId });
+
+    expect(res.status).toBe(200);
+    expect(res.body.cost).toBe(1000); // 40 rounds × $25 ammoCost (mg weapon, see WEAPONS data)
+    const vRes = await db.query(`SELECT loadout FROM vehicles WHERE id = $1`, [vehicleId]);
+    expect(vRes.rows[0].loadout.mounts[0].ammo).toBe(50);
+  });
 });

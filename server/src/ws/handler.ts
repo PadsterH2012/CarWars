@@ -111,8 +111,13 @@ async function removeClientFromZone(ws: WebSocket): Promise<void> {
       const db = getDb();
       try {
         await db.query(
-          'UPDATE vehicles SET damage_state = $1 WHERE id = $2 AND player_id = $3',
-          [JSON.stringify(vehicle.stats.damageState), vehicleId, playerId]
+          'UPDATE vehicles SET damage_state = $1, loadout = $2 WHERE id = $3 AND player_id = $4',
+          [
+            JSON.stringify(vehicle.stats.damageState),
+            JSON.stringify(vehicle.stats.loadout),
+            vehicleId,
+            playerId
+          ]
         );
       } catch (e) {
         console.error('Failed to save vehicle damage:', e);

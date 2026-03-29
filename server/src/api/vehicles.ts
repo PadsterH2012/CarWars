@@ -29,8 +29,8 @@ vehiclesRouter.post('/', async (req: AuthRequest, res) => {
 
   const db = getDb();
   const result = await db.query(
-    `INSERT INTO vehicles (player_id, name, loadout, damage_state, value)
-     VALUES ($1, $2, $3, $4, $5) RETURNING id`,
+    `INSERT INTO vehicles (player_id, name, loadout, original_loadout, damage_state, value)
+     VALUES ($1, $2, $3, $3, $4, $5) RETURNING id`,
     [req.playerId, name, JSON.stringify(loadout), JSON.stringify(defaultDamageState), loadout.totalCost]
   );
   return res.status(201).json({ id: result.rows[0].id });

@@ -1,13 +1,20 @@
 import { Router } from 'express';
 import { getDb } from '../db/client';
 import { requireAuth, AuthRequest } from './middleware';
+import { WEAPONS } from '../rules/data/weapons';
 import type { VehicleLoadout, DamageState, ArmorDistribution } from '@carwars/shared';
 
 export const economyRouter = Router();
 economyRouter.use(requireAuth);
 
-const ARMOR_REPAIR_COST = 100;
+const ARMOR_REPAIR_COST  = 100;  // per point (ablative base)
 const ENGINE_REPAIR_COST = 500;
+const TIRE_REPAIR_COST   = 150;  // per blown tire
+
+// Repair cost multiplier matches build cost multiplier for each armor type
+const ARMOR_REPAIR_MUL: Record<string, number> = {
+  ablative: 1, metal: 1, fireproof: 2, laser_reflective: 2, lr_fireproof: 4, radarproof: 2,
+};
 
 economyRouter.post('/repair', async (req: AuthRequest, res) => {
   const { vehicleId } = req.body;
@@ -16,60 +23,91 @@ economyRouter.post('/repair', async (req: AuthRequest, res) => {
   const db = getDb();
   const [vResult, pResult] = await Promise.all([
     db.query(
-      `SELECT v.id, v.loadout, v.damage_state, v.player_id
-       FROM vehicles v WHERE v.id = $1 AND v.player_id = $2`,
+      `SELECT id, loadout, original_loadout, damage_state, player_id
+       FROM vehicles WHERE id = $1 AND player_id = $2`,
       [vehicleId, req.playerId]
     ),
     db.query(`SELECT money FROM players WHERE id = $1`, [req.playerId])
   ]);
 
   if (!vResult.rows.length) return res.status(403).json({ error: 'Vehicle not found' });
-  const vehicle = vResult.rows[0];
-  const loadout = vehicle.loadout as VehicleLoadout;
-  const damage = vehicle.damage_state as DamageState;
-  const playerMoney = pResult.rows[0].money as number;
+
+  const vehicle      = vResult.rows[0];
+  const loadout      = vehicle.loadout as VehicleLoadout;
+  // original_loadout is set at creation time; NULL for vehicles created before this migration.
+  // The fallback to loadout means pre-migration vehicles see zero ammo shortage (no resupply charge),
+  // which is acceptable — they get a free first repair but subsequent repairs work correctly.
+  const origLoadout  = (vehicle.original_loadout ?? loadout) as VehicleLoadout;
+  const damage       = vehicle.damage_state as DamageState;
+  const playerMoney  = pResult.rows[0].money as number;
 
   let cost = 0;
+  const armorMul = ARMOR_REPAIR_MUL[origLoadout.armorType ?? 'ablative'] ?? 1;
+
+  // Armor repair
   const locations: (keyof ArmorDistribution)[] = ['front', 'back', 'left', 'right', 'top', 'underbody'];
-  const repairedArmor = { ...loadout.armor };
   for (const loc of locations) {
-    const current = (damage.armor[loc] ?? 0);
-    const original = loadout.armor[loc];
-    const deficit = original - current;
-    if (deficit > 0) cost += deficit * ARMOR_REPAIR_COST;
+    const deficit = (origLoadout.armor[loc] ?? 0) - (damage.armor[loc] ?? 0);
+    if (deficit > 0) cost += deficit * ARMOR_REPAIR_COST * armorMul;
   }
+
+  // Engine repair
   if (damage.engineDamaged) cost += ENGINE_REPAIR_COST;
+
+  // Tire repair
+  cost += (damage.tiresBlown?.length ?? 0) * TIRE_REPAIR_COST;
+
+  // Ammo resupply
+  for (const origMount of origLoadout.mounts ?? []) {
+    const currentMount = loadout.mounts?.find(m => m.id === origMount.id);
+    const shortage = origMount.ammo - (currentMount?.ammo ?? 0);
+    if (shortage > 0) {
+      const weaponDef = WEAPONS.find(w => w.id === origMount.weaponId);
+      if (weaponDef) cost += shortage * weaponDef.ammoCost;
+    }
+  }
 
   if (cost === 0) return res.json({ cost: 0, moneyRemaining: playerMoney });
   if (playerMoney < cost) return res.status(402).json({ error: 'Insufficient funds', cost });
 
+  // Build repaired states
   const repairedDamage: DamageState = {
-    armor: repairedArmor,
+    ...damage,
+    armor: { ...origLoadout.armor },
     engineDamaged: false,
-    driverWounded: damage.driverWounded,
     tiresBlown: [],
-    destroyed: false
+    destroyed: false,
   };
 
-  await db.query(`BEGIN`);
+  // Restore ammo in loadout
+  const restoredMounts = (loadout.mounts ?? []).map(m => {
+    const orig = (origLoadout.mounts ?? []).find(om => om.id === m.id);
+    return orig ? { ...m, ammo: orig.ammo } : m;
+  });
+  const restoredLoadout: VehicleLoadout = { ...loadout, mounts: restoredMounts };
+
+  const client = await db.connect();
   try {
-    await db.query(
-      `UPDATE vehicles SET damage_state = $1 WHERE id = $2`,
-      [JSON.stringify(repairedDamage), vehicleId]
+    await client.query('BEGIN');
+    await client.query(
+      `UPDATE vehicles SET damage_state = $1, loadout = $2 WHERE id = $3`,
+      [JSON.stringify(repairedDamage), JSON.stringify(restoredLoadout), vehicleId]
     );
-    await db.query(
+    await client.query(
       `UPDATE players SET money = money - $1 WHERE id = $2`,
       [cost, req.playerId]
     );
-    await db.query(
+    await client.query(
       `INSERT INTO event_history (player_id, event_type, result, money_delta)
        VALUES ($1, 'repair', $2, $3)`,
       [req.playerId, JSON.stringify({ vehicleId, cost }), -cost]
     );
-    await db.query(`COMMIT`);
+    await client.query('COMMIT');
   } catch (e) {
-    await db.query(`ROLLBACK`);
+    await client.query('ROLLBACK');
     throw e;
+  } finally {
+    client.release();
   }
 
   return res.json({ cost, moneyRemaining: playerMoney - cost });
@@ -83,7 +121,7 @@ economyRouter.post('/prize', async (req: AuthRequest, res) => {
   }
 
   const db = getDb();
-  await db.query(`BEGIN`);
+  await db.query('BEGIN');
   try {
     await db.query(`UPDATE players SET money = money + $1 WHERE id = $2`, [amount, req.playerId]);
     await db.query(
@@ -95,9 +133,9 @@ economyRouter.post('/prize', async (req: AuthRequest, res) => {
        VALUES ($1, $2, $3, $4)`,
       [req.playerId, eventType ?? 'prize', JSON.stringify({ zoneId }), amount]
     );
-    await db.query(`COMMIT`);
+    await db.query('COMMIT');
   } catch (e) {
-    await db.query(`ROLLBACK`);
+    await db.query('ROLLBACK');
     throw e;
   }
 
@@ -105,16 +143,17 @@ economyRouter.post('/prize', async (req: AuthRequest, res) => {
   return res.json({ moneyNew: pResult.rows[0].money });
 });
 
-// Jobs listing
+// ── Jobs ─────────────────────────────────────────────────────────────────────
+
 export const jobsRouter = Router();
 jobsRouter.use(requireAuth);
 
 const STATIC_JOBS: Record<string, { job_type: string; description: string; payout: number; division_min: number }[]> = {
   'town-1': [
-    { job_type: 'escort', description: 'Escort a cargo truck to the next town', payout: 3000, division_min: 5 },
+    { job_type: 'escort',   description: 'Escort a cargo truck to the next town', payout: 3000, division_min: 5 },
     { job_type: 'delivery', description: 'Deliver a sealed crate — no questions asked', payout: 2500, division_min: 5 },
-    { job_type: 'ambush', description: 'Intercept a rival courier on Route 66', payout: 4000, division_min: 10 }
-  ]
+    { job_type: 'ambush',   description: 'Intercept a rival courier on Route 66', payout: 4000, division_min: 10 },
+  ],
 };
 
 jobsRouter.get('/', async (req: AuthRequest, res) => {
@@ -122,11 +161,9 @@ jobsRouter.get('/', async (req: AuthRequest, res) => {
   if (!zoneId) return res.status(400).json({ error: 'zoneId required' });
 
   const db = getDb();
-  // Get player division first — needed for both re-seed check and result filtering
   const pResult = await db.query(`SELECT division FROM players WHERE id = $1`, [req.playerId]);
   const playerDiv = pResult.rows[0]?.division ?? 5;
 
-  // Re-seed if no jobs are available for this player's division level
   const existing = await db.query(
     `SELECT id FROM jobs WHERE zone_id = $1 AND taken_by IS NULL AND completed = FALSE AND division_min <= $2 LIMIT 1`,
     [zoneId, playerDiv]
@@ -153,27 +190,21 @@ jobsRouter.post('/:id/take', async (req: AuthRequest, res) => {
   const { id } = req.params;
   const db = getDb();
 
-  const result = await db.query(
-    `SELECT id, division_min FROM jobs WHERE id = $1`,
-    [id]
-  );
+  const result = await db.query(`SELECT id, description, payout, division_min FROM jobs WHERE id = $1`, [id]);
   if (!result.rows.length) return res.status(404).json({ error: 'Job not found' });
   const job = result.rows[0];
 
   const pResult = await db.query(`SELECT division FROM players WHERE id = $1`, [req.playerId]);
   if (!pResult.rows.length) return res.status(401).json({ error: 'Player not found' });
-  if (pResult.rows[0].division < job.division_min) {
-    return res.status(403).json({ error: 'Division too low' });
-  }
+  if (pResult.rows[0].division < job.division_min) return res.status(403).json({ error: 'Division too low' });
 
   const updateResult = await db.query(
     `UPDATE jobs SET taken_by = $1 WHERE id = $2 AND taken_by IS NULL AND completed = FALSE`,
     [req.playerId, id]
   );
-  if (updateResult.rowCount === 0) {
-    return res.status(409).json({ error: 'Job already taken' });
-  }
-  return res.json({ ok: true });
+  if (updateResult.rowCount === 0) return res.status(409).json({ error: 'Job already taken' });
+
+  return res.json({ ok: true, job: { id: job.id, description: job.description, payout: job.payout } });
 });
 
 jobsRouter.post('/:id/complete', async (req: AuthRequest, res) => {
@@ -181,8 +212,7 @@ jobsRouter.post('/:id/complete', async (req: AuthRequest, res) => {
   const db = getDb();
 
   const result = await db.query(
-    `SELECT id, taken_by, completed, payout, job_type, zone_id FROM jobs WHERE id = $1`,
-    [id]
+    `SELECT id, taken_by, completed, payout, job_type, zone_id FROM jobs WHERE id = $1`, [id]
   );
   if (!result.rows.length) return res.status(404).json({ error: 'Job not found' });
   const job = result.rows[0];
