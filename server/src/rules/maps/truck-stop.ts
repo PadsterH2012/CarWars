@@ -55,6 +55,6 @@ export const truckStopMap: ArenaMap = {
   spawnPoints: [
     { x:   0, y:  2, facing:   0, team: 'player' },  // center courtyard, facing north
     { x: -14, y: -12, facing: 135, team: 'ai' },     // NW area, facing SE
-    { x:  14, y: -13, facing: 225, team: 'ai' },     // NE area, facing SW (clear of power building crossbar at y=-9)
+    { x:  30, y:   5, facing: 270, team: 'ai' },     // east side, facing west — avoids power building crossbar which blocks direct NE→center path
   ],
 };
