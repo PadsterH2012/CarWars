@@ -15,6 +15,10 @@ export class ZoneRunner {
   private interval: ReturnType<typeof setInterval> | null = null;
   private humanInputThisTick = new Set<string>();
   private ended = false;
+  // Vehicle IDs owned by human clients — never receive AI input unless autopilot is on
+  private humanVehicles = new Set<string>();
+  // Vehicles where the human has opted into AI autopilot
+  private autopilotVehicles = new Set<string>();
 
   hasEnded(): boolean { return this.ended; }
   readonly zoneId: string;
@@ -47,6 +51,15 @@ export class ZoneRunner {
   shutdown(): void {
     this.stop();
     this.clients.clear();
+  }
+
+  registerHumanVehicle(vehicleId: string): void {
+    this.humanVehicles.add(vehicleId);
+  }
+
+  setAutopilot(vehicleId: string, enabled: boolean): void {
+    if (enabled) this.autopilotVehicles.add(vehicleId);
+    else this.autopilotVehicles.delete(vehicleId);
   }
 
   queueInput(vehicleId: string, input: { speed: number; steer: number; fireWeapon: string | null }): void {
@@ -115,7 +128,10 @@ export class ZoneRunner {
   private tick(): void {
     const state = this.engine.getState();
     state.vehicles.forEach(vehicle => {
-      if (!this.humanInputThisTick.has(vehicle.id)) {
+      const isHuman = this.humanVehicles.has(vehicle.id);
+      const hasAutopilot = this.autopilotVehicles.has(vehicle.id);
+      const needsAi = !isHuman || hasAutopilot;
+      if (needsAi && !this.humanInputThisTick.has(vehicle.id)) {
         const enemies = state.vehicles.filter(v => v.playerId !== vehicle.playerId);
         const aiInput = computeAiInput(vehicle, enemies, 3);
         this.engine.queueInput(vehicle.id, aiInput);

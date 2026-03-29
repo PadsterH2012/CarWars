@@ -14,11 +14,14 @@ export class ArenaScene extends Phaser.Scene {
   private zoneState: ZoneState | null = null;
   private cursors!: Phaser.Types.Input.Keyboard.CursorKeys;
   private fireKey!: Phaser.Input.Keyboard.Key;
+  private autopilotKey!: Phaser.Input.Keyboard.Key;
   private myVehicleId = 'v1';
   private token = '';
   private lastInputSent = 0;
   private zoneEnded = false;
   private firePending = false;
+  private autopilot = false;
+  private autopilotLabel!: Phaser.GameObjects.Text;
   private minimapGfx!: Phaser.GameObjects.Graphics;
 
   constructor() {
@@ -33,9 +36,16 @@ export class ArenaScene extends Phaser.Scene {
   create(): void {
     this.cursors = this.input.keyboard!.createCursorKeys();
     this.fireKey = this.input.keyboard!.addKey(Phaser.Input.Keyboard.KeyCodes.SPACE);
+    this.autopilotKey = this.input.keyboard!.addKey(Phaser.Input.Keyboard.KeyCodes.A);
     // JustDown only fires for a single frame (~16ms) but inputs are batched every 100ms.
     // Use keydown event to accumulate fire intent so it isn't dropped between send ticks.
     this.fireKey.on('down', () => { this.firePending = true; });
+    this.autopilotKey.on('down', () => {
+      this.autopilot = !this.autopilot;
+      this.connection.send({ type: 'autopilot', enabled: this.autopilot });
+      this.autopilotLabel.setText(this.autopilot ? 'AUTOPILOT: ON' : 'AUTOPILOT: OFF');
+      this.autopilotLabel.setColor(this.autopilot ? '#00ff88' : '#888888');
+    });
 
     // Inject tilemap JSON into cache (bundled by Vite — no HTTP request needed)
     this.cache.tilemap.add('arena-1', {
@@ -64,10 +74,14 @@ export class ArenaScene extends Phaser.Scene {
       fontStyle: 'bold',
       fontFamily: 'monospace'
     }).setScrollFactor(0);
-    this.add.text(16, 48, 'Arrow keys: drive | Space: fire', {
+    this.add.text(16, 48, 'Arrows: drive | Space: fire | A: autopilot', {
       color: '#888888',
       fontSize: '12px',
       fontFamily: 'monospace'
+    }).setScrollFactor(0);
+
+    this.autopilotLabel = this.add.text(16, 68, 'AUTOPILOT: OFF', {
+      color: '#888888', fontSize: '12px', fontFamily: 'monospace'
     }).setScrollFactor(0);
 
     this.minimapGfx = this.add.graphics().setScrollFactor(0).setDepth(20);

@@ -200,6 +200,7 @@ async function handleMessage(ws: WebSocket, raw: string): Promise<void> {
       }
       runner.getEngine().addVehicle(vehicle);
     }
+    runner.registerHumanVehicle(msg.vehicleId);
     runner.addClient(ws); // sends initial zone_state automatically
     return;
   }
@@ -222,6 +223,16 @@ async function handleMessage(ws: WebSocket, raw: string): Promise<void> {
     const runner = zones.get(zoneId);
     if (runner) {
       runner.queueInput(vehicleId, { speed, steer, fireWeapon });
+    }
+    return;
+  }
+
+  if (msg.type === 'autopilot') {
+    const zoneId = clientZones.get(ws);
+    const vehicleId = clientVehicles.get(ws);
+    const runner = zoneId ? zones.get(zoneId) : undefined;
+    if (runner && vehicleId) {
+      runner.setAutopilot(vehicleId, !!msg.enabled);
     }
     return;
   }
