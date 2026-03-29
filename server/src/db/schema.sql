@@ -16,6 +16,7 @@ CREATE TABLE IF NOT EXISTS vehicles (
   original_loadout JSONB,
   damage_state JSONB NOT NULL DEFAULT '{}',
   value INTEGER NOT NULL DEFAULT 0,
+  in_arena BOOLEAN NOT NULL DEFAULT FALSE,
   created_at TIMESTAMPTZ DEFAULT NOW()
 );
 

@@ -126,6 +126,7 @@ async function removeClientFromZone(ws: WebSocket): Promise<void> {
             playerId
           ]
         );
+        await db.query(`UPDATE vehicles SET in_arena = FALSE WHERE id = $1 AND player_id = $2`, [vehicleId, playerId]);
       } catch (e) {
         console.error('Failed to save vehicle damage:', e);
       }
@@ -340,6 +341,15 @@ async function handleMessage(ws: WebSocket, raw: string): Promise<void> {
     }
 
     runner.addClient(ws); // sends initial zone_state automatically
+
+    // Mark vehicle as in-arena
+    if (msg.token) {
+      const playerId = clientPlayers.get(ws);
+      if (playerId) {
+        const db = getDb();
+        await db.query(`UPDATE vehicles SET in_arena = TRUE WHERE id = $1 AND player_id = $2`, [msg.vehicleId, playerId]);
+      }
+    }
     return;
   }
 

@@ -101,7 +101,7 @@ export class GarageScene extends Phaser.Scene {
         }
 
         // [SELL] button
-        const sellBtn = this.add.text(800, y, '[SELL]', {
+        const sellBtn = this.add.text(830, y, '[SELL]', {
           color: '#ff8844', fontSize: '13px', fontFamily: 'monospace',
           backgroundColor: '#221100', padding: { x: 5, y: 2 }
         }).setInteractive();

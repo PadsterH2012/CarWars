@@ -60,12 +60,15 @@ vehiclesRouter.get('/:id', async (req: AuthRequest, res) => {
 vehiclesRouter.delete('/:id', async (req: AuthRequest, res) => {
   const db = getDb();
   const result = await db.query(
-    `SELECT id, value FROM vehicles WHERE id = $1 AND player_id = $2`,
+    `SELECT id, value, in_arena FROM vehicles WHERE id = $1 AND player_id = $2`,
     [req.params.id, req.playerId]
   );
   if (!result.rows.length) return res.status(403).json({ error: 'Vehicle not found' });
 
   const vehicle = result.rows[0];
+  if (vehicle.in_arena) {
+    return res.status(409).json({ error: 'Cannot sell a vehicle that is currently in an arena' });
+  }
   const salePrice = Math.floor(vehicle.value / 2);
 
   const client = await db.connect();
