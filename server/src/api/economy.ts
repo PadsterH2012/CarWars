@@ -219,18 +219,21 @@ jobsRouter.post('/:id/complete', async (req: AuthRequest, res) => {
   if (job.completed) return res.status(409).json({ error: 'Already completed' });
   if (job.taken_by !== req.playerId) return res.status(403).json({ error: 'Not your job' });
 
-  await db.query('BEGIN');
+  const client = await db.connect();
   try {
-    await db.query(`UPDATE jobs SET completed = TRUE WHERE id = $1`, [id]);
-    await db.query(`UPDATE players SET money = money + $1 WHERE id = $2`, [job.payout, req.playerId]);
-    await db.query(
+    await client.query('BEGIN');
+    await client.query(`UPDATE jobs SET completed = TRUE WHERE id = $1`, [id]);
+    await client.query(`UPDATE players SET money = money + $1 WHERE id = $2`, [job.payout, req.playerId]);
+    await client.query(
       `INSERT INTO event_history (player_id, event_type, result, money_delta) VALUES ($1, $2, $3, $4)`,
       [req.playerId, job.job_type, JSON.stringify({ jobId: id, zoneId: job.zone_id }), job.payout]
     );
-    await db.query('COMMIT');
+    await client.query('COMMIT');
   } catch (e) {
-    await db.query('ROLLBACK');
+    await client.query('ROLLBACK');
     throw e;
+  } finally {
+    client.release();
   }
 
   const pResult = await db.query(`SELECT money FROM players WHERE id = $1`, [req.playerId]);

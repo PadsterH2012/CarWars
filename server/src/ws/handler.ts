@@ -175,12 +175,17 @@ async function handleMessage(ws: WebSocket, raw: string): Promise<void> {
 
             // Find winner's WebSocket to check for active job
             let jobPayout = 0;
+            let completedJobWs: WebSocket | null = null;
+            let completedJobType = '';
+            let completedJobId = '';
+            let completedZoneId = '';
+
             for (const [ws, pid] of clientPlayers) {
               if (pid !== winnerId) continue;
               const jobId = clientJobs.get(ws);
               if (!jobId) continue;
 
-              // Complete the job if it belongs to the winner and is still open
+              // Verify job belongs to winner and is still open
               const jobRes = await db.query(
                 `UPDATE jobs SET completed = TRUE
                  WHERE id = $1 AND taken_by = $2 AND completed = FALSE
@@ -189,13 +194,11 @@ async function handleMessage(ws: WebSocket, raw: string): Promise<void> {
               );
               if (jobRes.rows.length) {
                 jobPayout = jobRes.rows[0].payout;
-                await db.query(
-                  `INSERT INTO event_history (player_id, event_type, result, money_delta) VALUES ($1,$2,$3,$4)`,
-                  [winnerId, jobRes.rows[0].job_type,
-                   JSON.stringify({ jobId, zoneId: jobRes.rows[0].zone_id }), jobPayout]
-                );
+                completedJobWs = ws;
+                completedJobType = jobRes.rows[0].job_type;
+                completedJobId = jobId;
+                completedZoneId = jobRes.rows[0].zone_id;
               }
-              clientJobs.delete(ws);
               break;
             }
 
@@ -211,7 +214,16 @@ async function handleMessage(ws: WebSocket, raw: string): Promise<void> {
                 'INSERT INTO event_history (player_id, event_type, result, money_delta) VALUES ($1,$2,$3,$4)',
                 [winnerId, 'arena_win', JSON.stringify({ zoneId: msg.zoneId, prize }), prize]
               );
+              if (jobPayout > 0) {
+                await client.query(
+                  `INSERT INTO event_history (player_id, event_type, result, money_delta) VALUES ($1,$2,$3,$4)`,
+                  [winnerId, completedJobType,
+                   JSON.stringify({ jobId: completedJobId, zoneId: completedZoneId }), jobPayout]
+                );
+              }
               await client.query('COMMIT');
+              // Only clear the job from memory AFTER the transaction commits
+              if (completedJobWs) clientJobs.delete(completedJobWs);
             } catch (e) {
               await client.query('ROLLBACK');
               throw e;
@@ -252,7 +264,16 @@ async function handleMessage(ws: WebSocket, raw: string): Promise<void> {
       if (result) {
         vehicle = result.vehicle;
         clientPlayers.set(ws, result.playerId);
-        if (msg.jobId) clientJobs.set(ws, msg.jobId);
+        // Before storing jobId, validate it belongs to this player and is not already completed
+        if (msg.jobId) {
+          const jobCheck = await db.query(
+            `SELECT id FROM jobs WHERE id = $1 AND taken_by = $2 AND completed = FALSE`,
+            [msg.jobId, result.playerId]
+          );
+          if (jobCheck.rows.length) {
+            clientJobs.set(ws, msg.jobId);
+          }
+        }
       }
     }
     const playerSpawn = runner.getMap().spawnPoints.find(s => s.team === 'player');
