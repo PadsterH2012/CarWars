@@ -42,6 +42,11 @@ export function createTurnEngine(initialState: ZoneState, map?: ArenaMap): TurnE
       const destroyedVehicles = state.vehicles.filter(v => v.stats.damageState.destroyed);
       const preMoveVehicles = [...activeVehicles];
 
+      // Mutable damage and ammo update maps — declared before the movement loop so wall
+      // collision damage can be written to the same accumulator as combat/mine/fire damage
+      const damageUpdates = new Map<string, DamageState>();
+      const ammoUpdates = new Map<string, Map<string, number>>(); // vehicleId -> mountId -> newAmmo
+
       // Move all active vehicles
       let newVehicles = activeVehicles.map(vehicle => {
         const input = pendingInputs.get(vehicle.id) ?? lastInputs.get(vehicle.id) ?? { speed: 0, steer: 0, fireWeapon: null };
@@ -54,25 +59,20 @@ export function createTurnEngine(initialState: ZoneState, map?: ArenaMap): TurnE
           const hit = resolveWallCollisions(moved.position, map.walls);
           if (hit.hit) {
             const baseDamage = Math.floor(moved.speed / 5);
-            const ds = moved.stats.damageState;
-            const newArmor = { ...ds.armor };
             if (baseDamage > 0) {
-              newArmor[hit.facing] = Math.max(0, (newArmor[hit.facing] ?? 0) - baseDamage);
-              const destroyed = ds.destroyed || (newArmor[hit.facing] ?? 0) <= 0;
-              console.log(`[t${state.tick}] WALL  ${moved.id} hit ${hit.facing} at spd=${moved.speed} -${baseDamage}pts`);
-              moved = {
-                ...moved,
-                position: { x: hit.x, y: hit.y },
-                speed: 0,
-                stats: {
-                  ...moved.stats,
-                  damageState: { ...ds, armor: newArmor, destroyed }
-                }
-              };
-            } else {
-              // Zero speed but no armor damage (too slow)
-              moved = { ...moved, position: { x: hit.x, y: hit.y }, speed: 0 };
+              const ds = damageUpdates.get(moved.id) ?? { ...moved.stats.damageState };
+              const newArmor = { ...ds.armor };
+              const validFacings = ['front', 'back', 'left', 'right', 'top', 'underbody'] as const;
+              type ValidFacing = typeof validFacings[number];
+              const facing = validFacings.includes(hit.facing as ValidFacing) ? hit.facing as ValidFacing : 'front';
+              newArmor[facing] = Math.max(0, (newArmor[facing] ?? 0) - baseDamage);
+              const destroyed = ds.destroyed || (newArmor[facing] ?? 0) === 0;
+              console.log(`[t${state.tick}] WALL  ${moved.id} hit ${facing} at spd=${moved.speed} -${baseDamage}pts`);
+              // Write to accumulator so wall + combat damage in same tick are both applied
+              damageUpdates.set(moved.id, { ...ds, armor: newArmor, destroyed });
             }
+            // Always correct position and zero speed
+            moved = { ...moved, position: { x: hit.x, y: hit.y }, speed: 0 };
           }
         }
 
@@ -114,10 +114,6 @@ export function createTurnEngine(initialState: ZoneState, map?: ArenaMap): TurnE
           };
         });
       }
-
-      // Mutable damage and ammo update maps
-      const damageUpdates = new Map<string, DamageState>();
-      const ammoUpdates = new Map<string, Map<string, number>>(); // vehicleId -> mountId -> newAmmo
 
       // Resolve combat using pre-move positions
       preMoveVehicles.forEach(attacker => {
