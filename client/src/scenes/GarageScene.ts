@@ -6,10 +6,14 @@ export class GarageScene extends Phaser.Scene {
   private token = '';
   private vehicles: Vehicle[] = [];
   private money = 0;
+  private lastResult: { prize: number; jobPayout: number } | null = null;
 
   constructor() { super({ key: 'GarageScene' }); }
 
-  init(data: { token: string }): void { this.token = data.token; }
+  init(data: { token: string; lastResult?: { prize: number; jobPayout: number } | null }): void {
+    this.token = data.token;
+    this.lastResult = data.lastResult ?? null;
+  }
 
   async create(): Promise<void> {
     const host = window.location.hostname;
@@ -30,6 +34,13 @@ export class GarageScene extends Phaser.Scene {
     this.add.text(100, 70, `Money: $${this.money.toLocaleString()} | Division: ${me.division}`, {
       color: '#ffcc00', fontSize: '16px', fontFamily: 'monospace'
     });
+
+    if (this.lastResult) {
+      const total = this.lastResult.prize + this.lastResult.jobPayout;
+      this.add.text(640, 55, `Last fight: +$${total.toLocaleString()} earned`, {
+        color: '#00ff88', fontSize: '14px', fontFamily: 'monospace'
+      }).setOrigin(0.5);
+    }
 
     const activeJobId = localStorage.getItem('cw_active_job');
     const activeJobDesc = localStorage.getItem('cw_active_job_desc');
@@ -59,14 +70,20 @@ export class GarageScene extends Phaser.Scene {
         repairBtn.on('pointerdown', () => this.repairVehicle(v.id));
 
         // Enter arena button
-        const arenaBtn = this.add.text(620, y, '[FIGHT]', {
-          color: '#00ff88', fontSize: '14px', fontFamily: 'monospace',
-          backgroundColor: '#003322', padding: { x: 6, y: 3 }
-        }).setInteractive();
-        arenaBtn.on('pointerdown', () => {
-          const activeJobId = localStorage.getItem('cw_active_job') ?? undefined;
-          this.scene.start('ArenaScene', { token: this.token, vehicleId: v.id, jobId: activeJobId });
+        const isDestroyed = v.damage_state?.destroyed;
+        const arenaBtn = this.add.text(620, y, isDestroyed ? '[DESTROYED]' : '[FIGHT]', {
+          color: isDestroyed ? '#555555' : '#00ff88',
+          fontSize: '14px', fontFamily: 'monospace',
+          backgroundColor: isDestroyed ? '#221111' : '#003322',
+          padding: { x: 6, y: 3 }
         });
+        if (!isDestroyed) {
+          arenaBtn.setInteractive();
+          arenaBtn.on('pointerdown', () => {
+            const activeJobId = localStorage.getItem('cw_active_job') ?? undefined;
+            this.scene.start('ArenaScene', { token: this.token, vehicleId: v.id, jobId: activeJobId });
+          });
+        }
       });
     }
 

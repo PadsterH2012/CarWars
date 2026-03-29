@@ -146,7 +146,7 @@ export class ArenaScene extends Phaser.Scene {
         this.zoneState = msg.state;
         this.syncSprites(msg.state);
       } else if (msg.type === 'zone_end') {
-        this.showZoneEnd(msg.winnerId, msg.reason);
+        this.showZoneEnd(msg.winnerId, msg.reason, msg.prize ?? 0, msg.jobPayout ?? 0);
       }
     });
   }
@@ -356,21 +356,89 @@ export class ArenaScene extends Phaser.Scene {
     });
   }
 
-  private showZoneEnd(winnerId: string | null, reason: string): void {
+  private showZoneEnd(winnerId: string | null, reason: string, prize: number, jobPayout: number): void {
     if (this.zoneEnded) return;
     this.zoneEnded = true;
-    const myVehicle = this.zoneState?.vehicles.find(v => v.id === this.myVehicleId);
-    const isWinner = myVehicle && winnerId && myVehicle.playerId === winnerId;
-    const text = isWinner ? 'YOU WIN! +$5000' : 'ARENA OVER';
-    const color = isWinner ? '#00ff88' : '#ff4444';
 
-    this.add.rectangle(640, 360, 400, 100, 0x000000, 0.8).setScrollFactor(0).setDepth(10);
-    this.add.text(640, 340, text, {
-      fontSize: '36px', color, fontFamily: 'monospace', fontStyle: 'bold'
+    const myVehicle = this.zoneState?.vehicles.find(v => v.id === this.myVehicleId);
+    const isWinner = !!myVehicle && !!winnerId && myVehicle.playerId === winnerId;
+
+    // Clear active job from localStorage if we won (job was auto-completed server-side)
+    if (isWinner && jobPayout > 0) {
+      localStorage.removeItem('cw_active_job');
+      localStorage.removeItem('cw_active_job_desc');
+      localStorage.removeItem('cw_active_job_payout');
+    }
+
+    // Dim overlay
+    this.add.rectangle(640, 360, 700, 380, 0x000000, 0.85).setScrollFactor(0).setDepth(10);
+
+    // Title
+    const titleText = isWinner ? 'VICTORY' : reason === 'ai_victory' ? 'DEFEATED' : 'BATTLE OVER';
+    const titleColor = isWinner ? '#00ff88' : '#ff4444';
+    this.add.text(640, 215, titleText, {
+      fontSize: '42px', color: titleColor, fontFamily: 'monospace', fontStyle: 'bold'
     }).setOrigin(0.5).setScrollFactor(0).setDepth(11);
-    this.add.text(640, 390, reason === 'last_standing' ? 'Last vehicle standing' : reason, {
-      fontSize: '16px', color: '#aaaaaa', fontFamily: 'monospace'
-    }).setOrigin(0.5).setScrollFactor(0).setDepth(11);
+
+    // Financial summary (only meaningful for winner)
+    let y = 275;
+    if (isWinner) {
+      if (prize > 0) {
+        this.add.text(640, y, `Arena prize:  $${prize.toLocaleString()}`, {
+          fontSize: '18px', color: '#ffcc00', fontFamily: 'monospace'
+        }).setOrigin(0.5).setScrollFactor(0).setDepth(11);
+        y += 30;
+      }
+      if (jobPayout > 0) {
+        this.add.text(640, y, `Job payout:   $${jobPayout.toLocaleString()}`, {
+          fontSize: '18px', color: '#ffcc00', fontFamily: 'monospace'
+        }).setOrigin(0.5).setScrollFactor(0).setDepth(11);
+        y += 30;
+      }
+      const total = prize + jobPayout;
+      if (total > 0) {
+        this.add.text(640, y, `Total earned: $${total.toLocaleString()}`, {
+          fontSize: '20px', color: '#ffffff', fontFamily: 'monospace', fontStyle: 'bold'
+        }).setOrigin(0.5).setScrollFactor(0).setDepth(11);
+        y += 36;
+      }
+    }
+
+    // Damage summary
+    if (myVehicle) {
+      const ds = myVehicle.stats.damageState;
+      const armorLost = Object.entries(ds.armor)
+        .reduce((sum, [k, v]) => {
+          const orig = (myVehicle.stats.loadout.armor as Record<string, number>)[k] ?? 0;
+          return sum + Math.max(0, orig - (v ?? 0));
+        }, 0);
+      const flags = [
+        ds.engineDamaged ? 'ENGINE' : '',
+        ds.onFire ? 'FIRE' : '',
+        (ds.tiresBlown?.length ?? 0) > 0 ? `${ds.tiresBlown!.length} TIRE(S)` : '',
+      ].filter(Boolean).join('  ');
+
+      const dmgColor = armorLost > 0 ? '#ff8888' : '#88ff88';
+      this.add.text(640, y, `Damage: ${armorLost} armor pts lost${flags ? `  [${flags}]` : ''}`, {
+        fontSize: '14px', color: dmgColor, fontFamily: 'monospace'
+      }).setOrigin(0.5).setScrollFactor(0).setDepth(11);
+      y += 24;
+    }
+
+    // Return to garage button
+    y = Math.max(y + 10, 460);
+    const garageBtn = this.add.text(640, y, '[RETURN TO GARAGE]', {
+      fontSize: '20px', color: '#aaaaff', fontFamily: 'monospace',
+      backgroundColor: '#111133', padding: { x: 12, y: 6 }
+    }).setOrigin(0.5).setScrollFactor(0).setDepth(11).setInteractive();
+
+    garageBtn.on('pointerdown', () => {
+      this.connection.send({ type: 'leave_zone' });
+      this.scene.start('GarageScene', {
+        token: this.token,
+        lastResult: isWinner ? { prize, jobPayout } : null,
+      });
+    });
   }
 
   update(time: number): void {
