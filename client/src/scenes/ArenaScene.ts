@@ -29,6 +29,8 @@ export class ArenaScene extends Phaser.Scene {
   private minimapGfx!: Phaser.GameObjects.Graphics;
   private mapWalls: import('@carwars/shared').Rect[] = [];
   private mapGraphics!: Phaser.GameObjects.Graphics;
+  private tilemapLayers: Phaser.Tilemaps.TilemapLayer[] = [];
+  private bgGraphics!: Phaser.GameObjects.Graphics;
 
   constructor() {
     super({ key: 'ArenaScene' });
@@ -70,9 +72,11 @@ export class ArenaScene extends Phaser.Scene {
 
     const map = this.make.tilemap({ key: 'arena-1' });
     const tileset = map.addTilesetImage('arena', 'tiles-arena')!;
-    map.createLayer('ground', tileset);
+    const groundLayer = map.createLayer('ground', tileset);
     const wallLayer = map.createLayer('walls', tileset)!;
     wallLayer.setCollisionByExclusion([0]);
+    this.tilemapLayers = [groundLayer, wallLayer].filter((l): l is Phaser.Tilemaps.TilemapLayer => l !== null);
+    this.bgGraphics = this.add.graphics().setDepth(0);
 
     this.add.text(16, 16, 'CAR WARS', {
       color: '#ff4444',
@@ -116,9 +120,19 @@ export class ArenaScene extends Phaser.Scene {
         if (msg.state.walls && msg.state.walls.length > 0 && this.mapWalls.length === 0) {
           this.mapWalls = msg.state.walls;
           this.renderMapWalls(msg.state.walls);
-          // Zoom out further for the large truck stop map
           if (msg.state.mapId === 'truck-stop') {
             this.cameras.main.setZoom(0.35);
+            // Hide old 40×23 tilemap — it sits inside the truck stop and confuses the layout
+            this.tilemapLayers.forEach(l => l.setVisible(false));
+            // Draw a full dark background for the 80×50 map (depth 0, behind walls at depth 1)
+            const mapW = 80 * PIXELS_PER_INCH;
+            const mapH = 50 * PIXELS_PER_INCH;
+            const mapX = WORLD_CENTER_X - mapW / 2;
+            const mapY = WORLD_CENTER_Y - mapH / 2;
+            this.bgGraphics.fillStyle(0x0a0a14, 1);
+            this.bgGraphics.fillRect(mapX, mapY, mapW, mapH);
+            // Constrain camera to the truck stop bounds
+            this.cameras.main.setBounds(mapX, mapY, mapW, mapH);
           }
         }
         this.zoneState = msg.state;
