@@ -35,8 +35,8 @@ async function loadVehicleFromDb(vehicleId: string, token: string): Promise<{ ve
       id: row.id,
       playerId,
       driverId: '',
-      position: { x: 0, y: 0 },
-      facing: 0,
+      position: { x: -40, y: 40 },
+      facing: 45, // SW corner, facing NE toward arena center
       speed: 0,
       stats
     },
@@ -161,12 +161,14 @@ async function handleMessage(ws: WebSocket, raw: string): Promise<void> {
       } : {});
 
       if (isArena) {
-        runner.getEngine().addVehicle(makeTestVehicle('ai-red', 'ai-team', -5, -4, 135, 20));
-        runner.getEngine().addVehicle(makeTestVehicle('ai-blue', 'ai-team', 5, 4, 315, 20));
+        // Opposing corners, ~113" apart (well beyond the 16" max fire range)
+        // Facing inward so they drive toward each other before engaging
+        runner.getEngine().addVehicle(makeTestVehicle('ai-red',  'ai-team', -40, -40, 135, 20)); // NW corner, facing SE
+        runner.getEngine().addVehicle(makeTestVehicle('ai-blue', 'ai-team',  40,  40, 315, 20)); // SE corner, facing NW
       } else if (isHighway) {
-        runner.getEngine().addVehicle(makeTestVehicle('npc-1', 'npc-traffic', -5, -10, 0));
-        runner.getEngine().addVehicle(makeTestVehicle('npc-2', 'npc-traffic', 5, 0, 0));
-        runner.getEngine().addVehicle(makeTestVehicle('npc-3', 'npc-traffic', 0, 10, 0));
+        runner.getEngine().addVehicle(makeTestVehicle('npc-1', 'npc-traffic', -5, -60, 0));
+        runner.getEngine().addVehicle(makeTestVehicle('npc-2', 'npc-traffic',  5, -20, 0));
+        runner.getEngine().addVehicle(makeTestVehicle('npc-3', 'npc-traffic',  0,  40, 0));
       }
 
       zones.set(msg.zoneId, runner);
@@ -187,7 +189,7 @@ async function handleMessage(ws: WebSocket, raw: string): Promise<void> {
         }
       }
       if (!vehicle) {
-        vehicle = makeTestVehicle(msg.vehicleId, 'player', 0, 0, 0);
+        vehicle = makeTestVehicle(msg.vehicleId, 'player', -40, 40, 45); // SW corner, facing NE
       }
       runner.getEngine().addVehicle(vehicle);
     }
