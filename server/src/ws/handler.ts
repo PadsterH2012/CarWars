@@ -67,6 +67,11 @@ function makeTestVehicle(id: string, playerId: string, x: number, y: number, fac
   };
 }
 
+function mapIdForZone(zoneId: string): string {
+  if (zoneId.startsWith('arena-truck-stop')) return 'truck-stop';
+  return 'open';
+}
+
 const zones = new Map<string, ZoneRunner>();
 const clientZones = new Map<WebSocket, string>();
 const clientVehicles = new Map<WebSocket, string>();
@@ -165,13 +170,15 @@ async function handleMessage(ws: WebSocket, raw: string): Promise<void> {
             console.error('Failed to credit arena prize:', e);
           }
         },
-      } : {});
+      } : {}, mapIdForZone(msg.zoneId));
 
       if (isArena) {
-        // Opposing corners, ~113" apart (well beyond the 16" max fire range)
-        // Facing inward so they drive toward each other before engaging
-        runner.getEngine().addVehicle(makeTestVehicle('ai-red',  'ai-team', -40, -40, 135, 20)); // NW corner, facing SE
-        runner.getEngine().addVehicle(makeTestVehicle('ai-blue', 'ai-team',  40,  40, 315, 20)); // SE corner, facing NW
+        const aiSpawns = runner.getMap().spawnPoints.filter(s => s.team === 'ai');
+        const names = ['ai-red', 'ai-blue'];
+        aiSpawns.forEach((sp, i) => {
+          const name = names[i] ?? `ai-${i}`;
+          runner.getEngine().addVehicle(makeTestVehicle(name, 'ai-team', sp.x, sp.y, sp.facing, 70));
+        });
       } else if (isHighway) {
         runner.getEngine().addVehicle(makeTestVehicle('npc-1', 'npc-traffic', -5, -60, 0));
         runner.getEngine().addVehicle(makeTestVehicle('npc-2', 'npc-traffic',  5, -20, 0));
@@ -183,23 +190,33 @@ async function handleMessage(ws: WebSocket, raw: string): Promise<void> {
     clientZones.set(ws, msg.zoneId);
     clientVehicles.set(ws, msg.vehicleId);
     const runner = zones.get(msg.zoneId)!;
-    // Spawn the player's vehicle if not already in the zone
-    const existing = runner.getEngine().getState().vehicles.find(v => v.id === msg.vehicleId);
-    if (!existing) {
-      // Try DB hydration first; fall back to test fixture for dev convenience
-      let vehicle: VehicleState | null = null;
-      if (msg.token) {
-        const result = await loadVehicleFromDb(msg.vehicleId, msg.token);
-        if (result) {
-          vehicle = result.vehicle;
-          clientPlayers.set(ws, result.playerId);
-        }
+    // Always (re)spawn the player's vehicle — removes any stale position from a prior session
+    runner.getEngine().removeVehicle(msg.vehicleId);
+    let vehicle: VehicleState | null = null;
+    if (msg.token) {
+      const result = await loadVehicleFromDb(msg.vehicleId, msg.token);
+      if (result) {
+        vehicle = result.vehicle;
+        clientPlayers.set(ws, result.playerId);
       }
-      if (!vehicle) {
-        vehicle = makeTestVehicle(msg.vehicleId, 'player', -40, 40, 45); // SW corner, facing NE
-      }
-      runner.getEngine().addVehicle(vehicle);
     }
+    const playerSpawn = runner.getMap().spawnPoints.find(s => s.team === 'player');
+    const spawnX = playerSpawn?.x ?? 0;
+    const spawnY = playerSpawn?.y ?? 8;
+    if (!vehicle) {
+      vehicle = makeTestVehicle(msg.vehicleId, 'player', spawnX, spawnY, 0, 60);
+    }
+    vehicle = {
+      ...vehicle,
+      position: { x: spawnX, y: spawnY },
+      facing: 0,
+      speed: 0,
+      stats: {
+        ...vehicle.stats,
+        maxSpeed: Math.min(vehicle.stats.maxSpeed, 100), // cap at 100 mph — sensible Car Wars ceiling
+      },
+    };
+    runner.getEngine().addVehicle(vehicle);
     runner.registerHumanVehicle(msg.vehicleId);
     runner.addClient(ws); // sends initial zone_state automatically
     return;

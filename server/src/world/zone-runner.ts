@@ -1,7 +1,8 @@
 import { WebSocket } from 'ws';
-import type { ServerMessage } from '@carwars/shared';
+import type { ServerMessage, ArenaMap } from '@carwars/shared';
 import { createTurnEngine, TurnEngine } from '../rules/engine';
 import { computeAiInput } from '../ai/driver';
+import { getMap } from '../rules/maps';
 
 const TICK_MS = 100;
 
@@ -19,25 +20,40 @@ export class ZoneRunner {
   private humanVehicles = new Set<string>();
   // Vehicles where the human has opted into AI autopilot
   private autopilotVehicles = new Set<string>();
+  private map: ArenaMap;
 
   hasEnded(): boolean { return this.ended; }
   readonly zoneId: string;
   private onEnd?: (winnerId: string | null) => void;
 
-  constructor(zoneId: string, zoneType: import('@carwars/shared').ZoneType = 'arena', options: ZoneRunnerOptions = {}) {
+  constructor(
+    zoneId: string,
+    zoneType: import('@carwars/shared').ZoneType = 'arena',
+    options: ZoneRunnerOptions = {},
+    mapId = 'open'
+  ) {
     this.zoneId = zoneId;
     this.onEnd = options.onEnd;
-    this.engine = createTurnEngine({ id: zoneId, type: zoneType, tick: 0, vehicles: [], hazardObjects: [] });
+    this.map = getMap(mapId);
+    this.engine = createTurnEngine(
+      { id: zoneId, type: zoneType, tick: 0, vehicles: [], hazardObjects: [] },
+      this.map
+    );
   }
 
   addClient(ws: WebSocket): void {
     this.clients.add(ws);
     if (!this.interval) this.start();
-    const msg: ServerMessage = { type: 'zone_state', state: this.engine.getState() };
+    const state = this.engine.getState();
+    // Include map walls only in the initial join message — not broadcast every tick
+    const initialState = { ...state, mapId: this.map.id, walls: this.map.walls };
+    const msg: ServerMessage = { type: 'zone_state', state: initialState };
     if (ws.readyState === WebSocket.OPEN) {
       ws.send(JSON.stringify(msg));
     }
   }
+
+  getMap(): ArenaMap { return this.map; }
 
   removeClient(ws: WebSocket): void {
     this.clients.delete(ws);
