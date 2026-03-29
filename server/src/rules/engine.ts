@@ -1,7 +1,8 @@
-import type { ZoneState, VehicleState, HazardObject, DamageState, ArmorLocation } from '@carwars/shared';
+import type { ZoneState, VehicleState, HazardObject, DamageState, ArmorLocation, ArenaMap } from '@carwars/shared';
 import { computeMovement, classifyManeuver, resolveControlTable } from './movement';
 import { resolveToHit, resolveDamage, isWeaponInArc, roll2d6, rollDamage } from './combat';
 import { WEAPONS } from './data/weapons';
+import { resolveWallCollisions } from './collision';
 
 interface VehicleInput {
   speed: number;
@@ -14,11 +15,12 @@ export interface TurnEngine {
   resolveTick(): ZoneState;
   getState(): ZoneState;
   addVehicle(vehicle: VehicleState): void;
+  removeVehicle(vehicleId: string): void;
 }
 
 const TICKS_PER_TURN = 10; // 100ms ticks × 10 = 1 second = 1 Compendium turn
 
-export function createTurnEngine(initialState: ZoneState): TurnEngine {
+export function createTurnEngine(initialState: ZoneState, map?: ArenaMap): TurnEngine {
   let state: ZoneState = {
     ...initialState,
     vehicles: [...initialState.vehicles],
@@ -45,7 +47,36 @@ export function createTurnEngine(initialState: ZoneState): TurnEngine {
         const input = pendingInputs.get(vehicle.id) ?? lastInputs.get(vehicle.id) ?? { speed: 0, steer: 0, fireWeapon: null };
         // Persist speed but reset steer — steer is an impulse, not a held state
         lastInputs.set(vehicle.id, { speed: input.speed, steer: 0, fireWeapon: null });
-        return computeMovement(vehicle, input);
+        let moved = computeMovement(vehicle, input);
+
+        // Wall collision check — only when a map with walls is loaded
+        if (map && map.walls.length > 0) {
+          const hit = resolveWallCollisions(moved.position, map.walls);
+          if (hit.hit) {
+            const baseDamage = Math.floor(moved.speed / 5);
+            const ds = moved.stats.damageState;
+            const newArmor = { ...ds.armor };
+            if (baseDamage > 0) {
+              newArmor[hit.facing] = Math.max(0, (newArmor[hit.facing] ?? 0) - baseDamage);
+              const destroyed = ds.destroyed || (newArmor[hit.facing] ?? 0) <= 0;
+              console.log(`[t${state.tick}] WALL  ${moved.id} hit ${hit.facing} at spd=${moved.speed} -${baseDamage}pts`);
+              moved = {
+                ...moved,
+                position: { x: hit.x, y: hit.y },
+                speed: 0,
+                stats: {
+                  ...moved.stats,
+                  damageState: { ...ds, armor: newArmor, destroyed }
+                }
+              };
+            } else {
+              // Zero speed but no armor damage (too slow)
+              moved = { ...moved, position: { x: hit.x, y: hit.y }, speed: 0 };
+            }
+          }
+        }
+
+        return moved;
       });
 
       // Track peak hazard D-value this turn (Compendium: one maneuver per turn, use highest D)
@@ -287,6 +318,10 @@ export function createTurnEngine(initialState: ZoneState): TurnEngine {
 
     addVehicle(vehicle) {
       state = { ...state, vehicles: [...state.vehicles, vehicle] };
+    },
+
+    removeVehicle(vehicleId) {
+      state = { ...state, vehicles: state.vehicles.filter(v => v.id !== vehicleId) };
     }
   };
 }
