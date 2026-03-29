@@ -31,13 +31,14 @@ export function computeAiInput(
   others: VehicleState[],
   skill: number   // 1-6; reserved for future difficulty scaling
 ): AiInput {
-  const enemies = others.filter(o => o.playerId !== self.playerId);
+  // Only target live enemies — destroyed vehicles stay in state but should be ignored
+  const enemies = others.filter(o => o.playerId !== self.playerId && !o.stats.damageState.destroyed);
 
   if (enemies.length === 0) {
     return { speed: 0, steer: 0, fireWeapon: null };
   }
 
-  // Pick the closest enemy
+  // Pick the closest live enemy
   const target = enemies.reduce((closest, e) =>
     distance(self.position, e.position) < distance(self.position, closest.position) ? e : closest
   );
@@ -55,14 +56,14 @@ export function computeAiInput(
   let steer = (desiredFacing - self.facing + 540) % 360 - 180; // -180 to +180
   steer = Math.max(-MAX_TURN, Math.min(MAX_TURN, steer));
 
-  // Speed: close to optimal range
+  const MIN_COMBAT_SPEED = 10; // always keep moving in combat — prevents stopping dead
+  // Speed: chase at full speed, then orbit at minimum speed once in range
   let speed: number;
   if (dist > OPTIMAL_RANGE + 2) {
-    speed = self.stats.maxSpeed; // snap to full speed when chasing — gradual accel lets player escape
-  } else if (dist < OPTIMAL_RANGE - 2) {
-    speed = Math.max(0, self.speed - 5);
+    speed = self.stats.maxSpeed;
   } else {
-    speed = self.speed || 5; // maintain current speed, but don't sit still
+    // In range: keep circling at minimum speed so the vehicle never stops
+    speed = Math.max(MIN_COMBAT_SPEED, self.speed);
   }
 
   // Fire if target is in front arc and within range
