@@ -279,6 +279,9 @@ export class ArenaScene extends Phaser.Scene {
     if (time - this.lastInputSent < 100) return;
     this.lastInputSent = time;
 
+    // When autopilot is on the server drives this vehicle — don't send human input
+    if (this.autopilot) return;
+
     const speed = this.cursors.up?.isDown ? 15
       : this.cursors.down?.isDown ? 5
       : 0;
