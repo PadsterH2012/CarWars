@@ -135,6 +135,13 @@ async function handleMessage(ws: WebSocket, raw: string): Promise<void> {
       send(ws, { type: 'error', message: 'Invalid zoneId' });
       return;
     }
+    // If the zone exists but has already ended, tear it down so a fresh one is created
+    const staleRunner = zones.get(msg.zoneId);
+    if (staleRunner?.hasEnded()) {
+      staleRunner.shutdown();
+      zones.delete(msg.zoneId);
+    }
+
     if (!zones.has(msg.zoneId)) {
       const isArena = msg.zoneId.startsWith('arena');
       const isHighway = msg.zoneId.startsWith('highway');

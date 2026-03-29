@@ -15,6 +15,8 @@ export class ZoneRunner {
   private interval: ReturnType<typeof setInterval> | null = null;
   private humanInputThisTick = new Set<string>();
   private ended = false;
+
+  hasEnded(): boolean { return this.ended; }
   readonly zoneId: string;
   private onEnd?: (winnerId: string | null) => void;
 
