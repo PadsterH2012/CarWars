@@ -265,4 +265,32 @@ describe('POST /api/vehicles/design', () => {
     expect(res.status).toBe(400);
     expect(res.body.error).toMatch(/armor\.front/);
   });
+
+  it('returns 400 if armor includes invalid surface for body type', async () => {
+    // Cycles have no top/underbody — submitting top armor must be rejected
+    const res = await request(app).post('/api/vehicles/design').send({
+      bodyType: 'med_cycle',
+      chassisType: 'standard',
+      suspensionType: 'standard',
+      powerPlantType: 'cyc_elec_medium',
+      tireType: 'standard',
+      armorType: 'ablative',
+      armor: { front: 2, back: 2, left: 1, right: 1, top: 3, underbody: 0 },
+    });
+    expect(res.status).toBe(400);
+    expect(res.body.error).toMatch(/top/);
+  });
+
+  it('returns 400 if cycle body uses a car power plant', async () => {
+    const res = await request(app).post('/api/vehicles/design').send({
+      bodyType: 'med_cycle',
+      chassisType: 'standard',
+      suspensionType: 'standard',
+      powerPlantType: 'elec_medium', // car plant on cycle — invalid
+      tireType: 'standard',
+      armorType: 'ablative',
+      armor: { front: 2, back: 2, left: 1, right: 1, top: 0, underbody: 0 },
+    });
+    expect(res.status).toBe(400);
+  });
 });

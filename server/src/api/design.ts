@@ -38,6 +38,23 @@ designRouter.post('/', (req, res) => {
     }
   }
 
+  // Validate armor surfaces: reject surfaces not valid for this body type
+  const validSurfaces = new Set(body.surfaces);
+  for (const field of armorFields) {
+    const val = armorDist[field];
+    if (val > 0 && !validSurfaces.has(field)) {
+      return res.status(400).json({ error: `${field} is not a valid armor surface for body type ${bodyType}` });
+    }
+  }
+
+  // Validate power plant matches body category (cycleOnly plants can't go in cars and vice versa)
+  if (plant.cycleOnly && !body.isCycle) {
+    return res.status(400).json({ error: `Power plant ${powerPlantType} is for cycles only` });
+  }
+  if (!plant.cycleOnly && body.isCycle) {
+    return res.status(400).json({ error: `Body type ${bodyType} requires a cycle power plant` });
+  }
+
   // tireCount mirrors the rule in deriveStats: cycles have 2, cars have 4, trikes have 3
   const tireCount = body.tireCount ?? (body.isCycle ? 2 : 4);
 
