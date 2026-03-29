@@ -69,11 +69,13 @@ export function createTurnEngine(initialState: ZoneState): TurnEngine {
           // Fishtail: apply random small spin
           if (control.effect === 'fishtail') {
             const spin = (Math.random() > 0.5 ? 1 : -1) * 15;
+            console.log(`[t${state.tick}] CTRL  ${vehicle.id} fishtail (D${accumulated}, HC${vehicle.stats.handlingClass})`);
             return { ...vehicle, facing: (vehicle.facing + spin + 360) % 360 };
           }
 
           // Skid or worse: larger spin, halve speed
           const spinAngle = (Math.random() > 0.5 ? 1 : -1) * (60 + Math.floor(Math.random() * 120));
+          console.log(`[t${state.tick}] CTRL  ${vehicle.id} ${control.effect} (D${accumulated}, HC${vehicle.stats.handlingClass}) spin=${spinAngle}°`);
           return {
             ...vehicle,
             facing: (vehicle.facing + spinAngle + 360) % 360,
@@ -127,7 +129,11 @@ export function createTurnEngine(initialState: ZoneState): TurnEngine {
           if (distance > weapon.longRange) return;
 
           const toHit = resolveToHit(attacker, target, weapon, distance);
-          if (!toHit.hit) return;
+          const distStr = distance.toFixed(1);
+          if (!toHit.hit) {
+            console.log(`[t${state.tick}] MISS  ${attacker.id} → ${target.id} (${weapon.id}, dist=${distStr})`);
+            return;
+          }
 
           // damageDice === 0 means fixed-damage weapon (e.g. legacy entries); fall back to flat damage field
           const rolledDamage = weapon.damageDice > 0 ? rollDamage(weapon.damageDice, weapon.damageMod) : (weapon.damage ?? 1);
@@ -135,6 +141,10 @@ export function createTurnEngine(initialState: ZoneState): TurnEngine {
           const currentDamage = damageUpdates.get(target.id) ?? { ...target.stats.damageState };
           const newArmor = { ...currentDamage.armor };
           newArmor[toHit.location] = Math.max(0, (newArmor[toHit.location] ?? 0) - damageResult.damageDealt);
+          const armorRemaining = newArmor[toHit.location] ?? 0;
+          const willDestroy = currentDamage.destroyed || damageResult.effects.includes('destroyed');
+          const effects = damageResult.effects.length ? ` [${damageResult.effects.join(', ')}]` : '';
+          console.log(`[t${state.tick}] HIT   ${attacker.id} → ${target.id} (${weapon.id}, dist=${distStr}) ${toHit.location} -${damageResult.damageDealt}pts → ${armorRemaining} left${effects}${willDestroy ? ' 💀 DESTROYED' : ''}`);
 
           const tireIndex = (toHit.location === 'front' || toHit.location === 'left') ? 0
             : (toHit.location === 'right') ? 1 : 2;
@@ -144,7 +154,7 @@ export function createTurnEngine(initialState: ZoneState): TurnEngine {
             armor: newArmor,
             engineDamaged: currentDamage.engineDamaged || damageResult.effects.includes('engine_hit'),
             driverWounded: currentDamage.driverWounded || damageResult.effects.includes('driver_wounded'),
-            destroyed: currentDamage.destroyed || damageResult.effects.includes('destroyed'),
+            destroyed: willDestroy,
             onFire: (currentDamage.onFire ?? false) || damageResult.effects.includes('on_fire'),
             tiresBlown: damageResult.effects.includes('tire_blown') && !currentDamage.tiresBlown.includes(tireIndex)
               ? [...currentDamage.tiresBlown, tireIndex]
