@@ -152,7 +152,7 @@ export class ArenaScene extends Phaser.Scene {
         const barLeft  = this.add.rectangle(-12, 0, 3, 20, 0x00ff00).setName('bar-left');
         const barRight = this.add.rectangle( 12, 0, 3, 20, 0x00ff00).setName('bar-right');
 
-        container = this.add.container(0, 0, [body, dirIndicator, label, barFront, barBack, barLeft, barRight]);
+        container = this.add.container(0, 0, [body, dirIndicator, label, barFront, barBack, barLeft, barRight]).setDepth(2);
         this.vehicleSprites.set(v.id, container);
       }
 
@@ -259,9 +259,9 @@ export class ArenaScene extends Phaser.Scene {
       const worldY = WORLD_CENTER_Y + h.position.y * PIXELS_PER_INCH;
       let sprite: Phaser.GameObjects.GameObject;
       if (h.type === 'oil') {
-        sprite = this.add.ellipse(worldX, worldY, 32, 16, 0x112211, 0.7);
+        sprite = this.add.ellipse(worldX, worldY, 32, 16, 0x112211, 0.7).setDepth(1.5);
       } else {
-        sprite = this.add.circle(worldX, worldY, 6, 0xff2200);
+        sprite = this.add.circle(worldX, worldY, 6, 0xff2200).setDepth(1.5);
       }
       this.hazardSprites.set(h.id, sprite);
     });
