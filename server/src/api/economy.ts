@@ -114,6 +114,10 @@ economyRouter.post('/repair', async (req: AuthRequest, res) => {
 });
 
 economyRouter.post('/prize', async (req: AuthRequest, res) => {
+  if (process.env.NODE_ENV === 'production') {
+    return res.status(403).json({ error: 'Not available' });
+  }
+
   const { amount, eventType, zoneId } = req.body;
   const MAX_PRIZE = 50_000;
   if (!amount || typeof amount !== 'number' || amount <= 0 || amount > MAX_PRIZE) {
@@ -121,22 +125,24 @@ economyRouter.post('/prize', async (req: AuthRequest, res) => {
   }
 
   const db = getDb();
-  await db.query('BEGIN');
+  const client = await db.connect();
   try {
-    await db.query(`UPDATE players SET money = money + $1 WHERE id = $2`, [amount, req.playerId]);
-    await db.query(
+    await client.query('BEGIN');
+    await client.query(`UPDATE players SET money = money + $1 WHERE id = $2`, [amount, req.playerId]);
+    await client.query(
       `UPDATE players SET reputation = reputation + $1 WHERE id = $2`,
       [Math.floor(amount / 500), req.playerId]
     );
-    await db.query(
-      `INSERT INTO event_history (player_id, event_type, result, money_delta)
-       VALUES ($1, $2, $3, $4)`,
+    await client.query(
+      `INSERT INTO event_history (player_id, event_type, result, money_delta) VALUES ($1, $2, $3, $4)`,
       [req.playerId, eventType ?? 'prize', JSON.stringify({ zoneId }), amount]
     );
-    await db.query('COMMIT');
+    await client.query('COMMIT');
   } catch (e) {
-    await db.query('ROLLBACK');
+    await client.query('ROLLBACK');
     throw e;
+  } finally {
+    client.release();
   }
 
   const pResult = await db.query(`SELECT money FROM players WHERE id = $1`, [req.playerId]);
