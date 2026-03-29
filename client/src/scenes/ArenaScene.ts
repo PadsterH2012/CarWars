@@ -7,9 +7,13 @@ const PIXELS_PER_INCH = 32;
 const WORLD_CENTER_X = 640;
 const WORLD_CENTER_Y = 360;
 
+// Interpolation target per vehicle — updated on each zone_state, lerped toward each frame
+interface VehicleTarget { x: number; y: number; rotation: number; }
+
 export class ArenaScene extends Phaser.Scene {
   private connection!: Connection;
   private vehicleSprites = new Map<string, Phaser.GameObjects.Container>();
+  private vehicleTargets = new Map<string, VehicleTarget>();
   private hazardSprites = new Map<string, Phaser.GameObjects.GameObject>();
   private zoneState: ZoneState | null = null;
   private cursors!: Phaser.Types.Input.Keyboard.CursorKeys;
@@ -23,6 +27,8 @@ export class ArenaScene extends Phaser.Scene {
   private autopilot = false;
   private autopilotLabel!: Phaser.GameObjects.Text;
   private minimapGfx!: Phaser.GameObjects.Graphics;
+  private mapWalls: import('@carwars/shared').Rect[] = [];
+  private mapGraphics!: Phaser.GameObjects.Graphics;
 
   constructor() {
     super({ key: 'ArenaScene' });
@@ -85,39 +91,42 @@ export class ArenaScene extends Phaser.Scene {
     }).setScrollFactor(0);
 
     this.minimapGfx = this.add.graphics().setScrollFactor(0).setDepth(20);
+    this.mapGraphics = this.add.graphics().setDepth(1);  // above ground, below vehicles
     // Minimap label
     this.add.text(1144, 4, 'MAP', {
       fontSize: '9px', color: '#666666', fontFamily: 'monospace'
     }).setScrollFactor(0).setDepth(20);
 
+    // Zoom out so player can see enemies approaching — 0.6x shows ~53 world units wide
+    this.cameras.main.setZoom(0.6);
+    // Smooth camera follow — lerp 0.08 means camera catches up over ~12 frames (soft tracking)
+    this.cameras.main.setLerp(0.08, 0.08);
+    this.cameras.main.scrollX = 0;
+    this.cameras.main.scrollY = 0;
+
     const wsHost = window.location.hostname;
     this.connection = new Connection(`ws://${wsHost}:3001`);
     this.connection.onOpen(() => {
-      this.connection.send({ type: 'join_zone', zoneId: 'arena-1', vehicleId: this.myVehicleId, token: this.token });
+      const zoneId = new URLSearchParams(window.location.search).get('zone') ?? 'arena-truck-stop';
+      this.connection.send({ type: 'join_zone', zoneId, vehicleId: this.myVehicleId, token: this.token });
     });
     this.connection.onMessage((msg) => {
       if (msg.type === 'zone_state') {
+        // Render map walls once on first message (walls only present on join)
+        if (msg.state.walls && msg.state.walls.length > 0 && this.mapWalls.length === 0) {
+          this.mapWalls = msg.state.walls;
+          this.renderMapWalls(msg.state.walls);
+          // Zoom out further for the large truck stop map
+          if (msg.state.mapId === 'truck-stop') {
+            this.cameras.main.setZoom(0.35);
+          }
+        }
         this.zoneState = msg.state;
         this.syncSprites(msg.state);
-        this.checkBoundary(msg.state);
       } else if (msg.type === 'zone_end') {
         this.showZoneEnd(msg.winnerId, msg.reason);
       }
     });
-  }
-
-  private checkBoundary(state: ZoneState): void {
-    const myVehicle = state.vehicles.find(v => v.id === this.myVehicleId);
-    if (!myVehicle) return;
-    const MAP_HALF_H = 11.5; // 23 tiles / 2
-    if (myVehicle.position.y < -MAP_HALF_H) {
-      this.transitionToZone('town-1');
-    }
-  }
-
-  private transitionToZone(zoneId: string): void {
-    this.connection.send({ type: 'leave_zone' });
-    this.scene.start('TownScene', { zoneId, token: this.token, vehicleId: this.myVehicleId });
   }
 
   private syncSprites(state: ZoneState): void {
@@ -149,8 +158,14 @@ export class ArenaScene extends Phaser.Scene {
 
       const worldX = WORLD_CENTER_X + v.position.x * PIXELS_PER_INCH;
       const worldY = WORLD_CENTER_Y + v.position.y * PIXELS_PER_INCH;
-      container.setPosition(worldX, worldY);
-      container.setRotation(Phaser.Math.DegToRad(v.facing));
+      const rotation = Phaser.Math.DegToRad(v.facing);
+      if (!this.vehicleTargets.has(v.id)) {
+        // Snap to position on first appearance
+        container.setPosition(worldX, worldY);
+        container.setRotation(rotation);
+      }
+      // Always update target — lerp runs in update()
+      this.vehicleTargets.set(v.id, { x: worldX, y: worldY, rotation });
 
       // Update armor bars and body tint
       const loadout = v.stats.loadout;
@@ -193,8 +208,9 @@ export class ArenaScene extends Phaser.Scene {
         }
       }
 
-      if (v.id === this.myVehicleId && !this.cameras.main.following) {
-        this.cameras.main.startFollow(container, true);
+      if (v.id === this.myVehicleId) {
+        // roundPixels=false so lerped sub-pixel positions render smoothly
+        this.cameras.main.startFollow(container, false);
       }
     });
 
@@ -202,6 +218,7 @@ export class ArenaScene extends Phaser.Scene {
       if (!seen.has(id)) {
         container.destroy();
         this.vehicleSprites.delete(id);
+        this.vehicleTargets.delete(id);
       }
     });
 
@@ -256,6 +273,32 @@ export class ArenaScene extends Phaser.Scene {
     });
   }
 
+  private renderMapWalls(walls: import('@carwars/shared').Rect[]): void {
+    const gfx = this.mapGraphics;
+    gfx.clear();
+
+    walls.forEach(wall => {
+      const px = WORLD_CENTER_X + wall.x * PIXELS_PER_INCH;
+      const py = WORLD_CENTER_Y + wall.y * PIXELS_PER_INCH;
+      const pw = wall.w * PIXELS_PER_INCH;
+      const ph = wall.h * PIXELS_PER_INCH;
+
+      if (wall.type === 'turret') {
+        gfx.fillStyle(0x8b1a1a, 1);    // dark red
+        gfx.lineStyle(1, 0xff3333, 1);
+      } else if (wall.type === 'building') {
+        gfx.fillStyle(0x3a3a4a, 1);    // medium grey-blue
+        gfx.lineStyle(1, 0x555566, 1);
+      } else {
+        gfx.fillStyle(0x222233, 1);    // dark grey (outer wall / default)
+        gfx.lineStyle(1, 0x333344, 1);
+      }
+
+      gfx.fillRect(px - pw / 2, py - ph / 2, pw, ph);
+      gfx.strokeRect(px - pw / 2, py - ph / 2, pw, ph);
+    });
+  }
+
   private showZoneEnd(winnerId: string | null, reason: string): void {
     if (this.zoneEnded) return;
     this.zoneEnded = true;
@@ -275,6 +318,21 @@ export class ArenaScene extends Phaser.Scene {
 
   update(time: number): void {
     if (!this.zoneState) return;
+
+    // Interpolate all vehicle sprites toward their server-authoritative targets each frame.
+    // LERP factor 0.25 = smooth over ~4 frames; fast enough to stay close, slow enough to feel smooth.
+    const LERP = 0.25;
+    this.vehicleTargets.forEach((target, id) => {
+      const container = this.vehicleSprites.get(id);
+      if (!container) return;
+      container.x += (target.x - container.x) * LERP;
+      container.y += (target.y - container.y) * LERP;
+      // Angle lerp — handle wraparound so 359°→1° goes through 0° not 180°
+      let dRot = target.rotation - container.rotation;
+      if (dRot > Math.PI)  dRot -= Math.PI * 2;
+      if (dRot < -Math.PI) dRot += Math.PI * 2;
+      container.rotation += dRot * LERP;
+    });
 
     if (time - this.lastInputSent < 100) return;
     this.lastInputSent = time;
