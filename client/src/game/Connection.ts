@@ -40,4 +40,8 @@ export class Connection {
       this.openCallbacks.push(cb);
     }
   }
+
+  close(): void {
+    this.ws.close();
+  }
 }

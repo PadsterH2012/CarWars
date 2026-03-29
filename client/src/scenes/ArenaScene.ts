@@ -364,7 +364,7 @@ export class ArenaScene extends Phaser.Scene {
     const isWinner = !!myVehicle && !!winnerId && myVehicle.playerId === winnerId;
 
     // Clear active job from localStorage if we won (job was auto-completed server-side)
-    if (isWinner && jobPayout > 0) {
+    if (isWinner) {
       localStorage.removeItem('cw_active_job');
       localStorage.removeItem('cw_active_job_desc');
       localStorage.removeItem('cw_active_job_payout');
@@ -434,6 +434,7 @@ export class ArenaScene extends Phaser.Scene {
 
     garageBtn.on('pointerdown', () => {
       this.connection.send({ type: 'leave_zone' });
+      this.connection.close();
       this.scene.start('GarageScene', {
         token: this.token,
         lastResult: isWinner ? { prize, jobPayout } : null,
