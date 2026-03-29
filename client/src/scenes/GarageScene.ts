@@ -1,6 +1,6 @@
 import Phaser from 'phaser';
 
-interface Vehicle { id: string; name: string; value: number; damage_state: any; }
+interface Vehicle { id: string; name: string; value: number; damage_state: any; loadout: any; }
 
 export class GarageScene extends Phaser.Scene {
   private token = '';
@@ -57,33 +57,55 @@ export class GarageScene extends Phaser.Scene {
       }).setOrigin(0.5);
     } else {
       this.vehicles.forEach((v, i) => {
-        const y = 140 + i * 60;
-        const color = v.damage_state?.destroyed ? '#ff4444' : '#00ff88';
-        this.add.text(100, y, `${v.name}  $${v.value.toLocaleString()}`, {
-          color, fontSize: '16px', fontFamily: 'monospace'
+        const y = 140 + i * 80;
+        const ds = v.damage_state ?? {};
+        const isDestroyed = ds.destroyed;
+        const nameColor = isDestroyed ? '#ff4444' : '#00ff88';
+
+        // Line 1: name + value
+        this.add.text(100, y, `${v.name}`, { color: nameColor, fontSize: '16px', fontFamily: 'monospace' });
+        this.add.text(370, y, `$${v.value.toLocaleString()}`, { color: '#888888', fontSize: '14px', fontFamily: 'monospace' });
+
+        // Line 2: ammo + tire status
+        const mounts: any[] = v.loadout?.mounts ?? [];
+        const ammoStr = mounts.length
+          ? mounts.map((m: any) => `${m.weaponId ?? '?'}:${m.ammo}`).join(' ')
+          : 'no weapons';
+        const tiresBlow = ds.tiresBlown?.length ?? 0;
+        const tireStr = tiresBlow > 0 ? `  [${tiresBlow} TIRE${tiresBlow > 1 ? 'S' : ''} BLOWN]` : '';
+        const engineStr = ds.engineDamaged ? '  [ENGINE]' : '';
+        this.add.text(100, y + 20, `${ammoStr}${tireStr}${engineStr}`, {
+          color: '#666666', fontSize: '11px', fontFamily: 'monospace'
         });
-        // Repair button
-        const repairBtn = this.add.text(500, y, '[REPAIR]', {
-          color: '#ffcc00', fontSize: '14px', fontFamily: 'monospace',
-          backgroundColor: '#332200', padding: { x: 6, y: 3 }
+
+        // [REPAIR] button
+        const repairBtn = this.add.text(600, y, '[REPAIR]', {
+          color: '#ffcc00', fontSize: '13px', fontFamily: 'monospace',
+          backgroundColor: '#332200', padding: { x: 5, y: 2 }
         }).setInteractive();
         repairBtn.on('pointerdown', () => this.repairVehicle(v.id));
 
-        // Enter arena button
-        const isDestroyed = v.damage_state?.destroyed;
-        const arenaBtn = this.add.text(620, y, isDestroyed ? '[DESTROYED]' : '[FIGHT]', {
-          color: isDestroyed ? '#555555' : '#00ff88',
-          fontSize: '14px', fontFamily: 'monospace',
+        // [FIGHT] or [DESTROYED]
+        const fightBtn = this.add.text(690, y, isDestroyed ? '[DESTROYED]' : '[FIGHT]', {
+          color: isDestroyed ? '#444444' : '#00ff88',
+          fontSize: '13px', fontFamily: 'monospace',
           backgroundColor: isDestroyed ? '#221111' : '#003322',
-          padding: { x: 6, y: 3 }
+          padding: { x: 5, y: 2 }
         });
         if (!isDestroyed) {
-          arenaBtn.setInteractive();
-          arenaBtn.on('pointerdown', () => {
+          fightBtn.setInteractive();
+          fightBtn.on('pointerdown', () => {
             const activeJobId = localStorage.getItem('cw_active_job') ?? undefined;
             this.scene.start('ArenaScene', { token: this.token, vehicleId: v.id, jobId: activeJobId });
           });
         }
+
+        // [SELL] button
+        const sellBtn = this.add.text(800, y, '[SELL]', {
+          color: '#ff8844', fontSize: '13px', fontFamily: 'monospace',
+          backgroundColor: '#221100', padding: { x: 5, y: 2 }
+        }).setInteractive();
+        sellBtn.on('pointerdown', () => this.sellVehicle(v.id, v.name));
       });
     }
 
@@ -114,6 +136,23 @@ export class GarageScene extends Phaser.Scene {
     } else {
       // Show error
       this.add.text(640, 650, body.error ?? 'Repair failed', {
+        color: '#ff4444', fontSize: '14px', fontFamily: 'monospace'
+      }).setOrigin(0.5);
+    }
+  }
+
+  private async sellVehicle(vehicleId: string, name: string): Promise<void> {
+    if (!confirm(`Sell ${name} for 50% value?`)) return;
+    const host = window.location.hostname;
+    const res = await fetch(`http://${host}:3001/api/vehicles/${vehicleId}`, {
+      method: 'DELETE',
+      headers: { Authorization: `Bearer ${this.token}` }
+    });
+    const body = await res.json();
+    if (res.ok) {
+      this.scene.restart({ token: this.token });
+    } else {
+      this.add.text(640, 650, body.error ?? 'Sell failed', {
         color: '#ff4444', fontSize: '14px', fontFamily: 'monospace'
       }).setOrigin(0.5);
     }

@@ -56,3 +56,34 @@ vehiclesRouter.get('/:id', async (req: AuthRequest, res) => {
   if (row.player_id !== req.playerId) return res.status(403).json({ error: 'Forbidden' });
   return res.json(row);
 });
+
+vehiclesRouter.delete('/:id', async (req: AuthRequest, res) => {
+  const db = getDb();
+  const result = await db.query(
+    `SELECT id, value FROM vehicles WHERE id = $1 AND player_id = $2`,
+    [req.params.id, req.playerId]
+  );
+  if (!result.rows.length) return res.status(403).json({ error: 'Vehicle not found' });
+
+  const vehicle = result.rows[0];
+  const salePrice = Math.floor(vehicle.value / 2);
+
+  const client = await db.connect();
+  try {
+    await client.query('BEGIN');
+    await client.query(`DELETE FROM vehicles WHERE id = $1`, [vehicle.id]);
+    await client.query(`UPDATE players SET money = money + $1 WHERE id = $2`, [salePrice, req.playerId]);
+    await client.query(
+      `INSERT INTO event_history (player_id, event_type, result, money_delta) VALUES ($1,'sell',$2,$3)`,
+      [req.playerId, JSON.stringify({ vehicleId: vehicle.id, salePrice }), salePrice]
+    );
+    await client.query('COMMIT');
+  } catch (e) {
+    await client.query('ROLLBACK');
+    throw e;
+  } finally {
+    client.release();
+  }
+
+  return res.json({ salePrice });
+});

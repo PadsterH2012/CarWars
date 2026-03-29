@@ -73,4 +73,38 @@ describe('vehicle CRUD', () => {
     const db = getDb();
     await db.query(`DELETE FROM players WHERE username = 'vehicletest2'`);
   });
+
+  it('DELETE /api/vehicles/:id sells vehicle for 50% of value and credits money', async () => {
+    const createRes = await request(app)
+      .post('/api/vehicles')
+      .set('Authorization', `Bearer ${token}`)
+      .send({
+        name: 'For Sale',
+        loadout: {
+          chassisId: 'mid', engineId: 'medium', suspensionId: 'standard',
+          tires: [{ id: 't0', blown: false }],
+          mounts: [],
+          armor: { front: 4, back: 4 },
+          totalCost: 10000
+        }
+      });
+    const sellId = createRes.body.id;
+
+    const meBeforeRes = await request(app)
+      .get('/api/me')
+      .set('Authorization', `Bearer ${token}`);
+    const moneyBefore = meBeforeRes.body.money;
+
+    const res = await request(app)
+      .delete(`/api/vehicles/${sellId}`)
+      .set('Authorization', `Bearer ${token}`);
+
+    expect(res.status).toBe(200);
+    expect(res.body.salePrice).toBe(5000); // 50% of 10000
+
+    const meAfterRes = await request(app)
+      .get('/api/me')
+      .set('Authorization', `Bearer ${token}`);
+    expect(meAfterRes.body.money).toBe(moneyBefore + 5000);
+  });
 });
