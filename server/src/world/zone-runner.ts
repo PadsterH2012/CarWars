@@ -119,11 +119,12 @@ export class ZoneRunner {
     if (survivorsByPlayer.size > 1) return; // battle still ongoing
 
     this.ended = true;
+    this.stop();
     const winnerPlayerId = survivorsByPlayer.size === 1 ? [...survivorsByPlayer.keys()][0] : null;
     // AI win counts as null (no human prize)
     const humanWinnerId = winnerPlayerId === 'ai-team' ? null : winnerPlayerId;
 
-    // Call onEnd first — it credits the prize and returns the amounts
+    // Call onEnd — it credits the prize and returns the amounts
     const { prize, jobPayout } = (await this.onEnd?.(humanWinnerId)) ?? { prize: 0, jobPayout: 0 };
 
     const endMsg: ServerMessage = {
@@ -141,8 +142,6 @@ export class ZoneRunner {
     this.clients.forEach(ws => {
       if (ws.readyState === WebSocket.OPEN) ws.send(data);
     });
-
-    this.stop();
   }
 
   private tick(): void {

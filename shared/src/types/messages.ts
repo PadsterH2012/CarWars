@@ -12,4 +12,4 @@ export type ServerMessage =
   | { type: 'damage'; result: DamageResult }
   | { type: 'error'; message: string }
   | { type: 'zone_change'; destinationZoneId: string; reason: string }
-  | { type: 'zone_end'; winnerId: string | null; reason: string; prize?: number; jobPayout?: number };
+  | { type: 'zone_end'; winnerId: string | null; reason: string; prize: number; jobPayout: number };

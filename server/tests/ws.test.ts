@@ -37,7 +37,7 @@ describe('WebSocket handler', () => {
     expect(msg.type).toBe('zone_state');
   });
 
-  it('zone_end message includes prize amount', async () => {
+  it('calcPrize formula returns division × 500', async () => {
     const { calcPrize } = await import('../src/ws/handler');
     expect(calcPrize(5)).toBe(2500);
     expect(calcPrize(10)).toBe(5000);

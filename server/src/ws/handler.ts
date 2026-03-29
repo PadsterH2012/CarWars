@@ -170,19 +170,26 @@ async function handleMessage(ws: WebSocket, raw: string): Promise<void> {
             const division = pRes.rows[0]?.division ?? 5;
             const prize = calcPrize(division);
 
-            await db.query('BEGIN');
-            await db.query(
-              'UPDATE players SET money = money + $1, reputation = reputation + $2 WHERE id = $3',
-              [prize, Math.floor(prize / 500), winnerId]
-            );
-            await db.query(
-              'INSERT INTO event_history (player_id, event_type, result, money_delta) VALUES ($1, $2, $3, $4)',
-              [winnerId, 'arena_win', JSON.stringify({ zoneId: msg.zoneId, prize }), prize]
-            );
-            await db.query('COMMIT');
+            const client = await db.connect();
+            try {
+              await client.query('BEGIN');
+              await client.query(
+                'UPDATE players SET money = money + $1, reputation = reputation + $2 WHERE id = $3',
+                [prize, Math.floor(prize / 500), winnerId]
+              );
+              await client.query(
+                'INSERT INTO event_history (player_id, event_type, result, money_delta) VALUES ($1,$2,$3,$4)',
+                [winnerId, 'arena_win', JSON.stringify({ zoneId: msg.zoneId, prize }), prize]
+              );
+              await client.query('COMMIT');
+            } catch (e) {
+              await client.query('ROLLBACK');
+              throw e;
+            } finally {
+              client.release();
+            }
             return { prize, jobPayout: 0 };
           } catch (e) {
-            await db.query('ROLLBACK');
             console.error('Failed to credit arena prize:', e);
             return { prize: 0, jobPayout: 0 };
           }
