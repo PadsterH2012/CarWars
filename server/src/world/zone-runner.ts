@@ -20,6 +20,7 @@ export class ZoneRunner {
   private humanVehicles = new Set<string>();
   // Vehicles where the human has opted into AI autopilot
   private autopilotVehicles = new Set<string>();
+  private vehicleSkills = new Map<string, number>(); // vehicleId → driver skill
   private map: ArenaMap;
 
   hasEnded(): boolean { return this.ended; }
@@ -76,6 +77,10 @@ export class ZoneRunner {
   setAutopilot(vehicleId: string, enabled: boolean): void {
     if (enabled) this.autopilotVehicles.add(vehicleId);
     else this.autopilotVehicles.delete(vehicleId);
+  }
+
+  setVehicleSkill(vehicleId: string, skill: number): void {
+    this.vehicleSkills.set(vehicleId, skill);
   }
 
   queueInput(vehicleId: string, input: { speed: number; steer: number; fireWeapon: string | null }): void {
@@ -152,7 +157,8 @@ export class ZoneRunner {
       const needsAi = !isHuman || hasAutopilot;
       if (needsAi && !this.humanInputThisTick.has(vehicle.id)) {
         const enemies = state.vehicles.filter(v => v.playerId !== vehicle.playerId);
-        const aiInput = computeAiInput(vehicle, enemies, 3);
+        const skill = this.vehicleSkills.get(vehicle.id) ?? 3;
+        const aiInput = computeAiInput(vehicle, enemies, skill);
         this.engine.queueInput(vehicle.id, aiInput);
       }
     });

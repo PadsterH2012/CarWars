@@ -230,6 +230,34 @@ async function handleMessage(ws: WebSocket, raw: string): Promise<void> {
             } finally {
               client.release();
             }
+            // After prize transaction commits, award XP to assigned driver
+            const vRes = await db.query(
+              `SELECT v.id FROM vehicles v
+               WHERE v.player_id = $1
+               ORDER BY v.created_at LIMIT 1`,
+              [winnerId]
+            );
+            if (vRes.rows.length) {
+              const vehicleId = vRes.rows[0].id;
+              const dRes = await db.query(
+                `SELECT id FROM drivers WHERE assigned_vehicle_id = $1 AND alive = TRUE LIMIT 1`,
+                [vehicleId]
+              );
+              if (dRes.rows.length) {
+                const WIN_XP = 50;
+                await db.query(
+                  `UPDATE drivers SET xp = xp + $1 WHERE id = $2`,
+                  [WIN_XP, dRes.rows[0].id]
+                );
+                // Auto-promote: promote once per XP award
+                await db.query(
+                  `UPDATE drivers SET skill = LEAST(6, skill + 1)
+                   WHERE id = $1 AND skill < 6 AND xp >= skill * 100`,
+                  [dRes.rows[0].id]
+                );
+              }
+            }
+
             return { prize, jobPayout };
           } catch (e) {
             console.error('Failed to credit arena prize:', e);
@@ -295,6 +323,19 @@ async function handleMessage(ws: WebSocket, raw: string): Promise<void> {
     };
     runner.getEngine().addVehicle(vehicle);
     runner.registerHumanVehicle(msg.vehicleId);
+
+    // Load driver skill for this vehicle
+    {
+      const db = getDb();
+      const driverRes = await db.query(
+        `SELECT skill FROM drivers WHERE assigned_vehicle_id = $1 AND alive = TRUE LIMIT 1`,
+        [msg.vehicleId]
+      );
+      if (driverRes.rows.length) {
+        runner.setVehicleSkill(msg.vehicleId, driverRes.rows[0].skill);
+      }
+    }
+
     runner.addClient(ws); // sends initial zone_state automatically
     return;
   }
