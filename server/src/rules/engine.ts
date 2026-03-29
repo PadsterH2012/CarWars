@@ -48,11 +48,12 @@ export function createTurnEngine(initialState: ZoneState): TurnEngine {
         return computeMovement(vehicle, input);
       });
 
-      // Accumulate hazard D-values for this tick
+      // Track peak hazard D-value this turn (Compendium: one maneuver per turn, use highest D)
       newVehicles.forEach(vehicle => {
         const input = pendingInputs.get(vehicle.id) ?? lastInputs.get(vehicle.id) ?? { speed: 0, steer: 0, fireWeapon: null };
         const maneuver = classifyManeuver(vehicle.speed, Math.abs(input.steer));
-        hazardAccum.set(vehicle.id, (hazardAccum.get(vehicle.id) ?? 0) + maneuver.dValue);
+        const prev = hazardAccum.get(vehicle.id) ?? 0;
+        if (maneuver.dValue > prev) hazardAccum.set(vehicle.id, maneuver.dValue);
       });
 
       // Apply hazard control check once per full turn (every TICKS_PER_TURN ticks)
