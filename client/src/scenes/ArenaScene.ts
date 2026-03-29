@@ -62,7 +62,7 @@ export class ArenaScene extends Phaser.Scene {
     });
 
     // Generate tileset texture programmatically (no external image needed)
-    const gfx = this.make.graphics({ x: 0, y: 0, add: false });
+    const gfx = this.make.graphics({ x: 0, y: 0 });
     gfx.fillStyle(0x111122); gfx.fillRect(0, 0, 32, 32);   // tile 1: outer floor
     gfx.fillStyle(0x1a1a33); gfx.fillRect(32, 0, 32, 32);  // tile 2: unused
     gfx.fillStyle(0x222244); gfx.fillRect(0, 32, 32, 32);  // tile 3: arena floor
@@ -202,11 +202,11 @@ export class ArenaScene extends Phaser.Scene {
         if (barRight) { const p = pct('right'); barRight.setSize(3, 20 * p).setFillStyle(barColor(p)); }
 
         // Tint body: interpolate from team color (full health) toward red (no health)
-        const totalOrig = loadout.armor.front + loadout.armor.back + loadout.armor.left + loadout.armor.right;
-        const totalRem  = (damage.armor.front  ?? loadout.armor.front) +
-                          (damage.armor.back   ?? loadout.armor.back) +
-                          (damage.armor.left   ?? loadout.armor.left) +
-                          (damage.armor.right  ?? loadout.armor.right);
+        const totalOrig = (loadout.armor.front ?? 0) + (loadout.armor.back ?? 0) + (loadout.armor.left ?? 0) + (loadout.armor.right ?? 0);
+        const totalRem  = (damage.armor.front  ?? loadout.armor.front  ?? 0) +
+                          (damage.armor.back   ?? loadout.armor.back   ?? 0) +
+                          (damage.armor.left   ?? loadout.armor.left   ?? 0) +
+                          (damage.armor.right  ?? loadout.armor.right  ?? 0);
         const healthPct = totalOrig > 0 ? totalRem / totalOrig : 1;
         const body = container.getByName('body') as Phaser.GameObjects.Rectangle;
         if (body) {
