@@ -11,7 +11,10 @@ export interface HazardCheck {
 }
 
 export function computeMovement(vehicle: VehicleState, input: MovementInput): VehicleState {
-  const distancePerPhase = input.speed / 5;
+  // Car Wars: speed (mph) ÷ 5 = inches per phase over 5 phases/turn.
+  // We run 10 ticks/turn, so divide by 10 to get the correct inches per tick.
+  // Additional /3 scale-down for visual pacing, then /8 for current tuning = /360 total.
+  const distancePerPhase = input.speed / 360;
   const newFacing = (vehicle.facing + input.steer + 360) % 360;
 
   const radians = (vehicle.facing - 90) * (Math.PI / 180);

@@ -66,6 +66,10 @@ rsync -a --delete /opt/carwars/src/node_modules/ /opt/carwars/app/node_modules/
 cp /opt/carwars/src/server/package.json /opt/carwars/app/
 REMOTE
 
+echo "==> Running DB migrations..."
+sshpass -p "$SSHPASS" ssh -o StrictHostKeyChecking=no "$HOST" \
+  "PGPASSWORD=carwars_dev psql -U carwars -d carwars -h localhost -f /opt/carwars/src/server/src/db/schema.sql -q && echo 'Migrations done'"
+
 echo "==> Restarting service..."
 sshpass -p "$SSHPASS" ssh -o StrictHostKeyChecking=no "$HOST" \
   "sudo systemctl restart carwars && sleep 2 && systemctl is-active carwars"
