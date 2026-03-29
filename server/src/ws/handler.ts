@@ -266,6 +266,7 @@ async function handleMessage(ws: WebSocket, raw: string): Promise<void> {
         clientPlayers.set(ws, result.playerId);
         // Before storing jobId, validate it belongs to this player and is not already completed
         if (msg.jobId) {
+          const db = getDb();
           const jobCheck = await db.query(
             `SELECT id FROM jobs WHERE id = $1 AND taken_by = $2 AND completed = FALSE`,
             [msg.jobId, result.playerId]
