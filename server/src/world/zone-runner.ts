@@ -7,7 +7,7 @@ import { getMap } from '../rules/maps';
 const TICK_MS = 100;
 
 export interface ZoneRunnerOptions {
-  onEnd?: (winnerId: string | null) => void;
+  onEnd?: (winnerId: string | null) => Promise<{ prize: number; jobPayout: number }>;
 }
 
 export class ZoneRunner {
@@ -24,7 +24,7 @@ export class ZoneRunner {
 
   hasEnded(): boolean { return this.ended; }
   readonly zoneId: string;
-  private onEnd?: (winnerId: string | null) => void;
+  private onEnd?: (winnerId: string | null) => Promise<{ prize: number; jobPayout: number }>;
 
   constructor(
     zoneId: string,
@@ -98,7 +98,7 @@ export class ZoneRunner {
     }
   }
 
-  private checkEndCondition(state: import('@carwars/shared').ZoneState): void {
+  private async checkEndCondition(state: import('@carwars/shared').ZoneState): Promise<void> {
     if (this.ended) return;
     if (state.type !== 'arena') return;
 
@@ -123,6 +123,9 @@ export class ZoneRunner {
     // AI win counts as null (no human prize)
     const humanWinnerId = winnerPlayerId === 'ai-team' ? null : winnerPlayerId;
 
+    // Call onEnd first — it credits the prize and returns the amounts
+    const { prize, jobPayout } = (await this.onEnd?.(humanWinnerId)) ?? { prize: 0, jobPayout: 0 };
+
     const endMsg: ServerMessage = {
       type: 'zone_end',
       winnerId: humanWinnerId,
@@ -131,13 +134,14 @@ export class ZoneRunner {
         : winnerPlayerId === 'ai-team'
         ? 'ai_victory'
         : 'last_standing',
+      prize,
+      jobPayout,
     };
     const data = JSON.stringify(endMsg);
     this.clients.forEach(ws => {
       if (ws.readyState === WebSocket.OPEN) ws.send(data);
     });
 
-    this.onEnd?.(humanWinnerId);
     this.stop();
   }
 
@@ -177,7 +181,7 @@ export class ZoneRunner {
       });
     }
 
-    this.checkEndCondition(newState);
+    this.checkEndCondition(newState).catch(console.error);
 
     const msg: ServerMessage = { type: 'zone_state', state: newState };
     const data = JSON.stringify(msg);

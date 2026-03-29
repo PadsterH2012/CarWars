@@ -8,6 +8,10 @@ import { deriveStats } from '../rules/vehicle';
 
 const JWT_SECRET = process.env.JWT_SECRET ?? 'dev-secret-change-in-prod';
 
+export function calcPrize(division: number): number {
+  return division * 500;
+}
+
 async function loadVehicleFromDb(vehicleId: string, token: string): Promise<{ vehicle: VehicleState; playerId: string } | null> {
   let playerId: string;
   try {
@@ -159,20 +163,28 @@ async function handleMessage(ws: WebSocket, raw: string): Promise<void> {
 
       const runner = new ZoneRunner(msg.zoneId, zoneType, isArena ? {
         onEnd: async (winnerId: string | null) => {
-          if (!winnerId) return;
-          const ARENA_PRIZE = 5000;
+          if (!winnerId) return { prize: 0, jobPayout: 0 };
           const db = getDb();
           try {
+            const pRes = await db.query(`SELECT division FROM players WHERE id = $1`, [winnerId]);
+            const division = pRes.rows[0]?.division ?? 5;
+            const prize = calcPrize(division);
+
             await db.query('BEGIN');
-            await db.query('UPDATE players SET money = money + $1 WHERE id = $2', [ARENA_PRIZE, winnerId]);
+            await db.query(
+              'UPDATE players SET money = money + $1, reputation = reputation + $2 WHERE id = $3',
+              [prize, Math.floor(prize / 500), winnerId]
+            );
             await db.query(
               'INSERT INTO event_history (player_id, event_type, result, money_delta) VALUES ($1, $2, $3, $4)',
-              [winnerId, 'arena_win', JSON.stringify({ zoneId: msg.zoneId }), ARENA_PRIZE]
+              [winnerId, 'arena_win', JSON.stringify({ zoneId: msg.zoneId, prize }), prize]
             );
             await db.query('COMMIT');
+            return { prize, jobPayout: 0 };
           } catch (e) {
             await db.query('ROLLBACK');
             console.error('Failed to credit arena prize:', e);
+            return { prize: 0, jobPayout: 0 };
           }
         },
       } : {}, mapIdForZone(msg.zoneId));

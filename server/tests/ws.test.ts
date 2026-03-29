@@ -37,6 +37,13 @@ describe('WebSocket handler', () => {
     expect(msg.type).toBe('zone_state');
   });
 
+  it('zone_end message includes prize amount', async () => {
+    const { calcPrize } = await import('../src/ws/handler');
+    expect(calcPrize(5)).toBe(2500);
+    expect(calcPrize(10)).toBe(5000);
+    expect(calcPrize(25)).toBe(12500);
+  });
+
   it('responds with error when sending input without joining a zone first', async () => {
     // Create a fresh connection that hasn't joined any zone
     const ws2 = new WebSocket('ws://localhost:3099');
