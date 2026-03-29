@@ -140,6 +140,27 @@ export class ZoneRunner {
     this.humanInputThisTick.clear();
 
     const newState = this.engine.resolveTick();
+
+    // Vehicle state summary every 10 ticks
+    if (newState.tick % 10 === 0) {
+      newState.vehicles.forEach(v => {
+        const ds = v.stats.damageState;
+        if (ds.destroyed) return;
+        const armorTotal = Object.values(ds.armor).reduce((s, n) => s + (n ?? 0), 0);
+        const flags = [
+          ds.engineDamaged ? 'ENGINE' : '',
+          ds.onFire ? 'FIRE' : '',
+          ds.tiresBlown.length ? `TIRES:${ds.tiresBlown.length}` : '',
+        ].filter(Boolean).join(' ');
+        console.log(
+          `[t${newState.tick}] STATE ${v.id.padEnd(10)} ` +
+          `pos=(${v.position.x.toFixed(1)},${v.position.y.toFixed(1)}) ` +
+          `facing=${v.facing.toFixed(0)}° spd=${v.speed} armor=${armorTotal}` +
+          (flags ? ` [${flags}]` : '')
+        );
+      });
+    }
+
     this.checkEndCondition(newState);
 
     const msg: ServerMessage = { type: 'zone_state', state: newState };

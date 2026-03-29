@@ -69,7 +69,21 @@ export function computeAiInput(
   // Fire if target is in front arc and within range
   const angleDiff = Math.abs(steer);
   const weapon = selectWeapon(self);
-  const fireWeapon = dist <= FIRE_RANGE && angleDiff < 45 && weapon ? weapon : null;
+
+  let fireReason = '';
+  if (!weapon)             fireReason = 'no weapon';
+  else if (dist > FIRE_RANGE) fireReason = `out of range (${dist.toFixed(1)} > ${FIRE_RANGE})`;
+  else if (angleDiff >= 45)   fireReason = `off-arc (angle=${angleDiff.toFixed(0)}°)`;
+
+  const fireWeapon = !fireReason ? weapon : null;
+
+  // Log AI decision every tick for debugging
+  const fireStr = fireWeapon ? `FIRE ${fireWeapon}` : `no-fire (${fireReason})`;
+  console.log(
+    `[AI] ${self.id.padEnd(10)} → ${target.id.padEnd(10)} dist=${dist.toFixed(1).padStart(5)} ` +
+    `facing=${self.facing.toFixed(0).padStart(3)}° want=${desiredFacing.toFixed(0).padStart(3)}° ` +
+    `steer=${steer.toFixed(0).padStart(4)}° spd=${speed.toFixed(0).padStart(3)} ${fireStr}`
+  );
 
   return { speed, steer, fireWeapon };
 }
