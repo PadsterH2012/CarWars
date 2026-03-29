@@ -46,4 +46,29 @@ describe('resolveWallCollisions', () => {
     const result = resolveWallCollisions({ x: 0, y: 0 }, walls);
     expect(result.hit).toBe(false);
   });
+
+  it('pushes vehicle right when overlapping left side of wall', () => {
+    // Vehicle at (+4, 0), to the right of wall center
+    // overlapX = 5.5 - 4 = 1.5; overlapY = 3; push right: x += 1.5 → 5.5
+    const result = resolveWallCollisions({ x: 4, y: 0 }, [wall]);
+    expect(result.hit).toBe(true);
+    expect(result.x).toBeCloseTo(5.5);
+    expect(result.facing).toBe('left');
+  });
+
+  it('resolves corner collision — facing reflects larger push', () => {
+    // Two walls forming an L-corner
+    const hWall: Rect = { x: 0, y: -2, w: 20, h: 2 };   // horizontal wall, center at y=-2
+    const vWall: Rect = { x: -8, y: 0, w: 2, h: 20 };   // vertical wall, center at x=-8
+    // Vehicle at (-7, -1): inside both walls
+    // vs hWall: overlapX = (0.5+10)-7=3.5, overlapY = (1+1)-|-1-(-2)|=2-1=1
+    //   overlapY(1) < overlapX(3.5) → push vertically; y(-1) > wall.y(-2) → y += 1 → 0, facing='front', maxPush=1
+    // vs vWall (updated pos x=-7, y=0): overlapX = (0.5+1)-|-7-(-8)|=1.5-1=0.5, overlapY = (1+10)-|0-0|=11
+    //   overlapX(0.5) < overlapY(11) → push horizontally; x(-7) > wall.x(-8) → x += 0.5, thisFacing='left'
+    //   overlapX(0.5) < maxPush(1) → primaryFacing unchanged
+    const result = resolveWallCollisions({ x: -7, y: -1 }, [hWall, vWall]);
+    expect(result.hit).toBe(true);
+    // Primary push from hWall (overlapY=1) is larger than vWall's horizontal push (overlapX=0.5)
+    expect(result.facing).toBe('front');  // hWall pushed vehicle down (vehicle was below hWall center)
+  });
 });
