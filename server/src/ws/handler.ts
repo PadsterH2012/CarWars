@@ -180,10 +180,14 @@ async function handleMessage(ws: WebSocket, raw: string): Promise<void> {
             let completedJobId = '';
             let completedZoneId = '';
 
+            let winnerVehicleId: string | null = null;
             for (const [ws, pid] of clientPlayers) {
               if (pid !== winnerId) continue;
+              winnerVehicleId = clientVehicles.get(ws) ?? null;
               const jobId = clientJobs.get(ws);
-              if (!jobId) continue;
+              if (!jobId) {
+                break;
+              }
 
               // Verify job belongs to winner and is still open
               const jobRes = await db.query(
@@ -231,30 +235,29 @@ async function handleMessage(ws: WebSocket, raw: string): Promise<void> {
               client.release();
             }
             // After prize transaction commits, award XP to assigned driver
-            const vRes = await db.query(
-              `SELECT v.id FROM vehicles v
-               WHERE v.player_id = $1
-               ORDER BY v.created_at LIMIT 1`,
-              [winnerId]
-            );
-            if (vRes.rows.length) {
-              const vehicleId = vRes.rows[0].id;
+            if (winnerVehicleId) {
               const dRes = await db.query(
                 `SELECT id FROM drivers WHERE assigned_vehicle_id = $1 AND alive = TRUE LIMIT 1`,
-                [vehicleId]
+                [winnerVehicleId]
               );
               if (dRes.rows.length) {
                 const WIN_XP = 50;
-                await db.query(
-                  `UPDATE drivers SET xp = xp + $1 WHERE id = $2`,
+                // Atomically add XP and get new total
+                const xpRes = await db.query(
+                  `UPDATE drivers SET xp = xp + $1 WHERE id = $2 RETURNING xp, skill`,
                   [WIN_XP, dRes.rows[0].id]
                 );
-                // Auto-promote: promote once per XP award
-                await db.query(
-                  `UPDATE drivers SET skill = LEAST(6, skill + 1)
-                   WHERE id = $1 AND skill < 6 AND xp >= skill * 100`,
-                  [dRes.rows[0].id]
-                );
+                if (xpRes.rows.length) {
+                  const { xp: newXp, skill: currentSkill } = xpRes.rows[0];
+                  // Calculate new skill (mirrors award-xp logic)
+                  let newSkill = currentSkill;
+                  while (newSkill < 6 && newXp >= newSkill * 100) {
+                    newSkill++;
+                  }
+                  if (newSkill > currentSkill) {
+                    await db.query(`UPDATE drivers SET skill = $1 WHERE id = $2`, [newSkill, dRes.rows[0].id]);
+                  }
+                }
               }
             }
 
