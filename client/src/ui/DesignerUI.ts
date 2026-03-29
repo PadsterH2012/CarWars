@@ -8,30 +8,44 @@ export interface MountConfig {
 }
 
 export const BODY_TYPES = [
-  { id: 'subcompact',    label: 'Subcompact' },
-  { id: 'compact',       label: 'Compact' },
-  { id: 'mid_sized',     label: 'Mid-Sized' },
-  { id: 'sedan',         label: 'Sedan' },
-  { id: 'luxury',        label: 'Luxury' },
-  { id: 'station_wagon', label: 'Stn Wagon' },
-  { id: 'pickup',        label: 'Pickup' },
-  { id: 'camper',        label: 'Camper' },
-  { id: 'van',           label: 'Van' },
-  { id: 'light_cycle',   label: 'Lt Cycle' },
-  { id: 'med_cycle',     label: 'Md Cycle' },
-  { id: 'hvy_cycle',     label: 'Hvy Cycle' },
-  { id: 'trike',         label: 'Trike' },
-  { id: 'truck',         label: 'Truck' },
-  { id: 'trailer',       label: 'Trailer' },
+  { id: 'subcompact',    label: 'Subcompact', isCycle: false },
+  { id: 'compact',       label: 'Compact',    isCycle: false },
+  { id: 'mid_sized',     label: 'Mid-Sized',  isCycle: false },
+  { id: 'sedan',         label: 'Sedan',      isCycle: false },
+  { id: 'luxury',        label: 'Luxury',     isCycle: false },
+  { id: 'station_wagon', label: 'Stn Wagon',  isCycle: false },
+  { id: 'pickup',        label: 'Pickup',     isCycle: false },
+  { id: 'camper',        label: 'Camper',     isCycle: false },
+  { id: 'van',           label: 'Van',        isCycle: false },
+  { id: 'light_cycle',   label: 'Lt Cycle',   isCycle: true  },
+  { id: 'med_cycle',     label: 'Md Cycle',   isCycle: true  },
+  { id: 'hvy_cycle',     label: 'Hvy Cycle',  isCycle: true  },
+  { id: 'trike',         label: 'Trike',      isCycle: true  },
+  { id: 'truck',         label: 'Truck',      isCycle: false },
+  { id: 'trailer',       label: 'Trailer',    isCycle: false },
 ] as const;
 
 export const POWER_PLANTS = [
-  { id: 'small',      label: 'Small' },
-  { id: 'medium',     label: 'Medium' },
-  { id: 'large',      label: 'Large' },
-  { id: 'super',      label: 'Super' },
-  { id: 'sport',      label: 'Sport' },
-  { id: 'thundercat', label: 'Thundercat' },
+  // Electric — cars/vans/trucks
+  { id: 'elec_small',      label: 'Elec Sm',      cycleOnly: false },
+  { id: 'elec_medium',     label: 'Elec Md',      cycleOnly: false },
+  { id: 'elec_large',      label: 'Elec Lg',      cycleOnly: false },
+  { id: 'elec_super',      label: 'Elec Super',   cycleOnly: false },
+  { id: 'elec_sport',      label: 'Elec Sport',   cycleOnly: false },
+  { id: 'elec_thundercat', label: 'Thundercat',   cycleOnly: false },
+  // Gas — cars/vans/trucks
+  { id: 'gas_small',       label: 'Gas Sm',       cycleOnly: false },
+  { id: 'gas_medium',      label: 'Gas Md',       cycleOnly: false },
+  { id: 'gas_large',       label: 'Gas Lg',       cycleOnly: false },
+  { id: 'gas_super',       label: 'Gas Super',    cycleOnly: false },
+  // Electric — cycles/trikes
+  { id: 'cyc_elec_small',  label: 'Cyc Elec Sm', cycleOnly: true },
+  { id: 'cyc_elec_medium', label: 'Cyc Elec Md', cycleOnly: true },
+  { id: 'cyc_elec_large',  label: 'Cyc Elec Lg', cycleOnly: true },
+  // Gas — cycles/trikes
+  { id: 'cyc_gas_small',   label: 'Cyc Gas Sm',  cycleOnly: true },
+  { id: 'cyc_gas_medium',  label: 'Cyc Gas Md',  cycleOnly: true },
+  { id: 'cyc_gas_large',   label: 'Cyc Gas Lg',  cycleOnly: true },
 ] as const;
 
 export const SUSPENSIONS = [

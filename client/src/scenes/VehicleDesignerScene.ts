@@ -36,7 +36,7 @@ export class VehicleDesignerScene extends Phaser.Scene {
 
   // State
   private bodyType      = 'mid_sized';
-  private powerPlantType = 'medium';
+  private powerPlantType = 'elec_medium';
   private suspensionType = 'standard';
   private tireType      = 'standard';
   private armorType     = 'ablative';
@@ -113,7 +113,12 @@ export class VehicleDesignerScene extends Phaser.Scene {
     this.add.text(x0, y, 'Body Type:', LABEL_STYLE);
     y += 18;
     y = this.buildOptionGrid(BODY_TYPES, x0, y, 3, this.bodyBtns, () => this.bodyType,
-      (id) => { this.bodyType = id; this.updateOptionBtns(this.bodyBtns, () => this.bodyType); this.scheduleStatsRefresh(); });
+      (id) => {
+        this.bodyType = id;
+        this.updateOptionBtns(this.bodyBtns, () => this.bodyType);
+        this.syncPowerPlantToBody();
+        this.scheduleStatsRefresh();
+      });
 
     y += 6;
     // Power Plant
@@ -186,6 +191,28 @@ export class VehicleDesignerScene extends Phaser.Scene {
       btn.setColor(selected ? SEL_COLOR : UNSEL_COLOR);
       btn.setBackgroundColor(selected ? SEL_BG : UNSEL_BG);
     });
+  }
+
+  private syncPowerPlantToBody(): void {
+    const bodyDef = BODY_TYPES.find(b => b.id === this.bodyType);
+    const isCycle = bodyDef?.isCycle ?? false;
+
+    // Show only compatible plants; hide the rest
+    this.powerBtns.forEach((btn, id) => {
+      const plantDef = POWER_PLANTS.find(p => p.id === id);
+      const compatible = (plantDef?.cycleOnly ?? false) === isCycle;
+      btn.setVisible(compatible);
+    });
+
+    // If current plant is incompatible, switch to first compatible one
+    const currentPlant = POWER_PLANTS.find(p => p.id === this.powerPlantType);
+    if ((currentPlant?.cycleOnly ?? false) !== isCycle) {
+      const first = POWER_PLANTS.find(p => p.cycleOnly === isCycle);
+      if (first) {
+        this.powerPlantType = first.id;
+        this.updateOptionBtns(this.powerBtns, () => this.powerPlantType);
+      }
+    }
   }
 
   // ─── CENTER WEAPONS PANEL (x=440..770) ───────────────────────────────────
