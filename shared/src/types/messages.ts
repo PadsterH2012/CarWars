@@ -2,7 +2,7 @@ import type { ZoneState } from './world';
 import type { DamageResult } from './combat';
 
 export type ClientMessage =
-  | { type: 'join_zone'; zoneId: string; vehicleId: string; token?: string }
+  | { type: 'join_zone'; zoneId: string; vehicleId: string; token?: string; jobId?: string }
   | { type: 'input'; tick: number; speed: number; steer: number; fireWeapon: string | null }
   | { type: 'autopilot'; enabled: boolean }
   | { type: 'leave_zone' };

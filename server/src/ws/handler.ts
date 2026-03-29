@@ -80,6 +80,7 @@ const zones = new Map<string, ZoneRunner>();
 const clientZones = new Map<WebSocket, string>();
 const clientVehicles = new Map<WebSocket, string>();
 const clientPlayers = new Map<WebSocket, string>(); // ws → playerId (DB UUID)
+const clientJobs = new Map<WebSocket, string>(); // ws → jobId
 
 export function resetState(): void {
   zones.forEach(runner => runner.shutdown());
@@ -87,6 +88,7 @@ export function resetState(): void {
   clientZones.clear();
   clientVehicles.clear();
   clientPlayers.clear();
+  clientJobs.clear();
 }
 
 function send(ws: WebSocket, msg: ServerMessage): void {
@@ -104,6 +106,7 @@ async function removeClientFromZone(ws: WebSocket): Promise<void> {
   clientZones.delete(ws);
   clientVehicles.delete(ws);
   clientPlayers.delete(ws);
+  clientJobs.delete(ws);
 
   const runner = zoneId ? zones.get(zoneId) : undefined;
 
@@ -170,12 +173,39 @@ async function handleMessage(ws: WebSocket, raw: string): Promise<void> {
             const division = pRes.rows[0]?.division ?? 5;
             const prize = calcPrize(division);
 
+            // Find winner's WebSocket to check for active job
+            let jobPayout = 0;
+            for (const [ws, pid] of clientPlayers) {
+              if (pid !== winnerId) continue;
+              const jobId = clientJobs.get(ws);
+              if (!jobId) continue;
+
+              // Complete the job if it belongs to the winner and is still open
+              const jobRes = await db.query(
+                `UPDATE jobs SET completed = TRUE
+                 WHERE id = $1 AND taken_by = $2 AND completed = FALSE
+                 RETURNING payout, job_type, zone_id`,
+                [jobId, winnerId]
+              );
+              if (jobRes.rows.length) {
+                jobPayout = jobRes.rows[0].payout;
+                await db.query(
+                  `INSERT INTO event_history (player_id, event_type, result, money_delta) VALUES ($1,$2,$3,$4)`,
+                  [winnerId, jobRes.rows[0].job_type,
+                   JSON.stringify({ jobId, zoneId: jobRes.rows[0].zone_id }), jobPayout]
+                );
+              }
+              clientJobs.delete(ws);
+              break;
+            }
+
+            const total = prize + jobPayout;
             const client = await db.connect();
             try {
               await client.query('BEGIN');
               await client.query(
                 'UPDATE players SET money = money + $1, reputation = reputation + $2 WHERE id = $3',
-                [prize, Math.floor(prize / 500), winnerId]
+                [total, Math.floor(prize / 500), winnerId]
               );
               await client.query(
                 'INSERT INTO event_history (player_id, event_type, result, money_delta) VALUES ($1,$2,$3,$4)',
@@ -188,7 +218,7 @@ async function handleMessage(ws: WebSocket, raw: string): Promise<void> {
             } finally {
               client.release();
             }
-            return { prize, jobPayout: 0 };
+            return { prize, jobPayout };
           } catch (e) {
             console.error('Failed to credit arena prize:', e);
             return { prize: 0, jobPayout: 0 };
@@ -222,6 +252,7 @@ async function handleMessage(ws: WebSocket, raw: string): Promise<void> {
       if (result) {
         vehicle = result.vehicle;
         clientPlayers.set(ws, result.playerId);
+        if (msg.jobId) clientJobs.set(ws, msg.jobId);
       }
     }
     const playerSpawn = runner.getMap().spawnPoints.find(s => s.team === 'player');

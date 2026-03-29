@@ -31,6 +31,15 @@ export class GarageScene extends Phaser.Scene {
       color: '#ffcc00', fontSize: '16px', fontFamily: 'monospace'
     });
 
+    const activeJobId = localStorage.getItem('cw_active_job');
+    const activeJobDesc = localStorage.getItem('cw_active_job_desc');
+    const activeJobPayout = localStorage.getItem('cw_active_job_payout');
+    if (activeJobId && activeJobDesc) {
+      this.add.text(100, 92, `Active job: ${activeJobDesc} — $${Number(activeJobPayout).toLocaleString()} on win`, {
+        color: '#ffcc00', fontSize: '13px', fontFamily: 'monospace'
+      });
+    }
+
     if (this.vehicles.length === 0) {
       this.add.text(640, 300, 'No vehicles. Build one!', {
         color: '#888888', fontSize: '18px', fontFamily: 'monospace'
@@ -55,7 +64,8 @@ export class GarageScene extends Phaser.Scene {
           backgroundColor: '#003322', padding: { x: 6, y: 3 }
         }).setInteractive();
         arenaBtn.on('pointerdown', () => {
-          this.scene.start('ArenaScene', { token: this.token, vehicleId: v.id });
+          const activeJobId = localStorage.getItem('cw_active_job') ?? undefined;
+          this.scene.start('ArenaScene', { token: this.token, vehicleId: v.id, jobId: activeJobId });
         });
       });
     }

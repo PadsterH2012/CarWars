@@ -1,6 +1,6 @@
 import Phaser from 'phaser';
 import { Connection } from '../game/Connection';
-import type { ZoneState } from '@carwars/shared';
+import type { ZoneState, CombatEvent } from '@carwars/shared';
 import arenaMapData from '../tilemaps/arena-1.json';
 
 const PIXELS_PER_INCH = 32;
@@ -21,6 +21,7 @@ export class ArenaScene extends Phaser.Scene {
   private autopilotKey!: Phaser.Input.Keyboard.Key;
   private myVehicleId = 'v1';
   private token = '';
+  private jobId = '';
   private lastInputSent = 0;
   private zoneEnded = false;
   private firePending = false;
@@ -36,9 +37,10 @@ export class ArenaScene extends Phaser.Scene {
     super({ key: 'ArenaScene' });
   }
 
-  init(data: { token?: string; vehicleId?: string }): void {
+  init(data: { token?: string; vehicleId?: string; jobId?: string }): void {
     this.token = data.token ?? '';
     this.myVehicleId = data.vehicleId ?? 'v1';
+    this.jobId = data.jobId ?? '';
   }
 
   create(): void {
@@ -112,7 +114,13 @@ export class ArenaScene extends Phaser.Scene {
     this.connection = new Connection(`ws://${wsHost}:3001`);
     this.connection.onOpen(() => {
       const zoneId = new URLSearchParams(window.location.search).get('zone') ?? 'arena-truck-stop';
-      this.connection.send({ type: 'join_zone', zoneId, vehicleId: this.myVehicleId, token: this.token });
+      this.connection.send({
+        type: 'join_zone',
+        zoneId: zoneId,
+        vehicleId: this.myVehicleId,
+        token: this.token,
+        jobId: this.jobId || undefined,
+      });
     });
     this.connection.onMessage((msg) => {
       if (msg.type === 'zone_state') {
@@ -121,7 +129,6 @@ export class ArenaScene extends Phaser.Scene {
           this.mapWalls = msg.state.walls;
           this.renderMapWalls(msg.state.walls);
           if (msg.state.mapId === 'truck-stop') {
-            this.cameras.main.setZoom(0.35);
             // Hide old 40×23 tilemap — it sits inside the truck stop and confuses the layout
             this.tilemapLayers.forEach(l => l.setVisible(false));
             // Draw a full dark background for the 80×50 map (depth 0, behind walls at depth 1)
@@ -131,7 +138,8 @@ export class ArenaScene extends Phaser.Scene {
             const mapY = WORLD_CENTER_Y - mapH / 2;
             this.bgGraphics.fillStyle(0x0a0a14, 1);
             this.bgGraphics.fillRect(mapX, mapY, mapW, mapH);
-            // Constrain camera to the truck stop bounds
+            // Constrain camera to the truck stop bounds; zoom 1x so vehicles are clearly visible
+            this.cameras.main.setZoom(1.0);
             this.cameras.main.setBounds(mapX, mapY, mapW, mapH);
           }
         }
@@ -238,6 +246,41 @@ export class ArenaScene extends Phaser.Scene {
 
     this.syncHazards(state);
     this.drawMinimap(state);
+    if (state.combatEvents?.length) {
+      this.renderCombatEvents(state.combatEvents);
+    }
+  }
+
+  private renderCombatEvents(events: CombatEvent[]): void {
+    events.forEach(ev => {
+      const fromX = WORLD_CENTER_X + ev.fromX * PIXELS_PER_INCH;
+      const fromY = WORLD_CENTER_Y + ev.fromY * PIXELS_PER_INCH;
+      const toX   = WORLD_CENTER_X + ev.toX   * PIXELS_PER_INCH;
+      const toY   = WORLD_CENTER_Y + ev.toY   * PIXELS_PER_INCH;
+
+      // Tracer line
+      const tracer = this.add.graphics().setDepth(5);
+      if (ev.hit) {
+        tracer.lineStyle(2, 0xff4400, 0.9);
+      } else {
+        tracer.lineStyle(1, 0xffff00, 0.6);
+      }
+      tracer.beginPath();
+      tracer.moveTo(fromX, fromY);
+      tracer.lineTo(toX, toY);
+      tracer.strokePath();
+      this.time.delayedCall(180, () => tracer.destroy());
+
+      // Hit flash on target vehicle
+      if (ev.hit) {
+        const flash = this.add.graphics().setDepth(5);
+        flash.fillStyle(0xff6600, 0.85);
+        flash.fillCircle(toX, toY, 14);
+        flash.lineStyle(2, 0xffffff, 0.7);
+        flash.strokeCircle(toX, toY, 14);
+        this.time.delayedCall(200, () => flash.destroy());
+      }
+    });
   }
 
   private drawMinimap(state: ZoneState): void {
@@ -342,10 +385,13 @@ export class ArenaScene extends Phaser.Scene {
       container.x += (target.x - container.x) * LERP;
       container.y += (target.y - container.y) * LERP;
       // Angle lerp — handle wraparound so 359°→1° goes through 0° not 180°
-      let dRot = target.rotation - container.rotation;
-      if (dRot > Math.PI)  dRot -= Math.PI * 2;
-      if (dRot < -Math.PI) dRot += Math.PI * 2;
-      container.rotation += dRot * LERP;
+      // Normalise to [0, 2π) first so the single ±π wrap is always sufficient
+      const TWO_PI = Math.PI * 2;
+      const curRot = ((container.rotation % TWO_PI) + TWO_PI) % TWO_PI;
+      let dRot = target.rotation - curRot;
+      if (dRot > Math.PI)  dRot -= TWO_PI;
+      if (dRot < -Math.PI) dRot += TWO_PI;
+      container.rotation = curRot + dRot * LERP;
     });
 
     if (time - this.lastInputSent < 100) return;
@@ -362,52 +408,6 @@ export class ArenaScene extends Phaser.Scene {
       : 0;
     const fireWeapon = this.firePending ? 'mg' : null;
     this.firePending = false;
-
-    if (fireWeapon) {
-      const myVehicle = this.zoneState.vehicles.find(v => v.id === this.myVehicleId);
-      const mySprite = this.vehicleSprites.get(this.myVehicleId);
-      if (myVehicle && mySprite) {
-        const PIXELS_PER_INCH = 32;
-        const FIRE_RANGE_PX = 16 * PIXELS_PER_INCH; // matches server FIRE_RANGE
-        const rad = Phaser.Math.DegToRad(myVehicle.facing - 90);
-        const facingDx = Math.cos(rad);
-        const facingDy = Math.sin(rad);
-
-        // Find closest enemy in front arc (within ±45° and fire range)
-        let tracerEndX = facingDx * FIRE_RANGE_PX;
-        let tracerEndY = facingDy * FIRE_RANGE_PX;
-        let hitTarget = false;
-
-        const enemies = this.zoneState.vehicles.filter(v => v.id !== this.myVehicleId);
-        let closestDist = Infinity;
-        for (const enemy of enemies) {
-          const eSprite = this.vehicleSprites.get(enemy.id);
-          if (!eSprite) continue;
-          const ex = eSprite.x - mySprite.x;
-          const ey = eSprite.y - mySprite.y;
-          const dist = Math.sqrt(ex * ex + ey * ey);
-          if (dist > FIRE_RANGE_PX || dist === 0) continue;
-          // Angle between facing direction and direction to enemy
-          const dot = (ex / dist) * facingDx + (ey / dist) * facingDy;
-          if (dot < Math.cos(Phaser.Math.DegToRad(45))) continue; // outside ±45° arc
-          if (dist < closestDist) {
-            closestDist = dist;
-            tracerEndX = ex;
-            tracerEndY = ey;
-            hitTarget = true;
-          }
-        }
-
-        const color = hitTarget ? 0xff4400 : 0xffff00;
-        const flash = this.add.graphics().setDepth(5);
-        flash.lineStyle(hitTarget ? 2 : 1, color, 1);
-        flash.beginPath();
-        flash.moveTo(mySprite.x, mySprite.y);
-        flash.lineTo(mySprite.x + tracerEndX, mySprite.y + tracerEndY);
-        flash.strokePath();
-        this.time.delayedCall(150, () => flash.destroy());
-      }
-    }
 
     this.connection.send({
       type: 'input',
