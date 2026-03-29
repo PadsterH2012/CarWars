@@ -74,10 +74,10 @@ describe('maneuver classifier', () => {
     expect(result.dValue).toBe(3);
   });
 
-  it('no steer at any speed is a bend (D1)', () => {
+  it('no steer is D0 — straight driving has no hazard', () => {
     const result = classifyManeuver(60, 0);
     expect(result.type).toBe('bend');
-    expect(result.dValue).toBe(1);
+    expect(result.dValue).toBe(0);
   });
 });
 

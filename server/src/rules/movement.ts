@@ -51,7 +51,7 @@ export interface ManeuverResult {
  * @param absSteering Absolute value of steering input (0-60 degrees)
  */
 export function classifyManeuver(speed: number, absSteering: number): ManeuverResult {
-  if (absSteering === 0) return { type: 'bend', dValue: 1 };
+  if (absSteering === 0) return { type: 'bend', dValue: 0 };
   if (absSteering <= 15) return { type: 'bend', dValue: 1 };
   if (absSteering <= 30) return { type: 'drift', dValue: 2 };
   if (absSteering <= 45) return { type: 'swerve', dValue: 3 };

@@ -16,6 +16,8 @@ export interface TurnEngine {
   addVehicle(vehicle: VehicleState): void;
 }
 
+const TICKS_PER_TURN = 10; // 100ms ticks × 10 = 1 second = 1 Compendium turn
+
 export function createTurnEngine(initialState: ZoneState): TurnEngine {
   let state: ZoneState = {
     ...initialState,
@@ -24,6 +26,9 @@ export function createTurnEngine(initialState: ZoneState): TurnEngine {
   };
   const pendingInputs = new Map<string, VehicleInput>();
   const lastInputs = new Map<string, VehicleInput>();
+  // Per-vehicle hazard D-value accumulator — resets every full turn
+  const hazardAccum = new Map<string, number>();
+  let tickInTurn = 0;
 
   return {
     queueInput(vehicleId, input) {
@@ -38,33 +43,43 @@ export function createTurnEngine(initialState: ZoneState): TurnEngine {
       // Move all active vehicles
       let newVehicles = activeVehicles.map(vehicle => {
         const input = pendingInputs.get(vehicle.id) ?? lastInputs.get(vehicle.id) ?? { speed: 0, steer: 0, fireWeapon: null };
-        lastInputs.set(vehicle.id, { speed: input.speed, steer: input.steer, fireWeapon: null });
+        // Persist speed but reset steer — steer is an impulse, not a held state
+        lastInputs.set(vehicle.id, { speed: input.speed, steer: 0, fireWeapon: null });
         return computeMovement(vehicle, input);
       });
 
-      // Apply hazard checks — maneuver D-values feed the Compendium control table
-      newVehicles = newVehicles.map(vehicle => {
+      // Accumulate hazard D-values for this tick
+      newVehicles.forEach(vehicle => {
         const input = pendingInputs.get(vehicle.id) ?? lastInputs.get(vehicle.id) ?? { speed: 0, steer: 0, fireWeapon: null };
         const maneuver = classifyManeuver(vehicle.speed, Math.abs(input.steer));
-        const hazardAccumulator = maneuver.dValue; // extend here when collision/obstacle D-values are added
-        const control = resolveControlTable(vehicle.stats.handlingClass, hazardAccumulator);
-
-        if (control.effect === 'none') return vehicle;
-
-        // Fishtail: apply random small spin
-        if (control.effect === 'fishtail') {
-          const spin = (Math.random() > 0.5 ? 1 : -1) * 15;
-          return { ...vehicle, facing: (vehicle.facing + spin + 360) % 360 };
-        }
-
-        // Skid or worse: larger spin, halve speed
-        const spinAngle = (Math.random() > 0.5 ? 1 : -1) * (60 + Math.floor(Math.random() * 120));
-        return {
-          ...vehicle,
-          facing: (vehicle.facing + spinAngle + 360) % 360,
-          speed: Math.floor(vehicle.speed / 2),
-        };
+        hazardAccum.set(vehicle.id, (hazardAccum.get(vehicle.id) ?? 0) + maneuver.dValue);
       });
+
+      // Apply hazard control check once per full turn (every TICKS_PER_TURN ticks)
+      tickInTurn = (tickInTurn + 1) % TICKS_PER_TURN;
+      if (tickInTurn === 0) {
+        newVehicles = newVehicles.map(vehicle => {
+          const accumulated = hazardAccum.get(vehicle.id) ?? 0;
+          hazardAccum.set(vehicle.id, 0);
+          const control = resolveControlTable(vehicle.stats.handlingClass, accumulated);
+
+          if (control.effect === 'none') return vehicle;
+
+          // Fishtail: apply random small spin
+          if (control.effect === 'fishtail') {
+            const spin = (Math.random() > 0.5 ? 1 : -1) * 15;
+            return { ...vehicle, facing: (vehicle.facing + spin + 360) % 360 };
+          }
+
+          // Skid or worse: larger spin, halve speed
+          const spinAngle = (Math.random() > 0.5 ? 1 : -1) * (60 + Math.floor(Math.random() * 120));
+          return {
+            ...vehicle,
+            facing: (vehicle.facing + spinAngle + 360) % 360,
+            speed: Math.floor(vehicle.speed / 2),
+          };
+        });
+      }
 
       // Mutable damage and ammo update maps
       const damageUpdates = new Map<string, DamageState>();
