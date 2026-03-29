@@ -126,7 +126,10 @@ async function removeClientFromZone(ws: WebSocket): Promise<void> {
             playerId
           ]
         );
-        await db.query(`UPDATE vehicles SET in_arena = FALSE WHERE id = $1 AND player_id = $2`, [vehicleId, playerId]);
+        const uuidRe = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+        if (uuidRe.test(vehicleId)) {
+          await db.query(`UPDATE vehicles SET in_arena = FALSE WHERE id = $1 AND player_id = $2`, [vehicleId, playerId]);
+        }
       } catch (e) {
         console.error('Failed to save vehicle damage:', e);
       }
@@ -328,24 +331,28 @@ async function handleMessage(ws: WebSocket, raw: string): Promise<void> {
     runner.getEngine().addVehicle(vehicle);
     runner.registerHumanVehicle(msg.vehicleId);
 
-    // Load driver skill for this vehicle
+    // Load driver skill for this vehicle (only for real DB vehicles with valid UUID)
     {
-      const db = getDb();
-      const driverRes = await db.query(
-        `SELECT skill FROM drivers WHERE assigned_vehicle_id = $1 AND alive = TRUE LIMIT 1`,
-        [msg.vehicleId]
-      );
-      if (driverRes.rows.length) {
-        runner.setVehicleSkill(msg.vehicleId, driverRes.rows[0].skill);
+      const uuidRe = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+      if (uuidRe.test(msg.vehicleId)) {
+        const db = getDb();
+        const driverRes = await db.query(
+          `SELECT skill FROM drivers WHERE assigned_vehicle_id = $1 AND alive = TRUE LIMIT 1`,
+          [msg.vehicleId]
+        );
+        if (driverRes.rows.length) {
+          runner.setVehicleSkill(msg.vehicleId, driverRes.rows[0].skill);
+        }
       }
     }
 
     runner.addClient(ws); // sends initial zone_state automatically
 
-    // Mark vehicle as in-arena
+    // Mark vehicle as in-arena (only for real DB vehicles, not test UUIDs)
     if (msg.token) {
       const playerId = clientPlayers.get(ws);
-      if (playerId) {
+      const uuidRe = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+      if (playerId && uuidRe.test(msg.vehicleId)) {
         const db = getDb();
         await db.query(`UPDATE vehicles SET in_arena = TRUE WHERE id = $1 AND player_id = $2`, [msg.vehicleId, playerId]);
       }
