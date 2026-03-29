@@ -1,5 +1,6 @@
 import express from 'express';
 import cors from 'cors';
+import path from 'path';
 import { authRouter } from './api/auth';
 import { vehiclesRouter } from './api/vehicles';
 import { driversRouter } from './api/drivers';
@@ -35,6 +36,12 @@ export function createApp() {
     if (!result.rows.length) return res.status(404).json({ error: 'Not found' });
     return res.json(result.rows[0]);
   });
+
+  // Serve client static files — in production these are in /public next to dist/main.js
+  const publicDir = path.join(__dirname, '..', 'public');
+  app.use(express.static(publicDir));
+  // SPA fallback — return index.html for any non-API route
+  app.get('*', (_req, res) => res.sendFile(path.join(publicDir, 'index.html')));
 
   return app;
 }
