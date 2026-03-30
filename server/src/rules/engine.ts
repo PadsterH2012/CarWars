@@ -1,5 +1,5 @@
 import type { ZoneState, VehicleState, HazardObject, DamageState, ArmorLocation, ArenaMap, CombatEvent } from '@carwars/shared';
-import { computeMovement, classifyManeuver, resolveControlTable } from './movement';
+import { computeMovement, classifyManeuver, resolveControlTable, computeSpinAngle } from './movement';
 import { resolveToHit, resolveDamage, isWeaponInArc, hasLineOfSight, roll2d6, rollDamage } from './combat';
 import { WEAPONS } from './data/weapons';
 import { resolveWallCollisions } from './collision';
@@ -30,6 +30,10 @@ export function createTurnEngine(initialState: ZoneState, map?: ArenaMap): TurnE
   const lastInputs = new Map<string, VehicleInput>();
   // Per-vehicle hazard D-value accumulator — resets every full turn
   const hazardAccum = new Map<string, number>();
+  // Sign of the steer input that produced the peak D this turn (for spin direction)
+  const hazardSteerSign = new Map<string, number>();
+  // Gradual slide velocity (°/tick remaining) — applied each tick until depleted
+  const slideVelocity = new Map<string, number>();
   let tickInTurn = 0;
 
   return {
@@ -53,6 +57,16 @@ export function createTurnEngine(initialState: ZoneState, map?: ArenaMap): TurnE
         // Persist speed but reset steer — steer is an impulse, not a held state
         lastInputs.set(vehicle.id, { speed: input.speed, steer: 0, fireWeapon: null });
         let moved = computeMovement(vehicle, input);
+
+        // Apply gradual slide rotation (8°/tick max) — smooths out fishtail/skid over time
+        const vel = slideVelocity.get(vehicle.id) ?? 0;
+        if (Math.abs(vel) >= 0.5) {
+          const step = Math.sign(vel) * Math.min(Math.abs(vel), 8);
+          slideVelocity.set(vehicle.id, vel - step);
+          moved = { ...moved, facing: (moved.facing + step + 360) % 360 };
+        } else if (vel !== 0) {
+          slideVelocity.delete(vehicle.id);
+        }
 
         // Wall collision check — only when a map with walls is loaded
         if (map && map.walls.length > 0) {
@@ -84,7 +98,11 @@ export function createTurnEngine(initialState: ZoneState, map?: ArenaMap): TurnE
         const input = pendingInputs.get(vehicle.id) ?? lastInputs.get(vehicle.id) ?? { speed: 0, steer: 0, fireWeapon: null };
         const maneuver = classifyManeuver(vehicle.speed, Math.abs(input.steer));
         const prev = hazardAccum.get(vehicle.id) ?? 0;
-        if (maneuver.dValue > prev) hazardAccum.set(vehicle.id, maneuver.dValue);
+        if (maneuver.dValue > prev) {
+          hazardAccum.set(vehicle.id, maneuver.dValue);
+          // Record steer direction for physics-based spin when control is lost
+          hazardSteerSign.set(vehicle.id, Math.sign(input.steer));
+        }
       });
 
       // Apply hazard control check once per full turn (every TICKS_PER_TURN ticks)
@@ -92,26 +110,29 @@ export function createTurnEngine(initialState: ZoneState, map?: ArenaMap): TurnE
       if (tickInTurn === 0) {
         newVehicles = newVehicles.map(vehicle => {
           const accumulated = hazardAccum.get(vehicle.id) ?? 0;
+          const steerSign   = hazardSteerSign.get(vehicle.id) ?? 0;
           hazardAccum.set(vehicle.id, 0);
+          hazardSteerSign.delete(vehicle.id);
           const control = resolveControlTable(vehicle.stats.handlingClass, accumulated);
 
           if (control.effect === 'none') return vehicle;
 
-          // Fishtail: apply random small spin
+          const bodyType = vehicle.stats.loadout.bodyType;
+          const weight   = vehicle.stats.weight;
+
           if (control.effect === 'fishtail') {
-            const spin = (Math.random() > 0.5 ? 1 : -1) * 15;
-            console.log(`[t${state.tick}] CTRL  ${vehicle.id} fishtail (D${accumulated}, HC${vehicle.stats.handlingClass})`);
-            return { ...vehicle, facing: (vehicle.facing + spin + 360) % 360 };
+            const spin = computeSpinAngle('fishtail', vehicle.speed, weight, bodyType, steerSign);
+            // Add to any existing slide (compounds if already sliding)
+            slideVelocity.set(vehicle.id, (slideVelocity.get(vehicle.id) ?? 0) + spin);
+            console.log(`[t${state.tick}] CTRL  ${vehicle.id} fishtail (D${accumulated}, HC${vehicle.stats.handlingClass}) slide=${spin > 0 ? '+' : ''}${spin.toFixed(0)}°`);
+            return vehicle; // spin applied gradually each tick
           }
 
-          // Skid or worse: larger spin, halve speed
-          const spinAngle = (Math.random() > 0.5 ? 1 : -1) * (60 + Math.floor(Math.random() * 120));
-          console.log(`[t${state.tick}] CTRL  ${vehicle.id} ${control.effect} (D${accumulated}, HC${vehicle.stats.handlingClass}) spin=${spinAngle}°`);
-          return {
-            ...vehicle,
-            facing: (vehicle.facing + spinAngle + 360) % 360,
-            speed: Math.floor(vehicle.speed / 2),
-          };
+          // Skid or worse: physics-based spin + halve speed
+          const spin = computeSpinAngle('skid', vehicle.speed, weight, bodyType, steerSign);
+          slideVelocity.set(vehicle.id, (slideVelocity.get(vehicle.id) ?? 0) + spin);
+          console.log(`[t${state.tick}] CTRL  ${vehicle.id} ${control.effect} (D${accumulated}, HC${vehicle.stats.handlingClass}) slide=${spin > 0 ? '+' : ''}${spin.toFixed(0)}°`);
+          return { ...vehicle, speed: Math.floor(vehicle.speed / 2) };
         });
       }
 
