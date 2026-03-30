@@ -55,8 +55,7 @@ export class ArenaScene extends Phaser.Scene {
   create(): void {
     this.cursors = this.input.keyboard!.createCursorKeys();
     this.fireKey = this.input.keyboard!.addKey(Phaser.Input.Keyboard.KeyCodes.SPACE);
-    this.autopilotKey = this.input.keyboard!.addKey(Phaser.Input.Keyboard.KeyCodes.TAB);
-    this.input.keyboard!.addCapture(Phaser.Input.Keyboard.KeyCodes.TAB);
+    this.autopilotKey = this.input.keyboard!.addKey(Phaser.Input.Keyboard.KeyCodes.P);
     this.wasdKeys = {
       w: this.input.keyboard!.addKey(Phaser.Input.Keyboard.KeyCodes.W),
       s: this.input.keyboard!.addKey(Phaser.Input.Keyboard.KeyCodes.S),
@@ -114,7 +113,7 @@ export class ArenaScene extends Phaser.Scene {
       fontStyle: 'bold',
       fontFamily: 'monospace'
     }).setScrollFactor(0);
-    this.add.text(16, 48, 'Arrows/WASD: drive | Space: fire | 1-5: weapon | Tab: pilot', {
+    this.add.text(16, 48, 'Arrows/WASD: drive | Space: fire | 1-5: weapon | P: pilot', {
       color: '#888888',
       fontSize: '12px',
       fontFamily: 'monospace'
