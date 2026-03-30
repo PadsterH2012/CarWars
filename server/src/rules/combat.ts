@@ -55,6 +55,49 @@ export function isWeaponInArc(attacker: VehicleState, target: VehicleState, moun
   }
 }
 
+/**
+ * Liang-Barsky line segment vs axis-aligned bounding box intersection test.
+ * Returns true if the segment (ax,ay)→(bx,by) intersects the AABB [minX,maxX]×[minY,maxY].
+ */
+function segmentIntersectsRect(
+  ax: number, ay: number, bx: number, by: number,
+  minX: number, minY: number, maxX: number, maxY: number
+): boolean {
+  const dx = bx - ax;
+  const dy = by - ay;
+  const p = [-dx, dx, -dy, dy];
+  const q = [ax - minX, maxX - ax, ay - minY, maxY - ay];
+  let t0 = 0, t1 = 1;
+  for (let i = 0; i < 4; i++) {
+    if (p[i] === 0) {
+      if (q[i] < 0) return false;
+    } else {
+      const t = q[i] / p[i];
+      if (p[i] < 0) t0 = Math.max(t0, t);
+      else t1 = Math.min(t1, t);
+    }
+  }
+  return t0 <= t1;
+}
+
+/**
+ * Returns true if there is an unobstructed line of sight between two positions.
+ * A wall blocks LoS if the segment between from and to intersects the wall's AABB.
+ */
+export function hasLineOfSight(
+  from: { x: number; y: number },
+  to: { x: number; y: number },
+  walls: import('@carwars/shared').Rect[]
+): boolean {
+  return !walls.some(w =>
+    segmentIntersectsRect(
+      from.x, from.y, to.x, to.y,
+      w.x - w.w / 2, w.y - w.h / 2,
+      w.x + w.w / 2, w.y + w.h / 2
+    )
+  );
+}
+
 export function resolveToHit(
   attacker: VehicleState,
   target: VehicleState,

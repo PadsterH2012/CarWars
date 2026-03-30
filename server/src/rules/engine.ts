@@ -1,6 +1,6 @@
-import type { ZoneState, VehicleState, HazardObject, DamageState, ArmorLocation, ArenaMap } from '@carwars/shared';
+import type { ZoneState, VehicleState, HazardObject, DamageState, ArmorLocation, ArenaMap, CombatEvent } from '@carwars/shared';
 import { computeMovement, classifyManeuver, resolveControlTable } from './movement';
-import { resolveToHit, resolveDamage, isWeaponInArc, roll2d6, rollDamage } from './combat';
+import { resolveToHit, resolveDamage, isWeaponInArc, hasLineOfSight, roll2d6, rollDamage } from './combat';
 import { WEAPONS } from './data/weapons';
 import { resolveWallCollisions } from './collision';
 
@@ -116,6 +116,7 @@ export function createTurnEngine(initialState: ZoneState, map?: ArenaMap): TurnE
       }
 
       // Resolve combat using pre-move positions
+      const combatEvents: CombatEvent[] = [];
       preMoveVehicles.forEach(attacker => {
         const input = pendingInputs.get(attacker.id) ?? { speed: 0, steer: 0, fireWeapon: null };
         if (!input.fireWeapon) return;
@@ -149,6 +150,10 @@ export function createTurnEngine(initialState: ZoneState, map?: ArenaMap): TurnE
         preMoveVehicles.forEach(target => {
           if (attacker.id === target.id) return;
           if (!isWeaponInArc(attacker, target, mount)) return;
+          if (map && map.walls.length > 0 && !hasLineOfSight(attacker.position, target.position, map.walls)) {
+            console.log(`[t${state.tick}] BLOCK ${attacker.id} → ${target.id} (wall blocks LoS)`);
+            return;
+          }
 
           const dx = target.position.x - attacker.position.x;
           const dy = target.position.y - attacker.position.y;
@@ -159,6 +164,12 @@ export function createTurnEngine(initialState: ZoneState, map?: ArenaMap): TurnE
           const distStr = distance.toFixed(1);
           if (!toHit.hit) {
             console.log(`[t${state.tick}] MISS  ${attacker.id} → ${target.id} (${weapon.id}, dist=${distStr})`);
+            combatEvents.push({
+              attackerId: attacker.id, targetId: target.id, hit: false,
+              fromX: attacker.position.x, fromY: attacker.position.y,
+              toX: target.position.x, toY: target.position.y,
+              weapon: weapon.id,
+            });
             return;
           }
 
@@ -172,6 +183,12 @@ export function createTurnEngine(initialState: ZoneState, map?: ArenaMap): TurnE
           const willDestroy = currentDamage.destroyed || damageResult.effects.includes('destroyed');
           const effects = damageResult.effects.length ? ` [${damageResult.effects.join(', ')}]` : '';
           console.log(`[t${state.tick}] HIT   ${attacker.id} → ${target.id} (${weapon.id}, dist=${distStr}) ${toHit.location} -${damageResult.damageDealt}pts → ${armorRemaining} left${effects}${willDestroy ? ' 💀 DESTROYED' : ''}`);
+          combatEvents.push({
+            attackerId: attacker.id, targetId: target.id, hit: true,
+            fromX: attacker.position.x, fromY: attacker.position.y,
+            toX: target.position.x, toY: target.position.y,
+            weapon: weapon.id,
+          });
 
           const tireIndex = (toHit.location === 'front' || toHit.location === 'left') ? 0
             : (toHit.location === 'right') ? 1 : 2;
@@ -304,6 +321,7 @@ export function createTurnEngine(initialState: ZoneState, map?: ArenaMap): TurnE
         tick: state.tick + 1,
         vehicles: finalVehicles,
         hazardObjects: remainingHazards,
+        combatEvents: combatEvents.length > 0 ? combatEvents : undefined,
       };
       return state;
     },
