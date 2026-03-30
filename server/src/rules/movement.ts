@@ -62,9 +62,11 @@ export function classifyManeuver(speed: number, absSteering: number): ManeuverRe
   else if (absSteering <= 45) { type = 'swerve';          d = 3; }
   else                        { type = 'controlled_skid'; d = 3; }
 
-  // Speed penalty: high-speed cornering raises effective D
-  if (speed > 80)      d += 2;
-  else if (speed > 60) d += 1;
+  // Speed penalty: high-speed cornering raises effective D.
+  // Thresholds chosen so normal combat speeds (45–70 mph) don't compound routine manoeuvres;
+  // only genuinely fast cornering (>70 mph) adds hazard.
+  if (speed > 90)      d += 2;
+  else if (speed > 70) d += 1;
 
   return { type, dValue: Math.min(d, 6) };
 }
