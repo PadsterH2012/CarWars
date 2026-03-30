@@ -27,6 +27,8 @@ export class ArenaScene extends Phaser.Scene {
   private firePending = false;
   private autopilot = false;
   private autopilotLabel!: Phaser.GameObjects.Text;
+  private clientSpeed = 0;
+  private wasdKeys!: { w: Phaser.Input.Keyboard.Key; s: Phaser.Input.Keyboard.Key; a: Phaser.Input.Keyboard.Key; d: Phaser.Input.Keyboard.Key };
   private minimapGfx!: Phaser.GameObjects.Graphics;
   private mapWalls: import('@carwars/shared').Rect[] = [];
   private mapGraphics!: Phaser.GameObjects.Graphics;
@@ -46,7 +48,13 @@ export class ArenaScene extends Phaser.Scene {
   create(): void {
     this.cursors = this.input.keyboard!.createCursorKeys();
     this.fireKey = this.input.keyboard!.addKey(Phaser.Input.Keyboard.KeyCodes.SPACE);
-    this.autopilotKey = this.input.keyboard!.addKey(Phaser.Input.Keyboard.KeyCodes.A);
+    this.autopilotKey = this.input.keyboard!.addKey(Phaser.Input.Keyboard.KeyCodes.TAB);
+    this.wasdKeys = {
+      w: this.input.keyboard!.addKey(Phaser.Input.Keyboard.KeyCodes.W),
+      s: this.input.keyboard!.addKey(Phaser.Input.Keyboard.KeyCodes.S),
+      a: this.input.keyboard!.addKey(Phaser.Input.Keyboard.KeyCodes.A),
+      d: this.input.keyboard!.addKey(Phaser.Input.Keyboard.KeyCodes.D),
+    };
     // JustDown only fires for a single frame (~16ms) but inputs are batched every 100ms.
     // Use keydown event to accumulate fire intent so it isn't dropped between send ticks.
     this.fireKey.on('down', () => { this.firePending = true; });
@@ -86,7 +94,7 @@ export class ArenaScene extends Phaser.Scene {
       fontStyle: 'bold',
       fontFamily: 'monospace'
     }).setScrollFactor(0);
-    this.add.text(16, 48, 'Arrows: drive | Space: fire | A: autopilot', {
+    this.add.text(16, 48, 'Arrows/WASD: drive | Space: fire | 1-5: weapon | Tab: pilot', {
       color: '#888888',
       fontSize: '12px',
       fontFamily: 'monospace'
@@ -469,19 +477,28 @@ export class ArenaScene extends Phaser.Scene {
     // When autopilot is on the server drives this vehicle — don't send human input
     if (this.autopilot) return;
 
-    const speed = this.cursors.up?.isDown ? 15
-      : this.cursors.down?.isDown ? 5
-      : 0;
-    const steer = this.cursors.left?.isDown ? -15
-      : this.cursors.right?.isDown ? 15
-      : 0;
+    // Get max speed from our vehicle's stats (falls back to 70 if not yet received)
+    const myVehicle = this.zoneState?.vehicles.find(v => v.id === this.myVehicleId);
+    const maxSpeed = myVehicle?.stats.maxSpeed ?? 70;
+
+    // Continuous acceleration: ±5 mph per 100ms tick
+    const upHeld = this.cursors.up?.isDown || this.wasdKeys.w.isDown;
+    const downHeld = this.cursors.down?.isDown || this.wasdKeys.s.isDown;
+    if (upHeld)   this.clientSpeed = Math.min(this.clientSpeed + 5, maxSpeed);
+    if (downHeld) this.clientSpeed = Math.max(this.clientSpeed - 5, 0);
+    // No key held = coast (speed persists)
+
+    const leftHeld  = this.cursors.left?.isDown  || this.wasdKeys.a.isDown;
+    const rightHeld = this.cursors.right?.isDown || this.wasdKeys.d.isDown;
+    const steer = leftHeld ? -15 : rightHeld ? 15 : 0;
+
     const fireWeapon = this.firePending ? 'mg' : null;
     this.firePending = false;
 
     this.connection.send({
       type: 'input',
       tick: this.zoneState.tick,
-      speed,
+      speed: this.clientSpeed,
       steer,
       fireWeapon
     });
