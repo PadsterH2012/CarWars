@@ -384,12 +384,14 @@ async function handleMessage(ws: WebSocket, raw: string): Promise<void> {
     }
 
     // Validate inputs
-    const speed = Math.max(0, Math.min(25, Number(msg.speed) || 0));
+    const runner = zones.get(zoneId);
+    const vehicleState = runner?.getEngine().getState().vehicles.find(v => v.id === vehicleId);
+    const maxSpeed = vehicleState?.stats.maxSpeed ?? 100;
+    const speed = Math.max(0, Math.min(maxSpeed, Number(msg.speed) || 0));
     const fireWeapon = typeof msg.fireWeapon === 'string' && msg.fireWeapon.length <= 20
       ? msg.fireWeapon
       : null;
 
-    const runner = zones.get(zoneId);
     if (runner) {
       const vehicleSkill = runner.getDriverSkill(vehicleId);
       const maxSteer = skillToMaxSteer(vehicleSkill);
