@@ -524,7 +524,11 @@ export class ArenaScene extends Phaser.Scene {
       const text = this.armorTexts[face];
       if (!text) return;
       const cur = ds.armor[face] ?? 0;
-      const orig = (origArmor as Record<string, number>)[face] ?? 1;
+      const orig = (origArmor as Record<string, number>)[face];
+      if (!orig) {
+        text.setText(`${labelMap[face]}: --`);
+        return;
+      }
       const pct = cur / orig;
       const color = pct >= 0.75 ? '#00ff88' : pct >= 0.25 ? '#ffaa00' : '#ff3333';
       text.setColor(color).setText(`${labelMap[face]}: ${cur}`);
