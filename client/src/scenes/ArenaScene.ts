@@ -49,6 +49,7 @@ export class ArenaScene extends Phaser.Scene {
     this.cursors = this.input.keyboard!.createCursorKeys();
     this.fireKey = this.input.keyboard!.addKey(Phaser.Input.Keyboard.KeyCodes.SPACE);
     this.autopilotKey = this.input.keyboard!.addKey(Phaser.Input.Keyboard.KeyCodes.TAB);
+    this.input.keyboard!.addCapture(Phaser.Input.Keyboard.KeyCodes.TAB);
     this.wasdKeys = {
       w: this.input.keyboard!.addKey(Phaser.Input.Keyboard.KeyCodes.W),
       s: this.input.keyboard!.addKey(Phaser.Input.Keyboard.KeyCodes.S),
@@ -63,6 +64,7 @@ export class ArenaScene extends Phaser.Scene {
       this.connection.send({ type: 'autopilot', enabled: this.autopilot });
       this.autopilotLabel.setText(this.autopilot ? 'AUTOPILOT: ON' : 'AUTOPILOT: OFF');
       this.autopilotLabel.setColor(this.autopilot ? '#00ff88' : '#888888');
+      if (!this.autopilot) this.clientSpeed = 0; // reset on manual takeover
     });
 
     // Inject tilemap JSON into cache (bundled by Vite — no HTTP request needed)
