@@ -25,6 +25,9 @@ export class ArenaScene extends Phaser.Scene {
   private lastInputSent = 0;
   private zoneEnded = false;
   private firePending = false;
+  private selectedMountIndex = 0;
+  private selectedWeapon: string | null = null;
+  private weaponKeys: Phaser.Input.Keyboard.Key[] = [];
   private autopilot = false;
   private autopilotLabel!: Phaser.GameObjects.Text;
   private clientSpeed = 0;
@@ -65,6 +68,17 @@ export class ArenaScene extends Phaser.Scene {
       this.autopilotLabel.setText(this.autopilot ? 'AUTOPILOT: ON' : 'AUTOPILOT: OFF');
       this.autopilotLabel.setColor(this.autopilot ? '#00ff88' : '#888888');
       if (!this.autopilot) this.clientSpeed = 0; // reset on manual takeover
+    });
+    const weaponKeyCodes = [
+      Phaser.Input.Keyboard.KeyCodes.ONE,
+      Phaser.Input.Keyboard.KeyCodes.TWO,
+      Phaser.Input.Keyboard.KeyCodes.THREE,
+      Phaser.Input.Keyboard.KeyCodes.FOUR,
+      Phaser.Input.Keyboard.KeyCodes.FIVE,
+    ];
+    this.weaponKeys = weaponKeyCodes.map(code => this.input.keyboard!.addKey(code));
+    this.weaponKeys.forEach((key, i) => {
+      key.on('down', () => { this.selectedMountIndex = i; });
     });
 
     // Inject tilemap JSON into cache (bundled by Vite — no HTTP request needed)
@@ -481,6 +495,9 @@ export class ArenaScene extends Phaser.Scene {
 
     // Get max speed from our vehicle's stats (falls back to 70 if not yet received)
     const myVehicle = this.zoneState?.vehicles.find(v => v.id === this.myVehicleId);
+    const mounts = myVehicle?.stats.loadout?.mounts ?? [];
+    const mount = mounts[this.selectedMountIndex] ?? mounts[0];
+    this.selectedWeapon = mount?.weaponId ?? null;
     const maxSpeed = myVehicle?.stats.maxSpeed ?? 70;
 
     // Continuous acceleration: ±5 mph per 100ms tick
@@ -494,7 +511,7 @@ export class ArenaScene extends Phaser.Scene {
     const rightHeld = this.cursors.right?.isDown || this.wasdKeys.d.isDown;
     const steer = leftHeld ? -15 : rightHeld ? 15 : 0;
 
-    const fireWeapon = this.firePending ? 'mg' : null;
+    const fireWeapon = this.firePending ? this.selectedWeapon : null;
     this.firePending = false;
 
     this.connection.send({
