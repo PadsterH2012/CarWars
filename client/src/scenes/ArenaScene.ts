@@ -31,6 +31,10 @@ export class ArenaScene extends Phaser.Scene {
   private autopilot = false;
   private autopilotLabel!: Phaser.GameObjects.Text;
   private clientSpeed = 0;
+  private driverSkill = 3;
+  private clientSteer = 15;  // max steer per skill (replaces hardcoded 15 in steer logic)
+  private hudText!: Phaser.GameObjects.Text;
+  private armorTexts: Partial<Record<string, Phaser.GameObjects.Text>> = {};
   private wasdKeys!: { w: Phaser.Input.Keyboard.Key; s: Phaser.Input.Keyboard.Key; a: Phaser.Input.Keyboard.Key; d: Phaser.Input.Keyboard.Key };
   private minimapGfx!: Phaser.GameObjects.Graphics;
   private mapWalls: import('@carwars/shared').Rect[] = [];
@@ -120,6 +124,30 @@ export class ArenaScene extends Phaser.Scene {
       color: '#888888', fontSize: '12px', fontFamily: 'monospace'
     }).setScrollFactor(0);
 
+    // Vehicle status HUD — top-left, fixed to camera
+    this.hudText = this.add.text(16, 100, '', {
+      color: '#00ff88',
+      fontSize: '12px',
+      fontFamily: 'monospace',
+      backgroundColor: '#00000099',
+      padding: { x: 6, y: 4 },
+    }).setScrollFactor(0).setDepth(20);
+
+    // Armor facing display
+    const armorLayout: Array<{ key: string; label: string; x: number; y: number }> = [
+      { key: 'top',       label: 'TOP', x: 60,  y: 130 },
+      { key: 'front',     label: 'FNT', x: 60,  y: 150 },
+      { key: 'left',      label: 'LFT', x: 20,  y: 168 },
+      { key: 'right',     label: 'RGT', x: 100, y: 168 },
+      { key: 'back',      label: 'BAK', x: 60,  y: 186 },
+      { key: 'underbody', label: 'UDR', x: 60,  y: 204 },
+    ];
+    armorLayout.forEach(({ key, label, x, y }) => {
+      this.armorTexts[key] = this.add.text(x, y, `${label}: --`, {
+        color: '#00ff88', fontSize: '11px', fontFamily: 'monospace',
+      }).setScrollFactor(0).setDepth(20);
+    });
+
     this.minimapGfx = this.add.graphics().setScrollFactor(0).setDepth(20);
     this.mapGraphics = this.add.graphics().setDepth(1);  // above ground, below vehicles
     // Minimap label
@@ -147,6 +175,10 @@ export class ArenaScene extends Phaser.Scene {
       });
     });
     this.connection.onMessage((msg) => {
+      if (msg.type === 'driver_info' && msg.vehicleId === this.myVehicleId) {
+        this.driverSkill = msg.skill;
+        this.clientSteer = msg.maxSteer;
+      }
       if (msg.type === 'zone_state') {
         // Render map walls once on first message (walls only present on join)
         if (msg.state.walls && msg.state.walls.length > 0 && this.mapWalls.length === 0) {
@@ -466,8 +498,43 @@ export class ArenaScene extends Phaser.Scene {
     });
   }
 
+  private updateHud(): void {
+    const myVehicle = this.zoneState?.vehicles.find(v => v.id === this.myVehicleId);
+    if (!myVehicle) return;
+
+    const ds = myVehicle.stats.damageState;
+    const origArmor = myVehicle.stats.loadout?.armor ?? {};
+    const mounts = myVehicle.stats.loadout?.mounts ?? [];
+    const mount = mounts[this.selectedMountIndex] ?? mounts[0];
+    const weaponLabel = mount
+      ? `[${this.selectedMountIndex + 1}] ${mount.weaponId?.toUpperCase() ?? '?'}  ${mount.ammo}`
+      : 'NO WEAPON';
+
+    this.hudText.setText(
+      `SPD: ${myVehicle.speed} mph   SKILL: ${this.driverSkill}\n` +
+      `WEAPON: ${weaponLabel}`
+    );
+
+    // Update armor panels with colour coding
+    const armorFaces = ['front', 'back', 'left', 'right', 'top', 'underbody'] as const;
+    const labelMap: Record<string, string> = {
+      front: 'FNT', back: 'BAK', left: 'LFT', right: 'RGT', top: 'TOP', underbody: 'UDR',
+    };
+    armorFaces.forEach(face => {
+      const text = this.armorTexts[face];
+      if (!text) return;
+      const cur = ds.armor[face] ?? 0;
+      const orig = (origArmor as Record<string, number>)[face] ?? 1;
+      const pct = cur / orig;
+      const color = pct >= 0.75 ? '#00ff88' : pct >= 0.25 ? '#ffaa00' : '#ff3333';
+      text.setColor(color).setText(`${labelMap[face]}: ${cur}`);
+    });
+  }
+
   update(time: number): void {
     if (!this.zoneState) return;
+
+    this.updateHud();
 
     // Interpolate all vehicle sprites toward their server-authoritative targets each frame.
     // LERP factor 0.25 = smooth over ~4 frames; fast enough to stay close, slow enough to feel smooth.
@@ -509,7 +576,7 @@ export class ArenaScene extends Phaser.Scene {
 
     const leftHeld  = this.cursors.left?.isDown  || this.wasdKeys.a.isDown;
     const rightHeld = this.cursors.right?.isDown || this.wasdKeys.d.isDown;
-    const steer = leftHeld ? -15 : rightHeld ? 15 : 0;
+    const steer = leftHeld ? -this.clientSteer : rightHeld ? this.clientSteer : 0;
 
     const fireWeapon = this.firePending ? this.selectedWeapon : null;
     this.firePending = false;
