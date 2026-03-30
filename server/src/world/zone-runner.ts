@@ -83,6 +83,10 @@ export class ZoneRunner {
     this.vehicleSkills.set(vehicleId, skill);
   }
 
+  getDriverSkill(vehicleId: string): number {
+    return this.vehicleSkills.get(vehicleId) ?? 3;
+  }
+
   queueInput(vehicleId: string, input: { speed: number; steer: number; fireWeapon: string | null }): void {
     this.humanInputThisTick.add(vehicleId);
     this.engine.queueInput(vehicleId, input);
@@ -152,13 +156,14 @@ export class ZoneRunner {
   private tick(): void {
     const state = this.engine.getState();
     state.vehicles.forEach(vehicle => {
+      if (vehicle.stats.damageState.destroyed) return;
       const isHuman = this.humanVehicles.has(vehicle.id);
       const hasAutopilot = this.autopilotVehicles.has(vehicle.id);
       const needsAi = !isHuman || hasAutopilot;
       if (needsAi && !this.humanInputThisTick.has(vehicle.id)) {
         const enemies = state.vehicles.filter(v => v.playerId !== vehicle.playerId);
         const skill = this.vehicleSkills.get(vehicle.id) ?? 3;
-        const aiInput = computeAiInput(vehicle, enemies, skill);
+        const aiInput = computeAiInput(vehicle, enemies, skill, this.map);
         this.engine.queueInput(vehicle.id, aiInput);
       }
     });

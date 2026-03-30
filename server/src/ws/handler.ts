@@ -8,6 +8,12 @@ import { deriveStats } from '../rules/vehicle';
 
 const JWT_SECRET = process.env.JWT_SECRET ?? 'dev-secret-change-in-prod';
 
+function skillToMaxSteer(skill: number): number {
+  if (skill <= 2) return 15;
+  if (skill <= 4) return 21;
+  return 30;
+}
+
 export function calcPrize(division: number): number {
   return division * 500;
 }
@@ -58,7 +64,7 @@ function makeTestVehicle(id: string, playerId: string, x: number, y: number, fac
         chassisId: 'mid', engineId: 'medium', suspensionId: 'standard',
         tires: [{ id: 't0', blown: false }, { id: 't1', blown: false },
                 { id: 't2', blown: false }, { id: 't3', blown: false }],
-        mounts: [{ id: 'm0', arc: 'front', weaponId: 'mg', ammo: 50 }],
+        mounts: [{ id: 'm0', arc: 'front', weaponId: 'mg', ammo: 200 }],
         armor: { front: 6, back: 4, left: 4, right: 4, top: 2, underbody: 2 },
         totalCost: 12000
       },
@@ -332,6 +338,7 @@ async function handleMessage(ws: WebSocket, raw: string): Promise<void> {
     runner.registerHumanVehicle(msg.vehicleId);
 
     // Load driver skill for this vehicle (only for real DB vehicles with valid UUID)
+    let joinedSkill = 3;
     {
       const uuidRe = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
       if (uuidRe.test(msg.vehicleId)) {
@@ -341,12 +348,20 @@ async function handleMessage(ws: WebSocket, raw: string): Promise<void> {
           [msg.vehicleId]
         );
         if (driverRes.rows.length) {
-          runner.setVehicleSkill(msg.vehicleId, driverRes.rows[0].skill);
+          joinedSkill = driverRes.rows[0].skill;
+          runner.setVehicleSkill(msg.vehicleId, joinedSkill);
         }
       }
     }
 
     runner.addClient(ws); // sends initial zone_state automatically
+
+    // Inform the joining client of their driver skill and max steer
+    {
+      const maxSteer = skillToMaxSteer(joinedSkill);
+      const infoMsg: ServerMessage = { type: 'driver_info', vehicleId: msg.vehicleId, skill: joinedSkill, maxSteer };
+      if (ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify(infoMsg));
+    }
 
     // Mark vehicle as in-arena (only for real DB vehicles, not test UUIDs)
     if (msg.token) {
@@ -370,14 +385,16 @@ async function handleMessage(ws: WebSocket, raw: string): Promise<void> {
 
     // Validate inputs
     const speed = Math.max(0, Math.min(25, Number(msg.speed) || 0));
-    const steer = Math.max(-60, Math.min(60, Number(msg.steer) || 0));
     const fireWeapon = typeof msg.fireWeapon === 'string' && msg.fireWeapon.length <= 20
       ? msg.fireWeapon
       : null;
 
     const runner = zones.get(zoneId);
     if (runner) {
-      runner.queueInput(vehicleId, { speed, steer, fireWeapon });
+      const vehicleSkill = runner.getDriverSkill(vehicleId);
+      const maxSteer = skillToMaxSteer(vehicleSkill);
+      const clampedSteer = Math.max(-maxSteer, Math.min(maxSteer, Number(msg.steer) || 0));
+      runner.queueInput(vehicleId, { speed, steer: clampedSteer, fireWeapon });
     }
     return;
   }
