@@ -39,7 +39,7 @@ describe('shared type additions', () => {
       suspensionType: 'standard',
       tireType: 'standard',
       armorType: 'ablative',
-      powerPlantType: 'medium',
+      powerPlantType: 'elec_medium',
     };
     expect(loadout.bodyType).toBe('mid_sized');
   });
@@ -74,22 +74,47 @@ Expected: FAIL — type errors about unknown properties.
 Add new union types and optional fields. The new fields are all optional (marked `?`) so existing code that constructs loadouts without them still compiles.
 
 ```typescript
-export type ArmorLocation = 'front' | 'back' | 'left' | 'right' | 'top' | 'underbody';
+// Standard 6-surface armor locations (cars, trucks, vans)
+export type StandardSurface = 'front' | 'back' | 'left' | 'right' | 'top' | 'underbody';
+
+// Trailer/bus 10-position armor — sides, top, underbody each split front/back half
+export type TrailerSurface =
+  | 'front_front' | 'front_back'
+  | 'right_front' | 'right_back'
+  | 'left_front' | 'left_back'
+  | 'top_front' | 'top_back'
+  | 'underbody_front' | 'underbody_back';
+
+// Combined type — cycles/trikes only use the first 4 StandardSurface values
+export type ArmorLocation = StandardSurface | TrailerSurface;
 
 export interface ArmorDistribution {
-  front: number;
-  back: number;
-  left: number;
-  right: number;
-  top: number;
-  underbody: number;
+  // Standard 6-surface (cars/trucks/vans)
+  front?: number;
+  back?: number;
+  left?: number;
+  right?: number;
+  top?: number;
+  underbody?: number;
+  // Trailer/bus 10-position
+  front_front?: number;
+  front_back?: number;
+  right_front?: number;
+  right_back?: number;
+  left_front?: number;
+  left_back?: number;
+  top_front?: number;
+  top_back?: number;
+  underbody_front?: number;
+  underbody_back?: number;
 }
 
 // New union types for vehicle design
 export type BodyType =
   | 'subcompact' | 'compact' | 'mid_sized' | 'sedan' | 'luxury'
   | 'station_wagon' | 'pickup' | 'camper' | 'van'
-  | 'light_cycle' | 'med_cycle' | 'hvy_cycle';
+  | 'light_cycle' | 'med_cycle' | 'hvy_cycle'
+  | 'trike' | 'truck' | 'trailer';
 
 export type ChassisType = 'light' | 'standard' | 'heavy' | 'extra_heavy';
 
@@ -99,7 +124,16 @@ export type TireType = 'standard' | 'heavy_duty' | 'puncture_resistant' | 'solid
 
 export type ArmorType = 'ablative' | 'fireproof' | 'laser_reflective' | 'lr_fireproof' | 'metal' | 'radarproof';
 
-export type PowerPlantType = 'small' | 'medium' | 'large' | 'super' | 'sport' | 'thundercat';
+// Power plant IDs — prefixed by fuel type and vehicle category
+export type PowerPlantType =
+  // Electric — cars/oversized
+  | 'elec_small' | 'elec_medium' | 'elec_large' | 'elec_super' | 'elec_sport' | 'elec_thundercat'
+  // Gas — cars/oversized
+  | 'gas_150' | 'gas_200' | 'gas_300' | 'gas_400'
+  // Electric — cycle only
+  | 'cyc_elec_small' | 'cyc_elec_medium' | 'cyc_elec_large'
+  // Gas — cycle only
+  | 'cyc_gas_small' | 'cyc_gas_medium' | 'cyc_gas_large';
 
 export interface WeaponMount {
   id: string;
@@ -127,7 +161,7 @@ export interface VehicleLoadout {
 }
 
 export interface DamageState {
-  armor: Partial<ArmorDistribution>;
+  armor: ArmorDistribution;
   engineDamaged: boolean;
   driverWounded: boolean;
   tiresBlown: number[];
@@ -187,8 +221,8 @@ git commit -m "feat: add Compendium vehicle design types to shared package"
 import { BODIES } from '../src/rules/data/bodies';
 
 describe('bodies catalog', () => {
-  it('has 9 car body types plus 3 cycle frames', () => {
-    expect(BODIES.length).toBe(12);
+  it('has 9 car body types, 3 cycle frames, trike, truck, and trailer', () => {
+    expect(BODIES.length).toBe(15);
   });
 
   it('mid_sized has correct spaces and max load', () => {
@@ -196,6 +230,34 @@ describe('bodies catalog', () => {
     expect(mid.spaces).toBe(13);
     expect(mid.maxLoad).toBe(4800);
     expect(mid.baseHC).toBe(3);
+  });
+
+  it('cars have 6 armor surfaces', () => {
+    const mid = BODIES.find(b => b.id === 'mid_sized')!;
+    expect(mid.surfaces).toHaveLength(6);
+    expect(mid.surfaces).toContain('top');
+    expect(mid.surfaces).toContain('underbody');
+  });
+
+  it('cycles have 4 armor surfaces (no top/underbody)', () => {
+    const cycle = BODIES.find(b => b.id === 'med_cycle')!;
+    expect(cycle.surfaces).toHaveLength(4);
+    expect(cycle.surfaces).not.toContain('top');
+    expect(cycle.surfaces).not.toContain('underbody');
+  });
+
+  it('trike has 3 tires and 4 surfaces', () => {
+    const trike = BODIES.find(b => b.id === 'trike')!;
+    expect(trike.tireCount).toBe(3);
+    expect(trike.isCycle).toBe(true);
+    expect(trike.surfaces).toHaveLength(4);
+  });
+
+  it('trailer has 10 armor positions', () => {
+    const trailer = BODIES.find(b => b.id === 'trailer')!;
+    expect(trailer.surfaces).toHaveLength(10);
+    expect(trailer.surfaces).toContain('right_front');
+    expect(trailer.surfaces).toContain('underbody_back');
   });
 
   it('van has correct spaces and cargo area', () => {
@@ -215,34 +277,53 @@ cd /Users/paddyharker/carwars/server && npm test -- vehicle-design
 **Step 3: Create `server/src/rules/data/bodies.ts`**
 
 ```typescript
+import type { ArmorLocation } from '@carwars/shared';
+
+const CAR_SURFACES: ArmorLocation[] = ['front', 'back', 'left', 'right', 'top', 'underbody'];
+const CYCLE_SURFACES: ArmorLocation[] = ['front', 'back', 'left', 'right'];
+const TRAILER_SURFACES: ArmorLocation[] = [
+  'front_front', 'front_back',
+  'right_front', 'right_back',
+  'left_front', 'left_back',
+  'top_front', 'top_back',
+  'underbody_front', 'underbody_back',
+];
+
 export interface BodyDef {
   id: string;
   name: string;
-  price: number;       // base body cost ($)
-  baseWeight: number;  // body frame weight (lbs)
-  maxLoad: number;     // maximum total load (lbs, including body)
-  spaces: number;      // interior spaces
-  armorCostPerPt: number;  // $ per point of ablative plastic armor
-  armorWtPerPt: number;    // lbs per point of ablative plastic armor
-  baseHC: number;          // base HC before suspension modifier
+  price: number;
+  baseWeight: number;
+  maxLoad: number;
+  spaces: number;
+  armorCostPerPt: number;
+  armorWtPerPt: number;
+  baseHC: number;
   isCycle: boolean;
+  tireCount?: number;        // overrides default (2 for cycles, 4 for others) when set
+  surfaces: ArmorLocation[]; // valid armor locations for this body type
 }
 
 export const BODIES: BodyDef[] = [
-  // Cars
-  { id: 'subcompact',    name: 'Subcompact',    price: 300,  baseWeight: 1000, maxLoad: 2300, spaces: 7,  armorCostPerPt: 11, armorWtPerPt: 5,  baseHC: 4, isCycle: false },
-  { id: 'compact',       name: 'Compact',       price: 400,  baseWeight: 1300, maxLoad: 3700, spaces: 10, armorCostPerPt: 13, armorWtPerPt: 6,  baseHC: 3, isCycle: false },
-  { id: 'mid_sized',     name: 'Mid-Sized',     price: 600,  baseWeight: 1600, maxLoad: 4800, spaces: 13, armorCostPerPt: 16, armorWtPerPt: 8,  baseHC: 3, isCycle: false },
-  { id: 'sedan',         name: 'Sedan',         price: 700,  baseWeight: 1700, maxLoad: 5100, spaces: 16, armorCostPerPt: 18, armorWtPerPt: 9,  baseHC: 3, isCycle: false },
-  { id: 'luxury',        name: 'Luxury',        price: 800,  baseWeight: 1800, maxLoad: 5500, spaces: 19, armorCostPerPt: 20, armorWtPerPt: 10, baseHC: 3, isCycle: false },
-  { id: 'station_wagon', name: 'Station Wagon', price: 800,  baseWeight: 1800, maxLoad: 5500, spaces: 14, armorCostPerPt: 20, armorWtPerPt: 10, baseHC: 3, isCycle: false },
-  { id: 'pickup',        name: 'Pickup',        price: 900,  baseWeight: 2100, maxLoad: 6500, spaces: 13, armorCostPerPt: 22, armorWtPerPt: 11, baseHC: 2, isCycle: false },
-  { id: 'camper',        name: 'Camper',        price: 1400, baseWeight: 2300, maxLoad: 6500, spaces: 17, armorCostPerPt: 30, armorWtPerPt: 14, baseHC: 2, isCycle: false },
-  { id: 'van',           name: 'Van',           price: 1000, baseWeight: 2000, maxLoad: 6000, spaces: 24, armorCostPerPt: 30, armorWtPerPt: 14, baseHC: 2, isCycle: false },
-  // Cycles
-  { id: 'light_cycle',   name: 'Light Cycle',   price: 200,  baseWeight: 250,  maxLoad: 800,  spaces: 4,  armorCostPerPt: 10, armorWtPerPt: 4,  baseHC: 4, isCycle: true },
-  { id: 'med_cycle',     name: 'Med. Cycle',    price: 300,  baseWeight: 300,  maxLoad: 1100, spaces: 5,  armorCostPerPt: 11, armorWtPerPt: 5,  baseHC: 4, isCycle: true },
-  { id: 'hvy_cycle',     name: 'Hvy. Cycle',    price: 400,  baseWeight: 350,  maxLoad: 1300, spaces: 7,  armorCostPerPt: 12, armorWtPerPt: 6,  baseHC: 4, isCycle: true },
+  // Cars — 6 surfaces
+  { id: 'subcompact',    name: 'Subcompact',    price: 300,  baseWeight: 1000, maxLoad: 2300, spaces: 7,  armorCostPerPt: 11, armorWtPerPt: 5,  baseHC: 4, isCycle: false, surfaces: CAR_SURFACES },
+  { id: 'compact',       name: 'Compact',       price: 400,  baseWeight: 1300, maxLoad: 3700, spaces: 10, armorCostPerPt: 13, armorWtPerPt: 6,  baseHC: 3, isCycle: false, surfaces: CAR_SURFACES },
+  { id: 'mid_sized',     name: 'Mid-Sized',     price: 600,  baseWeight: 1600, maxLoad: 4800, spaces: 13, armorCostPerPt: 16, armorWtPerPt: 8,  baseHC: 3, isCycle: false, surfaces: CAR_SURFACES },
+  { id: 'sedan',         name: 'Sedan',         price: 700,  baseWeight: 1700, maxLoad: 5100, spaces: 16, armorCostPerPt: 18, armorWtPerPt: 9,  baseHC: 3, isCycle: false, surfaces: CAR_SURFACES },
+  { id: 'luxury',        name: 'Luxury',        price: 800,  baseWeight: 1800, maxLoad: 5500, spaces: 19, armorCostPerPt: 20, armorWtPerPt: 10, baseHC: 3, isCycle: false, surfaces: CAR_SURFACES },
+  { id: 'station_wagon', name: 'Station Wagon', price: 800,  baseWeight: 1800, maxLoad: 5500, spaces: 14, armorCostPerPt: 20, armorWtPerPt: 10, baseHC: 3, isCycle: false, surfaces: CAR_SURFACES },
+  { id: 'pickup',        name: 'Pickup',        price: 900,  baseWeight: 2100, maxLoad: 6500, spaces: 13, armorCostPerPt: 22, armorWtPerPt: 11, baseHC: 2, isCycle: false, surfaces: CAR_SURFACES },
+  { id: 'camper',        name: 'Camper',        price: 1400, baseWeight: 2300, maxLoad: 6500, spaces: 17, armorCostPerPt: 30, armorWtPerPt: 14, baseHC: 2, isCycle: false, surfaces: CAR_SURFACES },
+  { id: 'van',           name: 'Van',           price: 1000, baseWeight: 2000, maxLoad: 6000, spaces: 24, armorCostPerPt: 30, armorWtPerPt: 14, baseHC: 2, isCycle: false, surfaces: CAR_SURFACES },
+  // Cycles — 4 surfaces (no top/underbody)
+  { id: 'light_cycle',   name: 'Light Cycle',   price: 200,  baseWeight: 250,  maxLoad: 800,  spaces: 4,  armorCostPerPt: 10, armorWtPerPt: 4,  baseHC: 4, isCycle: true,  surfaces: CYCLE_SURFACES },
+  { id: 'med_cycle',     name: 'Med. Cycle',    price: 300,  baseWeight: 300,  maxLoad: 1100, spaces: 5,  armorCostPerPt: 11, armorWtPerPt: 5,  baseHC: 4, isCycle: true,  surfaces: CYCLE_SURFACES },
+  { id: 'hvy_cycle',     name: 'Hvy. Cycle',    price: 400,  baseWeight: 350,  maxLoad: 1300, spaces: 7,  armorCostPerPt: 12, armorWtPerPt: 6,  baseHC: 4, isCycle: true,  surfaces: CYCLE_SURFACES },
+  // Trike — 4 surfaces, 3 tires, uses Cyclist skill
+  { id: 'trike',         name: 'Trike',         price: 350,  baseWeight: 500,  maxLoad: 1600, spaces: 6,  armorCostPerPt: 11, armorWtPerPt: 5,  baseHC: 3, isCycle: true,  tireCount: 3, surfaces: CYCLE_SURFACES },
+  // Oversized — 6 surfaces for truck, 10 positions for trailer
+  { id: 'truck',         name: 'Truck',         price: 1500, baseWeight: 3000, maxLoad: 8000, spaces: 10, armorCostPerPt: 35, armorWtPerPt: 16, baseHC: 1, isCycle: false, surfaces: CAR_SURFACES },
+  { id: 'trailer',       name: 'Trailer',       price: 500,  baseWeight: 1500, maxLoad: 14000, spaces: 30, armorCostPerPt: 25, armorWtPerPt: 12, baseHC: 1, isCycle: false, surfaces: TRAILER_SURFACES },
 ];
 ```
 
@@ -259,7 +340,7 @@ Expected: PASS.
 ```bash
 cd /Users/paddyharker/carwars
 git add server/src/rules/data/bodies.ts server/tests/vehicle-design.test.ts
-git commit -m "feat: add body types catalog (9 cars + 3 cycle frames)"
+git commit -m "feat: add body types catalog (9 cars, 3 cycles, trike, truck, trailer) with surfaces"
 ```
 
 ---
@@ -280,16 +361,30 @@ import { SUSPENSIONS } from '../src/rules/data/suspensions';
 import { TIRES } from '../src/rules/data/tires';
 
 describe('power plants catalog', () => {
-  it('medium plant has correct power factors and DP', () => {
-    const med = POWER_PLANTS.find(p => p.id === 'medium')!;
+  it('elec_medium plant has correct power factors and DP', () => {
+    const med = POWER_PLANTS.find(p => p.id === 'elec_medium')!;
     expect(med.powerFactors).toBe(1400);
     expect(med.dp).toBe(8);
     expect(med.spaces).toBe(4);
+    expect(med.fuelType).toBe('electric');
+    expect(med.cycleOnly).toBe(false);
   });
 
-  it('thundercat has highest power factors', () => {
-    const tc = POWER_PLANTS.find(p => p.id === 'thundercat')!;
+  it('elec_thundercat has highest power factors', () => {
+    const tc = POWER_PLANTS.find(p => p.id === 'elec_thundercat')!;
     expect(tc.powerFactors).toBe(6700);
+  });
+
+  it('gas_300 exists with correct stats', () => {
+    const gas = POWER_PLANTS.find(p => p.id === 'gas_300')!;
+    expect(gas.fuelType).toBe('gas');
+    expect(gas.powerFactors).toBe(1700);
+    expect(gas.cycleOnly).toBe(false);
+  });
+
+  it('cycle power plants are marked cycleOnly', () => {
+    const cycPlants = POWER_PLANTS.filter(p => p.cycleOnly);
+    expect(cycPlants.length).toBe(6); // 3 electric + 3 gas
   });
 });
 
@@ -330,20 +425,36 @@ cd /Users/paddyharker/carwars/server && npm test -- vehicle-design
 export interface PowerPlantDef {
   id: string;
   name: string;
+  fuelType: 'electric' | 'gas';
+  cycleOnly: boolean;  // if true, only valid for cycle/trike bodies
   cost: number;
-  weight: number;   // lbs
+  weight: number;
   spaces: number;
   dp: number;
   powerFactors: number;
 }
 
 export const POWER_PLANTS: PowerPlantDef[] = [
-  { id: 'small',      name: 'Small',      cost: 500,   weight: 500,  spaces: 3, dp: 5,  powerFactors: 800  },
-  { id: 'medium',     name: 'Medium',     cost: 1000,  weight: 700,  spaces: 4, dp: 8,  powerFactors: 1400 },
-  { id: 'large',      name: 'Large',      cost: 2000,  weight: 900,  spaces: 5, dp: 10, powerFactors: 2000 },
-  { id: 'super',      name: 'Super',      cost: 3000,  weight: 1100, spaces: 6, dp: 12, powerFactors: 2600 },
-  { id: 'sport',      name: 'Sport',      cost: 6000,  weight: 1000, spaces: 6, dp: 12, powerFactors: 3000 },
-  { id: 'thundercat', name: 'Thundercat', cost: 12000, weight: 2000, spaces: 8, dp: 15, powerFactors: 6700 },
+  // Electric — cars/oversized
+  { id: 'elec_small',      name: 'Small Electric',   fuelType: 'electric', cycleOnly: false, cost: 500,   weight: 500,  spaces: 3, dp: 5,  powerFactors: 800  },
+  { id: 'elec_medium',     name: 'Medium Electric',  fuelType: 'electric', cycleOnly: false, cost: 1000,  weight: 700,  spaces: 4, dp: 8,  powerFactors: 1400 },
+  { id: 'elec_large',      name: 'Large Electric',   fuelType: 'electric', cycleOnly: false, cost: 2000,  weight: 900,  spaces: 5, dp: 10, powerFactors: 2000 },
+  { id: 'elec_super',      name: 'Super Electric',   fuelType: 'electric', cycleOnly: false, cost: 3000,  weight: 1100, spaces: 6, dp: 12, powerFactors: 2600 },
+  { id: 'elec_sport',      name: 'Sport Electric',   fuelType: 'electric', cycleOnly: false, cost: 6000,  weight: 1000, spaces: 6, dp: 12, powerFactors: 3000 },
+  { id: 'elec_thundercat', name: 'Thundercat',        fuelType: 'electric', cycleOnly: false, cost: 12000, weight: 2000, spaces: 8, dp: 15, powerFactors: 6700 },
+  // Gas — cars/oversized
+  { id: 'gas_150', name: '150ci Gas', fuelType: 'gas', cycleOnly: false, cost: 400,  weight: 400,  spaces: 3, dp: 6,  powerFactors: 700  },
+  { id: 'gas_200', name: '200ci Gas', fuelType: 'gas', cycleOnly: false, cost: 700,  weight: 550,  spaces: 4, dp: 8,  powerFactors: 1100 },
+  { id: 'gas_300', name: '300ci Gas', fuelType: 'gas', cycleOnly: false, cost: 1200, weight: 750,  spaces: 5, dp: 10, powerFactors: 1700 },
+  { id: 'gas_400', name: '400ci Gas', fuelType: 'gas', cycleOnly: false, cost: 2000, weight: 950,  spaces: 6, dp: 12, powerFactors: 2400 },
+  // Electric — cycle only
+  { id: 'cyc_elec_small',  name: 'Cycle Small Elec',  fuelType: 'electric', cycleOnly: true, cost: 200, weight: 100, spaces: 1, dp: 3, powerFactors: 400  },
+  { id: 'cyc_elec_medium', name: 'Cycle Medium Elec', fuelType: 'electric', cycleOnly: true, cost: 400, weight: 150, spaces: 2, dp: 5, powerFactors: 700  },
+  { id: 'cyc_elec_large',  name: 'Cycle Large Elec',  fuelType: 'electric', cycleOnly: true, cost: 800, weight: 200, spaces: 3, dp: 7, powerFactors: 1100 },
+  // Gas — cycle only
+  { id: 'cyc_gas_small',  name: 'Cycle Small Gas',  fuelType: 'gas', cycleOnly: true, cost: 150, weight: 80,  spaces: 1, dp: 3, powerFactors: 350 },
+  { id: 'cyc_gas_medium', name: 'Cycle Medium Gas', fuelType: 'gas', cycleOnly: true, cost: 300, weight: 120, spaces: 2, dp: 5, powerFactors: 650 },
+  { id: 'cyc_gas_large',  name: 'Cycle Large Gas',  fuelType: 'gas', cycleOnly: true, cost: 600, weight: 160, spaces: 3, dp: 7, powerFactors: 1000 },
 ];
 ```
 
@@ -436,13 +547,13 @@ function makeMidSizedLoadout(): VehicleLoadout {
     suspensionType: 'standard',
     tireType: 'standard',
     armorType: 'ablative',
-    powerPlantType: 'medium',
+    powerPlantType: 'elec_medium',
   };
 }
 
 describe('deriveStats with Compendium fields', () => {
   it('computes maxSpeed using power factor formula', () => {
-    // mid_sized: maxLoad=4800 lbs, medium plant: PF=1400, weight=700
+    // mid_sized: maxLoad=4800 lbs, elec_medium plant: PF=1400, weight=700
     // total weight approx: body(1600) + plant(700) + 4 tires(30*4=120) = 2420
     // top speed = 360 * 1400 / (1400 + 2420) = 504000 / 3820 ≈ 131.9 → rounds to 130 (nearest 2.5)
     const stats = deriveStats('v1', 'TestCar', makeMidSizedLoadout());
@@ -646,7 +757,7 @@ describe('POST /api/vehicles/design', () => {
       bodyType: 'mid_sized',
       chassisType: 'standard',
       suspensionType: 'standard',
-      powerPlantType: 'medium',
+      powerPlantType: 'elec_medium',
       tireType: 'standard',
       armorType: 'ablative',
       armor: { front: 4, back: 2, left: 2, right: 2, top: 1, underbody: 1 },
@@ -661,7 +772,35 @@ describe('POST /api/vehicles/design', () => {
 
   it('returns 400 if bodyType is missing', async () => {
     const res = await request(app).post('/api/vehicles/design').send({
-      powerPlantType: 'medium',
+      powerPlantType: 'elec_medium',
+    });
+    expect(res.status).toBe(400);
+  });
+
+  it('returns 400 if armor includes invalid surface for body type', async () => {
+    // Cycles have no top/underbody — submitting top armor must be rejected
+    const res = await request(app).post('/api/vehicles/design').send({
+      bodyType: 'med_cycle',
+      chassisType: 'standard',
+      suspensionType: 'standard',
+      powerPlantType: 'cyc_elec_medium',
+      tireType: 'standard',
+      armorType: 'ablative',
+      armor: { front: 2, back: 2, left: 1, right: 1, top: 3 }, // top invalid for cycle
+    });
+    expect(res.status).toBe(400);
+    expect(res.body.error).toMatch(/top/);
+  });
+
+  it('returns 400 if cycle body uses a car power plant', async () => {
+    const res = await request(app).post('/api/vehicles/design').send({
+      bodyType: 'med_cycle',
+      chassisType: 'standard',
+      suspensionType: 'standard',
+      powerPlantType: 'elec_medium', // car plant on cycle — invalid
+      tireType: 'standard',
+      armorType: 'ablative',
+      armor: { front: 2, back: 2, left: 1, right: 1 },
     });
     expect(res.status).toBe(400);
   });
