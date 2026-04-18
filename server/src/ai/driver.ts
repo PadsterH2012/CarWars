@@ -14,6 +14,7 @@ const MAX_TURN = 30;
 // Per-vehicle state that persists across ticks
 interface DriverState {
   orbitDir: 1 | -1;       // clockwise (+1) or counter-clockwise (-1) orbit
+  orbitFlipIn: number;    // ticks until next orbit direction reversal
   personality: number;    // 0.0–1.0: persistent variation — shifts orbit angles and range preference
   tactic: Tactic;
   tacticTicks: number;    // how long we've held this tactic
@@ -29,6 +30,7 @@ function getState(vehicleId: string): DriverState {
   if (!driverState.has(vehicleId)) {
     driverState.set(vehicleId, {
       orbitDir: Math.random() < 0.5 ? 1 : -1,
+      orbitFlipIn: 40 + Math.floor(Math.random() * 40),
       personality: Math.random(),
       tactic: 'aggressive',
       // Stagger tactic-change timing so vehicles don't all switch at once
@@ -180,13 +182,22 @@ function chooseTactic(
   const health = armorFrac(self);
 
   // Critically low armor: evade regardless
-  if (health < 0.2) return 'evasive';
+  if (health < 0.25) return 'evasive';
+
+  // Any face at zero — orbit to stop presenting it, regardless of skill
+  if (Math.min(faceArmor(self, 'front'), faceArmor(self, 'back'), faceArmor(self, 'left'), faceArmor(self, 'right')) === 0) return 'orbit';
 
   // Front armor nearly gone — orbit to stop presenting it
-  if (faceArmor(self, 'front') < 2 && health < 0.6 && skill >= 2) return 'orbit';
+  if (faceArmor(self, 'front') < 2 && health < 0.65) return 'orbit';
 
-  // Sniping: have a long-range weapon and skill to use it
-  if (w && w.longRange >= 14 && skill >= 3 && health > 0.4) return 'snipe';
+  // Sniping: have a long-range weapon and skill to use it, but break out after a while
+  if (w && w.longRange >= 14 && skill >= 3 && health > 0.4) {
+    // After holding snipe for 80+ ticks, charge aggressively to vary positioning
+    if (prev === 'snipe' && prevTicks > 80 && Math.random() < 0.65) {
+      return health > 0.5 ? 'aggressive' : 'orbit';
+    }
+    return 'snipe';
+  }
 
   // Flanking: healthy, high skill, enemy is reachable
   if (health > 0.75 && skill >= 4 && d < 35) return 'flanking';
@@ -216,6 +227,13 @@ export function computeAiInput(
   ds.stuckTicks = moved < 0.1 ? ds.stuckTicks + 1 : 0;
   ds.lastX = self.position.x;
   ds.lastY = self.position.y;
+
+  // Periodically reverse orbit direction to break up predictable circles
+  ds.orbitFlipIn--;
+  if (ds.orbitFlipIn <= 0) {
+    ds.orbitDir = ds.orbitDir === 1 ? -1 : 1;
+    ds.orbitFlipIn = 40 + Math.floor(Math.random() * 40);
+  }
 
   const target = pickTarget(self, enemies);
   const d = dist2d(self.position, target.position);
@@ -263,9 +281,9 @@ export function computeAiInput(
     }
     desiredFacing = escapeHeading;
     desiredSpeed = self.stats.maxSpeed;
-    const steerR = Math.max(-MAX_TURN, Math.min(MAX_TURN, shortestTurn(self.facing, desiredFacing)));
     console.log(`[AI] ${self.id.padEnd(10)} STUCK×${ds.stuckTicks} — escape heading=${escapeHeading.toFixed(0)}° pos=(${self.position.x.toFixed(1)},${self.position.y.toFixed(1)})`);
-    return { speed: desiredSpeed, steer: steerR, fireWeapon: null };
+    // Fall through to wall avoidance — do NOT early-return here.
+    // Blind escape at max speed into a wall is what caused the original bug.
   }
 
   switch (tactic) {
@@ -295,8 +313,8 @@ export function computeAiInput(
         desiredFacing = (bearing + ds.orbitDir * 120 + 360) % 360;
         desiredSpeed = Math.floor(self.stats.maxSpeed * 0.65);
       } else if (d > fireRange + 4) {
-        // Too far: close to max range
-        desiredFacing = bearing;
+        // Too far: close to max range — slight angle offset so approaches aren't identical
+        desiredFacing = (bearing + ds.orbitDir * Math.round(Math.abs(personalityAngleOffset) * 0.4) + 360) % 360;
         desiredSpeed = Math.floor(self.stats.maxSpeed * 0.8);
       } else {
         // In snipe band: slow circle — 50° keeps target near front arc for firing
@@ -336,7 +354,8 @@ export function computeAiInput(
       else if (d > closeRange + 1) ds.inClose = false;
 
       if (d > prefRange + 3) {
-        desiredFacing = bearing;
+        // Angle approach slightly — avoids all AIs charging the same straight line
+        desiredFacing = (bearing + ds.orbitDir * Math.round(Math.abs(personalityAngleOffset) * 0.3) + 360) % 360;
         desiredSpeed  = self.stats.maxSpeed;
       } else {
         // Orbit at 35° — target stays in front 90° arc so MG can fire continuously.
@@ -351,25 +370,68 @@ export function computeAiInput(
     }
   }
 
-  // ── Wall avoidance overlay ───────────────────────────────────────────────
-  // Look ahead along current facing. If a wall is detected, blend an avoidance
-  // heading into the tactical heading and reduce speed proportionally.
+  // ── Survival overlay: vehicle safety overrides offensive positioning ──────
+  // Runs every tick after tactic and wall logic. Blends protective heading in
+  // based on how exposed the vehicle is. This cannot be disabled by any tactic.
+  {
+    const selfHealth = armorFrac(self);
+    const frontA = faceArmor(self, 'front');
+    const backA  = faceArmor(self, 'back');
+    const leftA  = faceArmor(self, 'left');
+    const rightA = faceArmor(self, 'right');
+    const minFace = Math.min(frontA, backA, leftA, rightA);
+    const maxFace = Math.max(frontA, backA, leftA, rightA);
+
+    // Urgency: 0 = no concern, 1 = critical — driven by face exposure and overall health
+    let survivalUrgency = 0;
+    if (minFace === 0 && maxFace > 2)          survivalUrgency = Math.max(survivalUrgency, 0.85);
+    else if (minFace <= 2 && maxFace > 4)      survivalUrgency = Math.max(survivalUrgency, 0.55);
+    if (selfHealth < 0.25)                     survivalUrgency = Math.max(survivalUrgency, 0.90);
+    else if (selfHealth < 0.45)                survivalUrgency = Math.max(survivalUrgency, 0.45);
+
+    if (survivalUrgency > 0) {
+      // Orient to present the strongest available face toward the threat
+      const best = strongestFace(self);
+      const safeHeading  = facingToPresent(bearing, best);
+      const tactTurn     = shortestTurn(self.facing, desiredFacing);
+      const safeTurn     = shortestTurn(self.facing, safeHeading);
+      desiredFacing      = (self.facing + tactTurn * (1 - survivalUrgency) + safeTurn * survivalUrgency + 360) % 360;
+
+      // Open distance when hurt — don't let the enemy keep pounding at close range
+      if (d < prefRange + 2 && survivalUrgency > 0.4) {
+        desiredSpeed = Math.max(desiredSpeed, Math.floor(self.stats.maxSpeed * (0.6 + survivalUrgency * 0.4)));
+      }
+
+      if (survivalUrgency >= 0.7) {
+        console.log(`[SURV] ${self.id.padEnd(10)} urgency=${survivalUrgency.toFixed(2)} hp=${Math.round(selfHealth*100)}% minFace=${minFace} best=${best} → ${safeHeading.toFixed(0)}°`);
+      }
+    }
+  }
+
+  // ── Wall avoidance overlay (final pass — cannot be overridden) ──────────
+  // Probes along both current facing AND desiredFacing to catch cases where the
+  // tactic or survival overlay just aimed us at a wall.
+  // Runs last so nothing can overwrite it.
   if (map && map.walls.length > 0 && desiredSpeed > 0) {
-    const lookDist = Math.max(3, Math.min(10, desiredSpeed / 12));
-    const wall = lookAhead(self.position, self.facing, map.walls, lookDist);
+    // More generous lookahead: at least 5 units, scales with speed
+    const lookDist = Math.max(5, Math.min(12, desiredSpeed / 8));
+
+    // Check both current heading and desired heading — take the more urgent threat
+    const wCur  = lookAhead(self.position, self.facing,    map.walls, lookDist);
+    const wDes  = lookAhead(self.position, desiredFacing,  map.walls, lookDist);
+    const wall  = wCur.urgency >= wDes.urgency ? wCur : wDes;
+
     if (wall.urgency > 0) {
-      // Avoidance heading: turn 60–90° away from the wall (sharper when closer)
-      const avoidAngle = 60 + 30 * wall.urgency;
+      const avoidAngle   = 60 + 30 * wall.urgency;
       const avoidHeading = (self.facing + wall.avoidDir * avoidAngle + 360) % 360;
-
-      // Blend: urgency 0 = pure tactics, urgency ~0.67+ = full avoidance
-      const blendFactor = Math.min(1, wall.urgency * 1.5);
-      const tactTurn  = shortestTurn(self.facing, desiredFacing);
-      const avoidTurn = shortestTurn(self.facing, avoidHeading);
-      const blended   = tactTurn * (1 - blendFactor) + avoidTurn * blendFactor;
-
-      desiredFacing = (self.facing + blended + 360) % 360;
-      desiredSpeed  = Math.floor(desiredSpeed * (1 - wall.urgency * 0.5));
+      const blendFactor  = Math.min(1, wall.urgency * 1.5);
+      const tactTurn     = shortestTurn(self.facing, desiredFacing);
+      const avoidTurn    = shortestTurn(self.facing, avoidHeading);
+      desiredFacing      = (self.facing + tactTurn * (1 - blendFactor) + avoidTurn * blendFactor + 360) % 360;
+      desiredSpeed       = Math.floor(desiredSpeed * (1 - wall.urgency * 0.5));
+      if (wall.urgency >= 0.5) {
+        console.log(`[WALL] ${self.id.padEnd(10)} urgency=${wall.urgency.toFixed(2)} avoid=${avoidHeading.toFixed(0)}° src=${wCur.urgency >= wDes.urgency ? 'facing' : 'desired'}`);
+      }
     }
   }
 

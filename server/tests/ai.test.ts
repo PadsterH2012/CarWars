@@ -7,7 +7,9 @@ function makeVehicle(id: string, playerId: string, x: number, y: number, facing 
     id, playerId, driverId: `d_${id}`,
     position: { x, y }, facing, speed: 0,
     stats: {
-      id, name: 'Car', loadout: {} as any,
+      id, name: 'Car', loadout: {
+        armor: { front: 4, back: 2, left: 3, right: 3, top: 0, underbody: 0 },
+      } as any,
       damageState: {
         armor: { front: 4, back: 2, left: 3, right: 3, top: 0, underbody: 0 },
         engineDamaged: false, driverWounded: false, tiresBlown: [], destroyed: false
