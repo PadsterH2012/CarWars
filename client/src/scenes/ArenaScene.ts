@@ -2,6 +2,7 @@ import Phaser from 'phaser';
 import { Connection } from '../game/Connection';
 import type { ZoneState, CombatEvent } from '@carwars/shared';
 import arenaMapData from '../tilemaps/arena-1.json';
+import { preloadVehicleSprites, buildVehicleSprite, updateVehicleSprite, teamColorForVehicle } from '../game/VehicleSprite';
 
 const PIXELS_PER_INCH = 32;
 const WORLD_CENTER_X = 640;
@@ -50,6 +51,10 @@ export class ArenaScene extends Phaser.Scene {
     this.token = data.token ?? '';
     this.myVehicleId = data.vehicleId ?? 'v1';
     this.jobId = data.jobId ?? '';
+  }
+
+  preload(): void {
+    preloadVehicleSprites(this);
   }
 
   create(): void {
@@ -212,24 +217,11 @@ export class ArenaScene extends Phaser.Scene {
     state.vehicles.forEach(v => {
       seen.add(v.id);
       let container = this.vehicleSprites.get(v.id);
+      const teamColor = teamColorForVehicle(v, this.myVehicleId);
+      const opts = { isPlayer: v.id === this.myVehicleId, teamColor };
 
       if (!container) {
-        const isPlayer = v.id === this.myVehicleId;
-        const color = isPlayer ? 0x00ff88 : (v.playerId === 'ai-team' ? 0xff4444 : 0xffaa00);
-
-        const body = this.add.rectangle(0, 0, 20, 32, color).setName('body');
-        const dirIndicator = this.add.triangle(0, -18, -6, 0, 6, 0, 0, -10, 0xffffff);
-        const label = this.add.text(0, 20, v.id.slice(0, 8), {
-          fontSize: '9px', color: '#ffffff', fontFamily: 'monospace'
-        }).setOrigin(0.5);
-
-        // Armor bars: front (top of vehicle), back (bottom), left, right
-        const barFront = this.add.rectangle(0, -18, 20, 3, 0x00ff00).setName('bar-front');
-        const barBack  = this.add.rectangle(0,  18, 20, 3, 0x00ff00).setName('bar-back');
-        const barLeft  = this.add.rectangle(-12, 0, 3, 20, 0x00ff00).setName('bar-left');
-        const barRight = this.add.rectangle( 12, 0, 3, 20, 0x00ff00).setName('bar-right');
-
-        container = this.add.container(0, 0, [body, dirIndicator, label, barFront, barBack, barLeft, barRight]).setDepth(2);
+        container = buildVehicleSprite(this, v, opts);
         this.vehicleSprites.set(v.id, container);
       }
 
@@ -237,56 +229,14 @@ export class ArenaScene extends Phaser.Scene {
       const worldY = WORLD_CENTER_Y + v.position.y * PIXELS_PER_INCH;
       const rotation = Phaser.Math.DegToRad(v.facing);
       if (!this.vehicleTargets.has(v.id)) {
-        // Snap to position on first appearance
         container.setPosition(worldX, worldY);
         container.setRotation(rotation);
       }
-      // Always update target — lerp runs in update()
       this.vehicleTargets.set(v.id, { x: worldX, y: worldY, rotation });
 
-      // Update armor bars and body tint
-      const loadout = v.stats.loadout;
-      const damage = v.stats.damageState;
-      if (loadout) {
-        const pct = (loc: keyof typeof loadout.armor) => {
-          const orig = loadout.armor[loc];
-          if (!orig) return 1;
-          return Math.max(0, (damage.armor[loc] ?? orig)) / orig;
-        };
-        const barColor = (p: number) => p > 0.5 ? 0x00ff00 : p > 0.25 ? 0xffaa00 : 0xff2200;
-
-        const barFront = container.getByName('bar-front') as Phaser.GameObjects.Rectangle;
-        const barBack  = container.getByName('bar-back')  as Phaser.GameObjects.Rectangle;
-        const barLeft  = container.getByName('bar-left')  as Phaser.GameObjects.Rectangle;
-        const barRight = container.getByName('bar-right') as Phaser.GameObjects.Rectangle;
-        if (barFront) { const p = pct('front'); barFront.setSize(20 * p, 3).setFillStyle(barColor(p)); }
-        if (barBack)  { const p = pct('back');  barBack.setSize(20 * p, 3).setFillStyle(barColor(p)); }
-        if (barLeft)  { const p = pct('left');  barLeft.setSize(3, 20 * p).setFillStyle(barColor(p)); }
-        if (barRight) { const p = pct('right'); barRight.setSize(3, 20 * p).setFillStyle(barColor(p)); }
-
-        // Tint body: interpolate from team color (full health) toward red (no health)
-        const totalOrig = (loadout.armor.front ?? 0) + (loadout.armor.back ?? 0) + (loadout.armor.left ?? 0) + (loadout.armor.right ?? 0);
-        const totalRem  = (damage.armor.front  ?? loadout.armor.front  ?? 0) +
-                          (damage.armor.back   ?? loadout.armor.back   ?? 0) +
-                          (damage.armor.left   ?? loadout.armor.left   ?? 0) +
-                          (damage.armor.right  ?? loadout.armor.right  ?? 0);
-        const healthPct = totalOrig > 0 ? totalRem / totalOrig : 1;
-        const body = container.getByName('body') as Phaser.GameObjects.Rectangle;
-        if (body) {
-          const isMe = v.id === this.myVehicleId;
-          const baseR = isMe ? 0 : 255;
-          const baseG = isMe ? 255 : 68;
-          const baseB = isMe ? 136 : 68;
-          // Lerp from damage color (0xff0000) at zero health to team color at full health
-          const r = Math.floor(255 + (baseR - 255) * healthPct);
-          const g = Math.floor(baseG * healthPct);
-          const b = Math.floor(baseB * healthPct);
-          body.setFillStyle((r << 16) | (g << 8) | b);
-        }
-      }
+      updateVehicleSprite(container, v, opts);
 
       if (v.id === this.myVehicleId) {
-        // roundPixels=false so lerped sub-pixel positions render smoothly
         this.cameras.main.startFollow(container, false);
       }
     });
