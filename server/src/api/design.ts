@@ -4,12 +4,24 @@ import { BODIES } from '../rules/data/bodies';
 import { POWER_PLANTS } from '../rules/data/power-plants';
 import { SUSPENSIONS } from '../rules/data/suspensions';
 import { TIRES } from '../rules/data/tires';
+import { WEAPONS } from '../rules/data/weapons';
 import { deriveStats } from '../rules/vehicle';
+
+// Armor type cost and weight multipliers (Compendium 2E, p.40)
+// costMul applies to armorCostPerPt, wtMul applies to armorWtPerPt
+const ARMOR_TYPE_MULS: Record<string, { costMul: number; wtMul: number }> = {
+  ablative:         { costMul: 1, wtMul: 1 },
+  metal:            { costMul: 1, wtMul: 2 },
+  fireproof:        { costMul: 2, wtMul: 1 },
+  laser_reflective: { costMul: 2, wtMul: 1 },
+  lr_fireproof:     { costMul: 4, wtMul: 1 },
+  radarproof:       { costMul: 2, wtMul: 1 },
+};
 
 export const designRouter = Router();
 
 designRouter.post('/', (req, res) => {
-  const { bodyType, chassisType, suspensionType, powerPlantType, tireType, armorType, armor } = req.body;
+  const { bodyType, chassisType, suspensionType, powerPlantType, tireType, armorType, armor, mounts } = req.body;
 
   if (!bodyType || !powerPlantType) {
     return res.status(400).json({ error: 'bodyType and powerPlantType are required' });
@@ -58,10 +70,21 @@ designRouter.post('/', (req, res) => {
   // tireCount mirrors the rule in deriveStats: cycles have 2, cars have 4, trikes have 3
   const tireCount = body.tireCount ?? (body.isCycle ? 2 : 4);
 
+  // Resolve mounts: array of { weaponId, arc, ammo } from the request
+  const mountList: { id: string; weaponId: string; arc: string; ammo: number }[] =
+    Array.isArray(mounts)
+      ? mounts.map((m: any, i: number) => ({
+          id: m.id ?? `m${i}`,
+          weaponId: m.weaponId,
+          arc: m.arc ?? 'front',
+          ammo: typeof m.ammo === 'number' ? m.ammo : 0,
+        })).filter((m: { weaponId: string }) => WEAPONS.find(w => w.id === m.weaponId))
+      : [];
+
   const loadout = {
     chassisId: 'standard', engineId: 'medium', suspensionId: 'standard',
     tires: Array.from({ length: tireCount }, (_, i) => ({ id: `t${i}`, blown: false })),
-    mounts: [],
+    mounts: mountList,
     armor: armorDist,
     totalCost: 0,
     bodyType: bodyType as BodyType,
@@ -76,7 +99,15 @@ designRouter.post('/', (req, res) => {
     const stats = deriveStats('design-preview', 'Preview', loadout);
 
     const armorPts = Object.values(armorDist).reduce((s, v) => s + (v as number), 0);
-    const totalCost = body.price + plant.cost + tire.costPerTire * tireCount + armorPts * body.armorCostPerPt;
+    const suspCost = Math.round(susp.costMultiplier * body.price);
+    const weaponCost = mountList.reduce((sum, m) => {
+      const w = WEAPONS.find(ww => ww.id === m.weaponId);
+      return w ? sum + w.cost + w.ammoCost * m.ammo : sum;
+    }, 0);
+    const armorMul = ARMOR_TYPE_MULS[loadout.armorType ?? 'ablative'] ?? ARMOR_TYPE_MULS.ablative;
+    const totalCost = body.price + plant.cost + tire.costPerTire * tireCount
+      + armorPts * body.armorCostPerPt * armorMul.costMul
+      + suspCost + weaponCost;
 
     return res.json({
       maxSpeed: stats.maxSpeed,

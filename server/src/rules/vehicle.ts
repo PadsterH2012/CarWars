@@ -5,6 +5,11 @@ import { BODIES } from './data/bodies';
 import { POWER_PLANTS } from './data/power-plants';
 import { SUSPENSIONS } from './data/suspensions';
 import { TIRES } from './data/tires';
+import { WEAPONS } from './data/weapons';
+
+const ARMOR_WT_MUL: Record<string, number> = {
+  ablative: 1, metal: 2, fireproof: 1, laser_reflective: 1, lr_fireproof: 1, radarproof: 1,
+};
 
 function computeAcceleration(powerFactors: number, totalWeight: number): number {
   if (powerFactors < totalWeight / 3) return 0;
@@ -46,9 +51,18 @@ export function deriveStats(id: string, name: string, loadout: VehicleLoadout): 
     const tireCount = body.tireCount ?? (body.isCycle ? 2 : 4);
     totalWeight = body.baseWeight + plant.weight + tire.weightPerTire * tireCount;
 
-    // Add armor weight
+    // Add armor weight (metal armor doubles weight per point)
     const armorPts = Object.values(loadout.armor).reduce((s, v) => s + v, 0);
-    totalWeight += armorPts * body.armorWtPerPt;
+    const armorWtMul = ARMOR_WT_MUL[loadout.armorType ?? 'ablative'] ?? 1;
+    totalWeight += armorPts * body.armorWtPerPt * armorWtMul;
+
+    // Add weapon and ammo weights from mounts
+    if (loadout.mounts) {
+      for (const mount of loadout.mounts) {
+        const w = WEAPONS.find(ww => ww.id === mount.weaponId);
+        if (w) totalWeight += w.weight + w.ammoWeight * mount.ammo;
+      }
+    }
 
     engineDP = plant.dp;
     acceleration = computeAcceleration(plant.powerFactors, totalWeight);
