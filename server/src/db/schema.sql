@@ -54,6 +54,18 @@ CREATE TABLE IF NOT EXISTS jobs (
 );
 CREATE INDEX IF NOT EXISTS idx_jobs_zone_id ON jobs(zone_id);
 
+-- Migrations: add columns to existing tables if they don't exist
+DO $$ BEGIN
+  IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='vehicles' AND column_name='original_loadout') THEN
+    ALTER TABLE vehicles ADD COLUMN original_loadout JSONB;
+  END IF;
+END $$;
+DO $$ BEGIN
+  IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='vehicles' AND column_name='in_arena') THEN
+    ALTER TABLE vehicles ADD COLUMN in_arena BOOLEAN NOT NULL DEFAULT FALSE;
+  END IF;
+END $$;
+
 -- Indexes for frequent foreign key lookups
 CREATE INDEX IF NOT EXISTS idx_vehicles_player_id ON vehicles(player_id);
 CREATE INDEX IF NOT EXISTS idx_drivers_player_id ON drivers(player_id);
