@@ -16,6 +16,7 @@ export class ArenaScene extends Phaser.Scene {
   private vehicleSprites = new Map<string, Phaser.GameObjects.Container>();
   private vehicleTargets = new Map<string, VehicleTarget>();
   private hazardSprites = new Map<string, Phaser.GameObjects.GameObject>();
+  private wreckSprites = new Map<string, Phaser.GameObjects.Container>();
   private zoneState: ZoneState | null = null;
   private cursors!: Phaser.Types.Input.Keyboard.CursorKeys;
   private fireKey!: Phaser.Input.Keyboard.Key;
@@ -249,6 +250,7 @@ export class ArenaScene extends Phaser.Scene {
       }
     });
 
+    this.syncWreckage(state);
     this.syncHazards(state);
     this.drawMinimap(state);
     if (state.combatEvents?.length) {
@@ -309,6 +311,53 @@ export class ArenaScene extends Phaser.Scene {
       const dotY = Math.max(MM_Y + 2, Math.min(MM_Y + MM_SIZE - 2, cy + v.position.y * MM_SCALE));
       gfx.fillStyle(color, 1);
       gfx.fillCircle(dotX, dotY, isPlayer ? 4 : 3);
+    });
+  }
+
+  private syncWreckage(state: ZoneState): void {
+    const wrecks = state.wreckage ?? [];
+    const seen = new Set<string>();
+
+    wrecks.forEach(w => {
+      seen.add(w.id);
+      let container = this.wreckSprites.get(w.id);
+      const bodyKey = w.bodyType ?? 'mid_sized';
+      const texKey = `wreck_${bodyKey}_${w.state}`;
+
+      if (!container) {
+        const sprite = this.add.image(0, 0, texKey).setName('body');
+        const children: Phaser.GameObjects.GameObject[] = [sprite];
+        if (w.state === 'burning') {
+          const flame = this.add.circle(0, 0, 10, 0xff8844, 0.45).setName('flame');
+          children.unshift(flame);
+        }
+        container = this.add.container(0, 0, children).setDepth(1);  // below vehicles (depth 2)
+        this.wreckSprites.set(w.id, container);
+      } else {
+        // State may have transitioned — swap the body texture
+        const body = container.getByName('body') as Phaser.GameObjects.Image | null;
+        if (body && body.texture.key !== texKey) body.setTexture(texKey);
+        // Remove/add flame as state changes
+        const flame = container.getByName('flame') as Phaser.GameObjects.Arc | null;
+        if (w.state === 'burning' && !flame) {
+          const newFlame = this.add.circle(0, 0, 10, 0xff8844, 0.45).setName('flame');
+          container.addAt(newFlame, 0);
+        } else if (w.state !== 'burning' && flame) {
+          flame.destroy();
+        }
+      }
+
+      const worldX = WORLD_CENTER_X + w.position.x * PIXELS_PER_INCH;
+      const worldY = WORLD_CENTER_Y + w.position.y * PIXELS_PER_INCH;
+      container.setPosition(worldX, worldY);
+      container.setRotation(Phaser.Math.DegToRad(w.facing));
+    });
+
+    this.wreckSprites.forEach((c, id) => {
+      if (!seen.has(id)) {
+        c.destroy();
+        this.wreckSprites.delete(id);
+      }
     });
   }
 
