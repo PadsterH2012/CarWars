@@ -1,6 +1,6 @@
 import type { ZoneState, VehicleState, HazardObject, DamageState, ArmorLocation, ArenaMap, CombatEvent } from '@carwars/shared';
-import { computeMovement, classifyManeuver, resolveControlTable, computeSpinAngle } from './movement';
-import { resolveToHit, resolveDamage, isWeaponInArc, hasLineOfSight, roll2d6, rollDamage } from './combat';
+import { computeMovement, classifyManeuver, resolveControlTable, computeSpinAngle, resolveCollision } from './movement';
+import { resolveToHit, resolveDamage, isWeaponInArc, hasLineOfSight, roll2d6, rollDamage, getAttackLocation } from './combat';
 import { WEAPONS } from './data/weapons';
 import { resolveWallCollisions } from './collision';
 
@@ -92,6 +92,69 @@ export function createTurnEngine(initialState: ZoneState, map?: ArenaMap): TurnE
 
         return moved;
       });
+
+      // ── Vehicle-to-vehicle collision detection ──────────────────────────────
+      // Check all pairs once (i < j). Uses the same half-extents as wall collision.
+      const VEH_HW = 0.5, VEH_HH = 1.0;
+      for (let i = 0; i < newVehicles.length; i++) {
+        for (let j = i + 1; j < newVehicles.length; j++) {
+          let vA = newVehicles[i];
+          let vB = newVehicles[j];
+
+          const dx = vB.position.x - vA.position.x;
+          const dy = vB.position.y - vA.position.y;
+          const overlapX = (VEH_HW + VEH_HW) - Math.abs(dx);
+          const overlapY = (VEH_HH + VEH_HH) - Math.abs(dy);
+          if (overlapX <= 0 || overlapY <= 0) continue;
+
+          // Classify collision from relative heading
+          const relHeading = Math.abs(((vB.facing - vA.facing + 540) % 360) - 180);
+          // relHeading: 0 = same direction, 180 = head-on, 90 = perpendicular
+          const type: 'head_on' | 'same_dir' | 't_bone' =
+            relHeading > 120 ? 'head_on' :
+            relHeading < 45  ? 'same_dir' :
+                               't_bone';
+
+          const aHasRamplate = false; // ramplate not yet in loadout type
+          const result = resolveCollision(vA.speed, vB.speed, type, aHasRamplate);
+
+          // Apply damage to each vehicle on the face that took the impact
+          const locA = getAttackLocation(vB, vA); // which face of A did B hit
+          const locB = getAttackLocation(vA, vB); // which face of B did A hit
+
+          for (const [veh, dmg, loc] of [
+            [vA, result.damageA, locA],
+            [vB, result.damageB, locB],
+          ] as [VehicleState, number, ArmorLocation][]) {
+            if (dmg <= 0) continue;
+            const ds   = damageUpdates.get(veh.id) ?? { ...veh.stats.damageState };
+            const armor = { ...ds.armor };
+            const remaining = (armor[loc] ?? 0) - dmg;
+            armor[loc] = Math.max(0, remaining);
+            const destroyed = ds.destroyed || armor[loc] === 0;
+            damageUpdates.set(veh.id, { ...ds, armor, destroyed });
+          }
+
+          // Push vehicles apart on minimum penetration axis, zero both speeds
+          if (overlapX < overlapY) {
+            const push = overlapX / 2;
+            vA = { ...vA, position: { ...vA.position, x: vA.position.x + (dx > 0 ? -push : push) }, speed: 0 };
+            vB = { ...vB, position: { ...vB.position, x: vB.position.x + (dx > 0 ?  push : -push) }, speed: 0 };
+          } else {
+            const push = overlapY / 2;
+            vA = { ...vA, position: { ...vA.position, y: vA.position.y + (dy > 0 ? -push : push) }, speed: 0 };
+            vB = { ...vB, position: { ...vB.position, y: vB.position.y + (dy > 0 ?  push : -push) }, speed: 0 };
+          }
+          newVehicles[i] = vA;
+          newVehicles[j] = vB;
+
+          console.log(
+            `[t${state.tick}] CRASH ${vA.id} ↔ ${vB.id} ` +
+            `type=${type} closingSpd=${result.closingSpeed} ` +
+            `A-${locA}:${result.damageA}pts B-${locB}:${result.damageB}pts`,
+          );
+        }
+      }
 
       // Track peak hazard D-value this turn (Compendium: one maneuver per turn, use highest D)
       newVehicles.forEach(vehicle => {

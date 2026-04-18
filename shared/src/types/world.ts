@@ -56,12 +56,24 @@ export interface HazardObject {
   ownerId: string;
 }
 
+export interface CombatEvent {
+  attackerId: string;
+  targetId: string;
+  hit: boolean;
+  fromX: number;
+  fromY: number;
+  toX: number;
+  toY: number;
+  weapon: string;
+}
+
 export interface ZoneState {
   id: string;
   type: ZoneType;
   tick: number;
   vehicles: VehicleState[];
   hazardObjects: HazardObject[];
+  combatEvents?: CombatEvent[];
   mapId?: string;   // which arena map is loaded
   walls?: Rect[];   // only present in the initial join state, not every tick
 }
