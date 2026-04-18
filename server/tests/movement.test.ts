@@ -23,10 +23,10 @@ const baseVehicle: VehicleState = {
 };
 
 describe('movement', () => {
-  it('moves vehicle forward by speed/5 per phase', () => {
+  it('moves vehicle forward by speed/360 per tick', () => {
     const input = { speed: 10, steer: 0 };
     const result = computeMovement(baseVehicle, input);
-    expect(result.position.y).toBeCloseTo(-2);
+    expect(result.position.y).toBeCloseTo(-0.028);
   });
 
   it('applies steering to facing', () => {
@@ -89,8 +89,8 @@ describe('control table', () => {
   });
 
   it('fishtail when control result equals 1', () => {
-    // roll=3, hazard=2, hc=4 → 3+2-4=1 → fishtail
-    const result = resolveControlTable(4, 2, 3);
+    // roll + hazard - hc - 7 = 1 → 10+2-4-7=1 → fishtail
+    const result = resolveControlTable(4, 2, 10);
     expect(result.effect).toBe('fishtail');
     expect(result.severity).toBe(1);
   });
