@@ -71,6 +71,7 @@ export interface VehicleLoadout {
   tireType?: TireType;
   armorType?: ArmorType;
   powerPlantType?: PowerPlantType;
+  hasRamplate?: boolean;  // when true, vehicle can push pushable wreckage aside on collision
 }
 
 export interface DamageState {

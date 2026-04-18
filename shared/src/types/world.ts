@@ -1,4 +1,4 @@
-import type { VehicleStats } from './vehicle';
+import type { VehicleStats, BodyType } from './vehicle';
 
 export type ZoneType = 'highway' | 'town' | 'arena';
 
@@ -67,12 +67,34 @@ export interface CombatEvent {
   weapon: string;
 }
 
+// A destroyed vehicle persists as wreckage — a collidable, optionally burning obstacle.
+// State progresses over time (burning → smouldering → debris) but the object itself
+// is never removed during gameplay.
+export type WreckageState = 'burning' | 'smouldering' | 'debris';
+export type WreckageCause = 'fire' | 'explosion' | 'kinetic' | 'energy' | 'collision';
+
+export interface WreckageObject {
+  id: string;
+  sourceVehicleId: string;
+  position: Position;
+  facing: number;
+  bodyType?: BodyType;
+  state: WreckageState;
+  stateStartedAt: number;   // tick at which the current state began
+  remainingDP: number;      // damage wreck can absorb before disintegrating to debris
+  mass: 'light' | 'medium' | 'heavy';
+  pushable: boolean;        // true if a ramplate vehicle can shove it aside
+  carriedAmmo: number;      // ammo remaining across all mounts at moment of destruction
+  causedBy: WreckageCause;
+}
+
 export interface ZoneState {
   id: string;
   type: ZoneType;
   tick: number;
   vehicles: VehicleState[];
   hazardObjects: HazardObject[];
+  wreckage?: WreckageObject[];
   combatEvents?: CombatEvent[];
   mapId?: string;   // which arena map is loaded
   walls?: Rect[];   // only present in the initial join state, not every tick
