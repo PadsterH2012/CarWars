@@ -1,8 +1,59 @@
-import type { ZoneState, VehicleState, HazardObject, DamageState, ArmorLocation, ArenaMap, CombatEvent } from '@carwars/shared';
+import type { ZoneState, VehicleState, HazardObject, DamageState, ArmorLocation, ArenaMap, CombatEvent, WreckageObject, WreckageCause, WreckageState } from '@carwars/shared';
 import { computeMovement, classifyManeuver, resolveControlTable, computeSpinAngle, resolveCollision } from './movement';
 import { resolveToHit, resolveDamage, isWeaponInArc, hasLineOfSight, roll2d6, rollDamage, getAttackLocation } from './combat';
 import { WEAPONS } from './data/weapons';
 import { resolveWallCollisions } from './collision';
+
+const LIGHT_BODIES = new Set(['light_cycle', 'med_cycle', 'hvy_cycle', 'subcompact', 'trike']);
+const HEAVY_BODIES = new Set(['van', 'pickup', 'camper', 'truck', 'trailer']);
+const BURN_TICKS = 30;
+const SMOULDER_TICKS = 60;
+const BLAST_RADIUS = 2;
+
+function wreckMass(bodyType?: string): 'light' | 'medium' | 'heavy' {
+  if (bodyType && LIGHT_BODIES.has(bodyType)) return 'light';
+  if (bodyType && HEAVY_BODIES.has(bodyType)) return 'heavy';
+  return 'medium';
+}
+
+function wreckDP(mass: 'light' | 'medium' | 'heavy'): number {
+  return mass === 'light' ? 5 : mass === 'heavy' ? 20 : 10;
+}
+
+function determineCause(v: VehicleState): WreckageCause {
+  const ds = v.stats.damageState;
+  if (ds.onFire) return 'fire';
+  if (ds.internalDamage?.includes('explosion_kill')) return 'explosion';
+  if (ds.internalDamage?.includes('collision_kill')) return 'collision';
+  if (ds.internalDamage?.includes('energy_kill')) return 'energy';
+  return 'kinetic';
+}
+
+function carriedAmmoOf(v: VehicleState): number {
+  return (v.stats.loadout?.mounts ?? []).reduce((s, m) => s + (m.ammo ?? 0), 0);
+}
+
+function initialWreckState(cause: WreckageCause, carriedAmmo: number): WreckageState {
+  if (cause === 'fire') return 'burning';
+  if (cause === 'explosion' && carriedAmmo > 0) return 'burning';
+  return 'smouldering';
+}
+
+function shouldBlast(cause: WreckageCause, carriedAmmo: number): boolean {
+  return cause === 'explosion' && carriedAmmo > 0;
+}
+
+function transitionWreck(w: WreckageObject, currentTick: number): WreckageObject {
+  if (w.state === 'debris') return w;
+  const elapsed = currentTick - w.stateStartedAt;
+  if (w.state === 'burning' && elapsed >= BURN_TICKS) {
+    return { ...w, state: 'smouldering', stateStartedAt: currentTick };
+  }
+  if (w.state === 'smouldering' && elapsed >= SMOULDER_TICKS) {
+    return { ...w, state: 'debris', stateStartedAt: currentTick };
+  }
+  return w;
+}
 
 interface VehicleInput {
   speed: number;
@@ -154,6 +205,86 @@ export function createTurnEngine(initialState: ZoneState, map?: ArenaMap): TurnE
             `A-${locA}:${result.damageA}pts B-${locB}:${result.damageB}pts`,
           );
         }
+      }
+
+      // ── Vehicle-to-wreckage collision ────────────────────────────────────
+      // For each vehicle, check overlap with each wreck. Wrecks are stationary
+      // with the same half-extents as vehicles. Ramplate + pushable = push through;
+      // otherwise the vehicle bounces off and the wreck absorbs the damage.
+      const preCollisionWreckage: WreckageObject[] = (state.wreckage ?? []).map(w => ({ ...w }));
+      const wreckUpdates = new Map<string, WreckageObject>();
+      for (const w of preCollisionWreckage) wreckUpdates.set(w.id, w);
+
+      for (let i = 0; i < newVehicles.length; i++) {
+        let veh = newVehicles[i];
+        for (const wreckId of wreckUpdates.keys()) {
+          const wreck = wreckUpdates.get(wreckId)!;
+          const dx = wreck.position.x - veh.position.x;
+          const dy = wreck.position.y - veh.position.y;
+          const overlapX = (VEH_HW + VEH_HW) - Math.abs(dx);
+          const overlapY = (VEH_HH + VEH_HH) - Math.abs(dy);
+          if (overlapX <= 0 || overlapY <= 0) continue;
+
+          const hasRam = !!veh.stats.loadout?.hasRamplate;
+          const crash = resolveCollision(veh.speed, 0, 't_bone', hasRam);
+
+          // Apply damage to vehicle's impact face
+          const loc = getAttackLocation({ position: wreck.position, facing: 0 } as VehicleState, veh);
+          const ds = damageUpdates.get(veh.id) ?? { ...veh.stats.damageState };
+          const armor = { ...ds.armor };
+          armor[loc] = Math.max(0, (armor[loc] ?? 0) - crash.damageA);
+          damageUpdates.set(veh.id, {
+            ...ds,
+            armor,
+            destroyed: ds.destroyed || armor[loc] === 0,
+          });
+
+          // Wreck absorbs damage; breaks down to debris on depletion
+          const newDP = Math.max(0, wreck.remainingDP - crash.damageB);
+          const brokeDown = newDP <= 0 && wreck.state !== 'debris';
+          const updatedWreck: WreckageObject = {
+            ...wreck,
+            remainingDP: newDP,
+            state: brokeDown ? 'debris' : wreck.state,
+            stateStartedAt: brokeDown ? state.tick + 1 : wreck.stateStartedAt,
+          };
+
+          if (hasRam && wreck.pushable) {
+            // Push the wreck in the vehicle's velocity direction by overlap magnitude
+            const push = Math.min(overlapX, overlapY);
+            const facingRad = (veh.facing - 90) * (Math.PI / 180);
+            updatedWreck.position = {
+              x: wreck.position.x + Math.cos(facingRad) * push,
+              y: wreck.position.y + Math.sin(facingRad) * push,
+            };
+            // Vehicle loses half its speed but keeps moving
+            veh = { ...veh, speed: Math.floor(veh.speed / 2) };
+          } else {
+            // Vehicle bounces — pushed back by full overlap, speed zeroed
+            if (overlapX < overlapY) {
+              const px = overlapX;
+              veh = {
+                ...veh,
+                position: { ...veh.position, x: veh.position.x + (dx > 0 ? -px : px) },
+                speed: 0,
+              };
+            } else {
+              const py = overlapY;
+              veh = {
+                ...veh,
+                position: { ...veh.position, y: veh.position.y + (dy > 0 ? -py : py) },
+                speed: 0,
+              };
+            }
+          }
+
+          wreckUpdates.set(wreckId, updatedWreck);
+          console.log(
+            `[t${state.tick}] RAM ${veh.id} → wreck ${wreck.id} ` +
+            `ram=${hasRam} pushable=${wreck.pushable} dmg-${loc}:${crash.damageA} wreckDP:${newDP}`
+          );
+        }
+        newVehicles[i] = veh;
       }
 
       // Track peak hazard D-value this turn (Compendium: one maneuver per turn, use highest D)
@@ -372,39 +503,125 @@ export function createTurnEngine(initialState: ZoneState, map?: ArenaMap): TurnE
       });
 
       // Apply damage + ammo updates to vehicles
-      const finalVehicles = [
-        ...newVehicles.map(v => {
-          const dmg = damageUpdates.get(v.id);
-          const ammo = ammoUpdates.get(v.id);
+      const withUpdates = newVehicles.map(v => {
+        const dmg = damageUpdates.get(v.id);
+        const ammo = ammoUpdates.get(v.id);
 
-          let updated = v;
-          if (dmg) {
-            updated = { ...updated, stats: { ...updated.stats, damageState: dmg } };
-          }
-          if (ammo && updated.stats.loadout) {
-            const newMounts = updated.stats.loadout.mounts.map(m => {
-              const newAmmo = ammo.get(m.id);
-              return newAmmo !== undefined ? { ...m, ammo: Math.max(0, newAmmo) } : m;
-            });
-            updated = {
-              ...updated,
-              stats: {
-                ...updated.stats,
-                loadout: { ...updated.stats.loadout, mounts: newMounts }
-              }
-            };
-          }
-          return updated;
-        }),
-        ...destroyedVehicles
+        let updated = v;
+        if (dmg) {
+          updated = { ...updated, stats: { ...updated.stats, damageState: dmg } };
+        }
+        if (ammo && updated.stats.loadout) {
+          const newMounts = updated.stats.loadout.mounts.map(m => {
+            const newAmmo = ammo.get(m.id);
+            return newAmmo !== undefined ? { ...m, ammo: Math.max(0, newAmmo) } : m;
+          });
+          updated = {
+            ...updated,
+            stats: {
+              ...updated.stats,
+              loadout: { ...updated.stats.loadout, mounts: newMounts }
+            }
+          };
+        }
+        return updated;
+      });
+
+      const newTick = state.tick + 1;
+
+      // ── Wreckage promotion ──────────────────────────────────────────────
+      // Any vehicle that is destroyed at end of this tick (including those already
+      // destroyed coming in) is promoted to a WreckageObject; destroyed vehicles are
+      // removed from state.vehicles.
+      const remainsAlive = withUpdates.filter(v => !v.stats.damageState.destroyed);
+      const justDestroyed = [
+        ...withUpdates.filter(v => v.stats.damageState.destroyed),
+        ...destroyedVehicles,
       ];
+
+      // Existing wreckage picks up collision-driven position/DP/state updates from above
+      const existingWreckage: WreckageObject[] = [...wreckUpdates.values()];
+
+      // Blast accumulator — applied against survivors after promotion
+      type BlastHit = { dmg: number; from: { x: number; y: number } };
+      const blastAgainstVehicle = new Map<string, BlastHit>();
+      const blastAgainstWreck = new Map<string, number>();
+
+      const newWrecks: WreckageObject[] = justDestroyed.map(v => {
+        const cause = determineCause(v);
+        const carriedAmmo = carriedAmmoOf(v);
+        const mass = wreckMass(v.stats.loadout?.bodyType);
+        const wreck: WreckageObject = {
+          id: `wreck-${v.id}-${newTick}`,
+          sourceVehicleId: v.id,
+          position: { ...v.position },
+          facing: v.facing,
+          bodyType: v.stats.loadout?.bodyType,
+          state: initialWreckState(cause, carriedAmmo),
+          stateStartedAt: newTick,
+          remainingDP: wreckDP(mass),
+          mass,
+          pushable: mass === 'light',
+          carriedAmmo,
+          causedBy: cause,
+        };
+
+        // Ammo cook-off blast: mark nearby vehicles + wrecks for radial damage
+        if (shouldBlast(cause, carriedAmmo)) {
+          const blastDmg = rollDamage(2, 0);
+          for (const other of remainsAlive) {
+            const dx = other.position.x - wreck.position.x;
+            const dy = other.position.y - wreck.position.y;
+            if (Math.hypot(dx, dy) <= BLAST_RADIUS) {
+              blastAgainstVehicle.set(other.id, { dmg: blastDmg, from: wreck.position });
+            }
+          }
+          for (const w of existingWreckage) {
+            const dx = w.position.x - wreck.position.x;
+            const dy = w.position.y - wreck.position.y;
+            if (Math.hypot(dx, dy) <= BLAST_RADIUS) {
+              blastAgainstWreck.set(w.id, Math.ceil(w.remainingDP / 2));
+            }
+          }
+        }
+        return wreck;
+      });
+
+      // Apply blast damage to surviving vehicles (closest face takes hit)
+      const finalAlive = remainsAlive.map(v => {
+        const hit = blastAgainstVehicle.get(v.id);
+        if (!hit) return v;
+        const loc = getAttackLocation({ position: hit.from, facing: 0 } as VehicleState, v);
+        const armor = { ...v.stats.damageState.armor };
+        const before = armor[loc] ?? 0;
+        armor[loc] = Math.max(0, before - hit.dmg);
+        return {
+          ...v,
+          stats: { ...v.stats, damageState: { ...v.stats.damageState, armor } },
+        };
+      });
+
+      // Update existing wreckage: apply state transitions + any blast DP loss
+      const updatedExisting = existingWreckage.map(w => {
+        const dpLoss = blastAgainstWreck.get(w.id) ?? 0;
+        const afterDp: WreckageObject = dpLoss > 0
+          ? {
+              ...w,
+              remainingDP: Math.max(0, w.remainingDP - dpLoss),
+              state: (w.remainingDP - dpLoss <= 0 && w.state !== 'debris') ? 'debris' : w.state,
+              stateStartedAt: (w.remainingDP - dpLoss <= 0 && w.state !== 'debris') ? newTick : w.stateStartedAt,
+            }
+          : w;
+        return transitionWreck(afterDp, newTick);
+      });
 
       pendingInputs.clear();
       state = {
         ...state,
-        tick: state.tick + 1,
-        vehicles: finalVehicles,
+        tick: newTick,
+        vehicles: finalAlive,
         hazardObjects: remainingHazards,
+        wreckage: [...updatedExisting, ...newWrecks],
         combatEvents: combatEvents.length > 0 ? combatEvents : undefined,
       };
       return state;
