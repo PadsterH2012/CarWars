@@ -110,6 +110,41 @@ export class GarageScene extends Phaser.Scene {
       });
     }
 
+    // Map picker — always visible on the main garage so solo fights and squads
+    // both pick a map. Selection persists via localStorage.
+    const MAPS = [
+      { id: 'truck-stop',  label: 'Truck Stop' },
+      { id: 'town-square', label: 'Town Square' },
+      { id: 'open',        label: 'Open Arena' },
+    ];
+    let selectedMap = localStorage.getItem('cw_selected_map') ?? 'truck-stop';
+    if (!MAPS.find(m => m.id === selectedMap)) selectedMap = 'truck-stop';
+
+    this.add.text(100, 540, 'ARENA:', {
+      color: '#aaa', fontSize: '13px', fontFamily: 'monospace', fontStyle: 'bold'
+    });
+    const mapButtons: Phaser.GameObjects.Text[] = [];
+    const refreshMapButtons = () => {
+      mapButtons.forEach((btn, i) => {
+        const isSel = MAPS[i].id === selectedMap;
+        btn.setColor(isSel ? '#00ff88' : '#888');
+        btn.setBackgroundColor(isSel ? '#003322' : '#111122');
+      });
+    };
+    MAPS.forEach((m, i) => {
+      const btn = this.add.text(180 + i * 130, 538, m.label, {
+        fontSize: '13px', fontFamily: 'monospace',
+        padding: { x: 6, y: 4 },
+      }).setInteractive();
+      btn.on('pointerdown', () => {
+        selectedMap = m.id;
+        localStorage.setItem('cw_selected_map', selectedMap);
+        refreshMapButtons();
+      });
+      mapButtons.push(btn);
+    });
+    refreshMapButtons();
+
     // Nav buttons
     const buildBtn = this.add.text(100, 600, '[BUILD NEW CAR]', {
       color: '#aaaaff', fontSize: '16px', fontFamily: 'monospace',
@@ -210,41 +245,12 @@ export class GarageScene extends Phaser.Scene {
       created.push(rowBg, marker, label, driverLabel);
     });
 
-    // Map picker row — stored selection persists via localStorage across visits
-    const MAPS = [
-      { id: 'truck-stop',  label: 'Truck Stop' },
-      { id: 'town-square', label: 'Town Square' },
-      { id: 'open',        label: 'Open Arena' },
-    ];
-    let selectedMap = localStorage.getItem('cw_selected_map') ?? 'truck-stop';
-    if (!MAPS.find(m => m.id === selectedMap)) selectedMap = 'truck-stop';
-
-    const mapLabel = this.add.text(440, 510, 'MAP:', {
-      color: '#aaa', fontSize: '12px', fontFamily: 'monospace'
-    }).setOrigin(1, 0.5).setDepth(33);
-    const mapButtons: Phaser.GameObjects.Text[] = [];
-    const refreshMapButtons = () => {
-      mapButtons.forEach((btn, i) => {
-        const isSel = MAPS[i].id === selectedMap;
-        btn.setColor(isSel ? '#00ff88' : '#888');
-        btn.setBackgroundColor(isSel ? '#003322' : '#111122');
-      });
-    };
-    MAPS.forEach((m, i) => {
-      const btn = this.add.text(460 + i * 130, 510, m.label, {
-        fontSize: '12px', fontFamily: 'monospace',
-        padding: { x: 6, y: 3 },
-      }).setOrigin(0, 0.5).setDepth(33).setInteractive();
-      btn.on('pointerdown', () => {
-        selectedMap = m.id;
-        localStorage.setItem('cw_selected_map', selectedMap);
-        refreshMapButtons();
-      });
-      mapButtons.push(btn);
-      created.push(btn);
-    });
-    refreshMapButtons();
-    created.push(mapLabel);
+    // Show the current arena choice as a reminder (picker lives on main garage)
+    const currentMap = localStorage.getItem('cw_selected_map') ?? 'truck-stop';
+    const mapNote = this.add.text(640, 510, `Arena: ${currentMap}   (change on garage screen)`, {
+      color: '#888', fontSize: '11px', fontFamily: 'monospace'
+    }).setOrigin(0.5).setDepth(33);
+    created.push(mapNote);
 
     // Fight + Cancel buttons
     const fightBtn = this.add.text(540, 555, '[FIGHT WITH SQUAD]', {
@@ -260,8 +266,9 @@ export class GarageScene extends Phaser.Scene {
     cancelBtn.on('pointerdown', destroy);
     fightBtn.on('pointerdown', () => {
       const ids = [primaryId, ...[...selected].filter(id => id !== primaryId)];
+      const mapId = localStorage.getItem('cw_selected_map') ?? 'truck-stop';
       destroy();
-      this.launchArena(ids, selectedMap);
+      this.launchArena(ids, mapId);
     });
 
     created.push(fightBtn, cancelBtn);
