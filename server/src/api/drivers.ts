@@ -5,17 +5,51 @@ import { requireAuth, AuthRequest } from './middleware';
 export const driversRouter = Router();
 driversRouter.use(requireAuth);
 
+export const HIRE_COST = 500;
+
 driversRouter.post('/', async (req: AuthRequest, res) => {
   const { name } = req.body;
   if (!name || typeof name !== 'string' || name.length > 64) {
     return res.status(400).json({ error: 'Invalid name' });
   }
   const db = getDb();
-  const result = await db.query(
-    `INSERT INTO drivers (player_id, name) VALUES ($1, $2) RETURNING id, name, skill, aggression, loyalty, xp`,
-    [req.playerId, name]
-  );
-  return res.status(201).json(result.rows[0]);
+  const client = await db.connect();
+  try {
+    await client.query('BEGIN');
+    // Atomic debit: fail if the player can't afford it
+    const debit = await client.query(
+      `UPDATE players SET money = money - $1 WHERE id = $2 AND money >= $1 RETURNING money`,
+      [HIRE_COST, req.playerId]
+    );
+    if (!debit.rows.length) {
+      await client.query('ROLLBACK');
+      return res.status(400).json({ error: 'Insufficient funds' });
+    }
+    const result = await client.query(
+      `INSERT INTO drivers (player_id, name) VALUES ($1, $2)
+       RETURNING id, name, skill, aggression, loyalty, xp, assigned_vehicle_id, alive`,
+      [req.playerId, name]
+    );
+    // Also backfill gang_id so the driver shows up under the owning gang
+    await client.query(
+      `UPDATE drivers SET gang_id = g.id FROM gangs g
+       WHERE g.owner_player_id = $1 AND drivers.id = $2`,
+      [req.playerId, result.rows[0].id]
+    );
+    // Log the hire to gang_ledger
+    await client.query(
+      `INSERT INTO gang_ledger (gang_id, event_type, amount, description, result)
+       VALUES ((SELECT id FROM gangs WHERE owner_player_id = $1), 'hire_driver', $2, $3, $4)`,
+      [req.playerId, -HIRE_COST, `Hired ${name}`, JSON.stringify({ driverId: result.rows[0].id })]
+    );
+    await client.query('COMMIT');
+    return res.status(201).json({ ...result.rows[0], moneyRemaining: debit.rows[0].money });
+  } catch (e) {
+    await client.query('ROLLBACK');
+    throw e;
+  } finally {
+    client.release();
+  }
 });
 
 driversRouter.get('/', async (req: AuthRequest, res) => {

@@ -314,6 +314,7 @@ Small independent items that don't belong to a larger plan.
 - [x] Driver permadeath — when a squad vehicle is destroyed, the assigned driver rolls for death. Fire/explosion = always die; other causes = 40% death chance. Dead drivers cleared from `assigned_vehicle_id`, logged as `driver_killed` event.
 - [ ] **Cycle / trike gameplay** — sprites + body types exist, collision half-extents are hard-coded to car dimensions, no real play-testing of 2/3-wheel handling
 - [ ] **Repair UI visibility** — [REPAIR] click just takes money and refreshes; no breakdown of what's fixed or partial repair options
+- [x] **Driver hiring UI + cost** — garage CREW panel shows all living drivers; [HIRE DRIVER $500] button + click-to-assign modal; each vehicle row shows the assigned driver (or NO DRIVER warning). Cost deducted atomically; logged as hire_driver in gang_ledger.
 - [ ] **Ghost cars audit** — any vehicles built before the 2026-04-19 money-deduction fix were free; may want to reconcile historical `players.money` (minor; only affects accounts that built cars pre-fix)
 - [ ] **Post-arena navigation** — consider showing last-fight summary on garage re-entry (currently just the `lastResult` money line)
 

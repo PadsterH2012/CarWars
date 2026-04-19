@@ -2,7 +2,7 @@ import Phaser from 'phaser';
 import { paintEmblem, EMBLEM_IDS, type EmblemId } from '../game/CoatOfArms';
 
 interface Vehicle { id: string; name: string; value: number; damage_state: any; loadout: any; in_arena?: boolean; }
-interface Driver { id: string; name: string; skill: number; assigned_vehicle_id: string | null; alive: boolean; }
+interface Driver { id: string; name: string; skill: number; xp: number; assigned_vehicle_id: string | null; alive: boolean; }
 interface Gang { id: string; name: string; primary_colour: number; secondary_colour: number; emblem_id: EmblemId; treasury: number; reputation: number; }
 
 export class GarageScene extends Phaser.Scene {
@@ -79,6 +79,12 @@ export class GarageScene extends Phaser.Scene {
         color: '#888888', fontSize: '18px', fontFamily: 'monospace'
       }).setOrigin(0.5);
     } else {
+      // Build driver-by-vehicle-id lookup for displaying assignments
+      const driverByVid = new Map<string, Driver>();
+      for (const d of this.drivers) {
+        if (d.alive && d.assigned_vehicle_id) driverByVid.set(d.assigned_vehicle_id, d);
+      }
+
       this.vehicles.forEach((v, i) => {
         const y = 140 + i * 80;
         const ds = v.damage_state ?? {};
@@ -89,7 +95,13 @@ export class GarageScene extends Phaser.Scene {
         this.add.text(100, y, `${v.name}`, { color: nameColor, fontSize: '16px', fontFamily: 'monospace' });
         this.add.text(370, y, `$${v.value.toLocaleString()}`, { color: '#888888', fontSize: '14px', fontFamily: 'monospace' });
 
-        // Line 2: ammo + tire status
+        // Line 2: driver + ammo + status flags
+        const driver = driverByVid.get(v.id);
+        const driverStr = driver ? `Driver: ${driver.name} (sk${driver.skill})` : '\u26A0 NO DRIVER';
+        const driverColor = driver ? '#88ccff' : '#ffaa44';
+        this.add.text(100, y + 20, driverStr, {
+          color: driverColor, fontSize: '11px', fontFamily: 'monospace'
+        });
         const mounts: any[] = v.loadout?.mounts ?? [];
         const ammoStr = mounts.length
           ? mounts.map((m: any) => `${m.weaponId ?? '?'}:${m.ammo}`).join(' ')
@@ -97,8 +109,8 @@ export class GarageScene extends Phaser.Scene {
         const tiresBlow = ds.tiresBlown?.length ?? 0;
         const tireStr = tiresBlow > 0 ? `  [${tiresBlow} TIRE${tiresBlow > 1 ? 'S' : ''} BLOWN]` : '';
         const engineStr = ds.engineDamaged ? '  [ENGINE]' : '';
-        this.add.text(100, y + 20, `${ammoStr}${tireStr}${engineStr}`, {
-          color: '#666666', fontSize: '11px', fontFamily: 'monospace'
+        this.add.text(100, y + 38, `${ammoStr}${tireStr}${engineStr}`, {
+          color: '#666666', fontSize: '10px', fontFamily: 'monospace'
         });
 
         // [REPAIR] button
@@ -126,6 +138,41 @@ export class GarageScene extends Phaser.Scene {
           backgroundColor: '#221100', padding: { x: 5, y: 2 }
         }).setInteractive();
         sellBtn.on('pointerdown', () => this.sellVehicle(v.id, v.name));
+      });
+    }
+
+    // ── CREW panel ────────────────────────────────────────────────────────
+    // Shows all living drivers + their assignment. Hire button at the top.
+    this.add.text(960, 120, 'CREW', {
+      color: '#aaa', fontSize: '13px', fontFamily: 'monospace', fontStyle: 'bold'
+    });
+    const hireBtn = this.add.text(1060, 120, '[HIRE DRIVER $500]', {
+      color: '#88ff88', fontSize: '12px', fontFamily: 'monospace',
+      backgroundColor: '#002211', padding: { x: 6, y: 3 },
+    }).setInteractive();
+    hireBtn.on('pointerdown', () => this.hireDriver());
+
+    const livingDrivers = this.drivers.filter(d => d.alive);
+    if (livingDrivers.length === 0) {
+      this.add.text(960, 150, 'No drivers hired.\nHire at least one to\nfield a vehicle in arena.', {
+        color: '#777', fontSize: '11px', fontFamily: 'monospace'
+      });
+    } else {
+      livingDrivers.forEach((d, i) => {
+        const y = 150 + i * 44;
+        const assignedVehicle = this.vehicles.find(v => v.id === d.assigned_vehicle_id);
+        this.add.text(960, y, d.name, {
+          color: '#ffffff', fontSize: '13px', fontFamily: 'monospace'
+        });
+        this.add.text(960, y + 16, `skill ${d.skill} | ${d.xp} XP`, {
+          color: '#888', fontSize: '10px', fontFamily: 'monospace'
+        });
+        const assignStr = assignedVehicle ? `▶ ${assignedVehicle.name}` : 'unassigned';
+        const assignBtn = this.add.text(1060, y + 8, assignStr, {
+          color: assignedVehicle ? '#88ccff' : '#ffaa44', fontSize: '11px', fontFamily: 'monospace',
+          backgroundColor: '#111122', padding: { x: 4, y: 2 }
+        }).setInteractive();
+        assignBtn.on('pointerdown', () => this.showAssignDriverMenu(d));
       });
     }
 
@@ -444,6 +491,74 @@ export class GarageScene extends Phaser.Scene {
       this.scene.restart({ token: this.token });
     });
     created.push(saveBtn, cancelBtn);
+  }
+
+  private async hireDriver(): Promise<void> {
+    const name = prompt('Driver name?');
+    if (!name) return;
+    const host = window.location.hostname;
+    const res = await fetch(`http://${host}:3001/api/drivers`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${this.token}` },
+      body: JSON.stringify({ name: name.trim().slice(0, 64) }),
+    });
+    if (res.ok) {
+      this.scene.restart({ token: this.token });
+    } else {
+      const body = await res.json().catch(() => ({}));
+      alert(body.error ?? 'Hire failed');
+    }
+  }
+
+  private showAssignDriverMenu(driver: Driver): void {
+    // Overlay modal: list vehicles, click one to assign this driver to it.
+    const created: Phaser.GameObjects.GameObject[] = [];
+    const overlay = this.add.rectangle(640, 360, 1280, 720, 0x000000, 0.8).setDepth(30).setInteractive();
+    const panel   = this.add.rectangle(640, 360, 500, 400, 0x111122, 0.98).setDepth(31).setStrokeStyle(2, 0x4466aa);
+    const title   = this.add.text(640, 180, `ASSIGN ${driver.name.toUpperCase()}`, {
+      color: '#ffcc00', fontSize: '16px', fontFamily: 'monospace', fontStyle: 'bold'
+    }).setOrigin(0.5).setDepth(32);
+    created.push(overlay, panel, title);
+
+    const destroy = () => created.forEach(o => o.destroy());
+
+    // List vehicles, each clickable to assign
+    const alive = this.vehicles.filter(v => !v.damage_state?.destroyed);
+    if (alive.length === 0) {
+      const none = this.add.text(640, 260, 'No vehicles to assign — build one first.', {
+        color: '#888', fontSize: '12px', fontFamily: 'monospace'
+      }).setOrigin(0.5).setDepth(32);
+      created.push(none);
+    } else {
+      alive.forEach((v, i) => {
+        const y = 230 + i * 32;
+        const currentDriver = this.drivers.find(d => d.assigned_vehicle_id === v.id);
+        const conflict = currentDriver && currentDriver.id !== driver.id;
+        const label = `${v.name}${conflict ? `  (replaces ${currentDriver.name})` : currentDriver?.id === driver.id ? '  (current)' : ''}`;
+        const row = this.add.text(640, y, label, {
+          color: conflict ? '#ffaa44' : '#cccccc', fontSize: '13px', fontFamily: 'monospace',
+          backgroundColor: '#222233', padding: { x: 8, y: 4 },
+        }).setOrigin(0.5).setDepth(32).setInteractive();
+        row.on('pointerdown', async () => {
+          const host = window.location.hostname;
+          await fetch(`http://${host}:3001/api/drivers/assign`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${this.token}` },
+            body: JSON.stringify({ driverId: driver.id, vehicleId: v.id }),
+          });
+          destroy();
+          this.scene.restart({ token: this.token });
+        });
+        created.push(row);
+      });
+    }
+
+    const cancel = this.add.text(640, 500, '[CANCEL]', {
+      color: '#888', fontSize: '13px', fontFamily: 'monospace',
+      backgroundColor: '#221122', padding: { x: 8, y: 4 },
+    }).setOrigin(0.5).setDepth(32).setInteractive();
+    cancel.on('pointerdown', destroy);
+    created.push(cancel);
   }
 
   private async sellVehicle(vehicleId: string, name: string): Promise<void> {
