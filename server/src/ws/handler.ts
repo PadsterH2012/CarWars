@@ -77,6 +77,51 @@ function makeTestVehicle(id: string, playerId: string, x: number, y: number, fac
   };
 }
 
+// Load a vehicle for a known playerId (used for squadmates after the primary is auth'd).
+// Returns null if the vehicle doesn't belong to this player or doesn't exist.
+async function loadVehicleForPlayer(vehicleId: string, playerId: string): Promise<VehicleState | null> {
+  const db = getDb();
+  const result = await db.query(
+    `SELECT id, name, loadout, damage_state, in_arena FROM vehicles WHERE id = $1 AND player_id = $2`,
+    [vehicleId, playerId]
+  );
+  if (!result.rows.length) return null;
+  const row = result.rows[0];
+  const loadout = row.loadout as VehicleLoadout;
+  const damageState = row.damage_state as DamageState;
+  const stats = deriveStats(row.id, row.name, loadout);
+  stats.damageState = damageState;
+  return {
+    id: row.id, playerId, driverId: '',
+    position: { x: 0, y: 0 }, facing: 0, speed: 0,
+    stats,
+  };
+}
+
+// Given a base spawn point, produce N spawn positions clustered around it so that
+// squads/enemies larger than the map's authored spawn count still fit. Arranged in
+// a line perpendicular to the base's facing, centred on the base.
+function clusterSpawnPositions(
+  base: { x: number; y: number; facing: number },
+  count: number,
+): { x: number; y: number; facing: number }[] {
+  if (count <= 1) return [{ x: base.x, y: base.y, facing: base.facing }];
+  // Perpendicular direction to facing (facing is game-heading 0=north, 90=east)
+  const rad = (base.facing) * Math.PI / 180;
+  const perpX = Math.cos(rad), perpY = Math.sin(rad);
+  const spacing = 3;
+  const result: { x: number; y: number; facing: number }[] = [];
+  for (let i = 0; i < count; i++) {
+    const offset = (i - (count - 1) / 2) * spacing;
+    result.push({
+      x: base.x + perpX * offset,
+      y: base.y + perpY * offset,
+      facing: base.facing,
+    });
+  }
+  return result;
+}
+
 function mapIdForZone(zoneId: string): string {
   if (zoneId.startsWith('arena-truck-stop')) return 'truck-stop';
   return 'open';
@@ -87,6 +132,7 @@ const clientZones = new Map<WebSocket, string>();
 const clientVehicles = new Map<WebSocket, string>();
 const clientPlayers = new Map<WebSocket, string>(); // ws → playerId (DB UUID)
 const clientJobs = new Map<WebSocket, string>(); // ws → jobId
+const clientSquads = new Map<WebSocket, string[]>(); // ws → list of all squad vehicle ids (primary + mates)
 
 export function resetState(): void {
   zones.forEach(runner => runner.shutdown());
@@ -95,6 +141,7 @@ export function resetState(): void {
   clientVehicles.clear();
   clientPlayers.clear();
   clientJobs.clear();
+  clientSquads.clear();
 }
 
 function send(ws: WebSocket, msg: ServerMessage): void {
@@ -109,35 +156,47 @@ async function removeClientFromZone(ws: WebSocket): Promise<void> {
   const zoneId = clientZones.get(ws);
   const vehicleId = clientVehicles.get(ws);
   const playerId = clientPlayers.get(ws);
+  const squadIds = clientSquads.get(ws) ?? (vehicleId ? [vehicleId] : []);
   clientZones.delete(ws);
   clientVehicles.delete(ws);
   clientPlayers.delete(ws);
   clientJobs.delete(ws);
+  clientSquads.delete(ws);
 
   const runner = zoneId ? zones.get(zoneId) : undefined;
 
-  // Save current damage_state back to DB if we have enough context
-  if (runner && vehicleId && playerId) {
+  // Save current damage_state back to DB for every squad vehicle (or just the
+  // primary if no squad was registered). Destroyed vehicles get a fully-damaged
+  // damage_state so the garage can show them as wrecks.
+  if (runner && playerId && squadIds.length > 0) {
     const zoneState = runner.getEngine().getState();
-    const vehicle = zoneState.vehicles.find(v => v.id === vehicleId);
-    if (vehicle) {
-      const db = getDb();
+    const db = getDb();
+    const uuidRe = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+    for (const id of squadIds) {
+      const alive = zoneState.vehicles.find(v => v.id === id);
+      const wreck = zoneState.wreckage?.find(w => w.sourceVehicleId === id);
       try {
-        await db.query(
-          'UPDATE vehicles SET damage_state = $1, loadout = $2 WHERE id = $3 AND player_id = $4',
-          [
-            JSON.stringify(vehicle.stats.damageState),
-            JSON.stringify(vehicle.stats.loadout),
-            vehicleId,
-            playerId
-          ]
-        );
-        const uuidRe = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
-        if (uuidRe.test(vehicleId)) {
-          await db.query(`UPDATE vehicles SET in_arena = FALSE WHERE id = $1 AND player_id = $2`, [vehicleId, playerId]);
+        if (alive) {
+          await db.query(
+            'UPDATE vehicles SET damage_state = $1, loadout = $2 WHERE id = $3 AND player_id = $4',
+            [JSON.stringify(alive.stats.damageState), JSON.stringify(alive.stats.loadout), id, playerId]
+          );
+        } else if (wreck) {
+          const destroyedState: DamageState = {
+            armor: { front: 0, back: 0, left: 0, right: 0, top: 0, underbody: 0 },
+            engineDamaged: true, driverWounded: false, tiresBlown: [],
+            destroyed: true, onFire: wreck.state === 'burning',
+          };
+          await db.query(
+            'UPDATE vehicles SET damage_state = $1 WHERE id = $2 AND player_id = $3',
+            [JSON.stringify(destroyedState), id, playerId]
+          );
+        }
+        if (uuidRe.test(id)) {
+          await db.query(`UPDATE vehicles SET in_arena = FALSE WHERE id = $1 AND player_id = $2`, [id, playerId]);
         }
       } catch (e) {
-        console.error('Failed to save vehicle damage:', e);
+        console.error(`Failed to persist squad vehicle ${id}:`, e);
       }
     }
   }
@@ -251,26 +310,31 @@ async function handleMessage(ws: WebSocket, raw: string): Promise<void> {
             } finally {
               client.release();
             }
-            // After prize transaction commits, award XP to assigned driver
-            if (winnerVehicleId) {
-              const dRes = await db.query(
-                `SELECT id FROM drivers WHERE assigned_vehicle_id = $1 AND alive = TRUE LIMIT 1`,
-                [winnerVehicleId]
-              );
-              if (dRes.rows.length) {
-                const WIN_XP = 50;
-                // Atomically add XP and get new total
+            // After prize transaction commits, fan XP out across every squad driver.
+            // Each driver earns 10 × kills landed by their car + 20 if their car survived.
+            // Solo 4-kill survival = 60 XP ≈ previous 50 XP baseline; squad splits naturally.
+            const winnerWs = [...clientPlayers.entries()].find(([, pid]) => pid === winnerId)?.[0];
+            const winningSquad = (winnerWs ? clientSquads.get(winnerWs) : null) ?? (winnerVehicleId ? [winnerVehicleId] : []);
+            if (winningSquad.length > 0) {
+              const zoneState = runner.getEngine().getState();
+              for (const vid of winningSquad) {
+                const survived = !!zoneState.vehicles.find(v => v.id === vid);
+                const kills = (zoneState.wreckage ?? []).filter(w => w.killedByVehicleId === vid).length;
+                const xp = 10 * kills + (survived ? 20 : 0);
+                if (xp <= 0) continue;
+                const dRes = await db.query(
+                  `SELECT id FROM drivers WHERE assigned_vehicle_id = $1 AND alive = TRUE LIMIT 1`,
+                  [vid]
+                );
+                if (!dRes.rows.length) continue;
                 const xpRes = await db.query(
                   `UPDATE drivers SET xp = xp + $1 WHERE id = $2 RETURNING xp, skill`,
-                  [WIN_XP, dRes.rows[0].id]
+                  [xp, dRes.rows[0].id]
                 );
                 if (xpRes.rows.length) {
                   const { xp: newXp, skill: currentSkill } = xpRes.rows[0];
-                  // Calculate new skill (mirrors award-xp logic)
                   let newSkill = currentSkill;
-                  while (newSkill < 6 && newXp >= newSkill * 100) {
-                    newSkill++;
-                  }
+                  while (newSkill < 6 && newXp >= newSkill * 100) newSkill++;
                   if (newSkill > currentSkill) {
                     await db.query(`UPDATE drivers SET skill = $1 WHERE id = $2`, [newSkill, dRes.rows[0].id]);
                   }
@@ -287,9 +351,19 @@ async function handleMessage(ws: WebSocket, raw: string): Promise<void> {
       } : {}, mapIdForZone(msg.zoneId));
 
       if (isArena) {
+        // Enemy count matches the player's squad size (1v1, 2v2, up to 4v4).
+        // Use the map's ai spawn points up to that count; if the map doesn't have
+        // enough, cluster additional positions around the first ai spawn.
+        const squadSize = Math.max(1, Math.min(4, msg.squadVehicleIds?.length ?? 1));
         const aiSpawns = runner.getMap().spawnPoints.filter(s => s.team === 'ai');
-        const names = ['ai-red', 'ai-blue'];
-        aiSpawns.forEach((sp, i) => {
+        const names = ['ai-red', 'ai-blue', 'ai-green', 'ai-yellow'];
+        const enemyPositions: { x: number; y: number; facing: number }[] = [];
+        if (aiSpawns.length >= squadSize) {
+          for (let i = 0; i < squadSize; i++) enemyPositions.push(aiSpawns[i]);
+        } else if (aiSpawns.length > 0) {
+          enemyPositions.push(...clusterSpawnPositions(aiSpawns[0], squadSize));
+        }
+        enemyPositions.forEach((sp, i) => {
           const name = names[i] ?? `ai-${i}`;
           runner.getEngine().addVehicle(makeTestVehicle(name, 'ai-team', sp.x, sp.y, sp.facing, 70));
         });
@@ -325,16 +399,15 @@ async function handleMessage(ws: WebSocket, raw: string): Promise<void> {
         }
       }
     }
-    const playerSpawn = runner.getMap().spawnPoints.find(s => s.team === 'player');
-    const spawnX = playerSpawn?.x ?? 0;
-    const spawnY = playerSpawn?.y ?? 8;
+    const playerSpawns = runner.getMap().spawnPoints.filter(s => s.team === 'player');
+    const primarySpawn = playerSpawns[0] ?? { x: 0, y: 8, facing: 0, team: 'player' as const };
     if (!vehicle) {
-      vehicle = makeTestVehicle(msg.vehicleId, 'player', spawnX, spawnY, 0, 60);
+      vehicle = makeTestVehicle(msg.vehicleId, 'player', primarySpawn.x, primarySpawn.y, 0, 60);
     }
     vehicle = {
       ...vehicle,
-      position: { x: spawnX, y: spawnY },
-      facing: 0,
+      position: { x: primarySpawn.x, y: primarySpawn.y },
+      facing: primarySpawn.facing,
       speed: 0,
       stats: {
         ...vehicle.stats,
@@ -343,6 +416,47 @@ async function handleMessage(ws: WebSocket, raw: string): Promise<void> {
     };
     runner.getEngine().addVehicle(vehicle);
     runner.registerHumanVehicle(msg.vehicleId);
+
+    // ── Squad spawn: additional player-team vehicles, AI-driven by their drivers ──
+    const squadIds = (msg.squadVehicleIds ?? [])
+      .filter(id => id !== msg.vehicleId)     // strip primary if included
+      .slice(0, 3);                            // enforce max 3 squadmates (primary + 3 = 4)
+    const allSquadIds: string[] = [msg.vehicleId, ...squadIds];
+    const playerId = clientPlayers.get(ws);
+    if (squadIds.length > 0 && playerId) {
+      const matePositions = playerSpawns.length >= allSquadIds.length
+        ? playerSpawns.slice(1, allSquadIds.length)
+        : clusterSpawnPositions(primarySpawn, allSquadIds.length).slice(1);
+      for (let i = 0; i < squadIds.length; i++) {
+        const mateId = squadIds[i];
+        const pos = matePositions[i] ?? primarySpawn;
+        const mateVehicle = await loadVehicleForPlayer(mateId, playerId);
+        if (!mateVehicle) continue;   // skip vehicles not owned by this player
+
+        // Load driver skill and mark in_arena
+        const db = getDb();
+        const uuidRe = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+        if (uuidRe.test(mateId)) {
+          const dr = await db.query(
+            `SELECT skill FROM drivers WHERE assigned_vehicle_id = $1 AND alive = TRUE LIMIT 1`,
+            [mateId]
+          );
+          if (!dr.rows.length) continue; // squadmate without a driver — skip
+          await db.query(`UPDATE vehicles SET in_arena = TRUE WHERE id = $1 AND player_id = $2`, [mateId, playerId]);
+          const mateSkill = dr.rows[0].skill;
+          const placed: VehicleState = {
+            ...mateVehicle,
+            position: { x: pos.x, y: pos.y },
+            facing: pos.facing,
+            stats: { ...mateVehicle.stats, maxSpeed: Math.min(mateVehicle.stats.maxSpeed, 100) },
+          };
+          runner.getEngine().removeVehicle(mateId);
+          runner.getEngine().addVehicle(placed);
+          runner.setVehicleSkill(mateId, mateSkill);
+        }
+      }
+    }
+    clientSquads.set(ws, allSquadIds);
 
     // Load driver skill for this vehicle (only for real DB vehicles with valid UUID)
     let joinedSkill = 3;

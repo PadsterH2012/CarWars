@@ -85,6 +85,9 @@ export function createTurnEngine(initialState: ZoneState, map?: ArenaMap): TurnE
   const hazardSteerSign = new Map<string, number>();
   // Gradual slide velocity (°/tick remaining) — applied each tick until depleted
   const slideVelocity = new Map<string, number>();
+  // Kill attribution: last vehicle to damage each victim (weapon hit or collision).
+  // Consumed when the victim is promoted to wreckage so its driver can be credited.
+  const lastDamager = new Map<string, string>();
   let tickInTurn = 0;
 
   return {
@@ -173,10 +176,10 @@ export function createTurnEngine(initialState: ZoneState, map?: ArenaMap): TurnE
           const locA = getAttackLocation(vB, vA); // which face of A did B hit
           const locB = getAttackLocation(vA, vB); // which face of B did A hit
 
-          for (const [veh, dmg, loc] of [
-            [vA, result.damageA, locA],
-            [vB, result.damageB, locB],
-          ] as [VehicleState, number, ArmorLocation][]) {
+          for (const [veh, other, dmg, loc] of [
+            [vA, vB, result.damageA, locA],
+            [vB, vA, result.damageB, locB],
+          ] as [VehicleState, VehicleState, number, ArmorLocation][]) {
             if (dmg <= 0) continue;
             const ds   = damageUpdates.get(veh.id) ?? { ...veh.stats.damageState };
             const armor = { ...ds.armor };
@@ -184,6 +187,7 @@ export function createTurnEngine(initialState: ZoneState, map?: ArenaMap): TurnE
             armor[loc] = Math.max(0, remaining);
             const destroyed = ds.destroyed || armor[loc] === 0;
             damageUpdates.set(veh.id, { ...ds, armor, destroyed });
+            lastDamager.set(veh.id, other.id);
           }
 
           // Push vehicles apart on minimum penetration axis, zero both speeds
@@ -419,6 +423,7 @@ export function createTurnEngine(initialState: ZoneState, map?: ArenaMap): TurnE
               ? [...currentDamage.tiresBlown, tireIndex]
               : currentDamage.tiresBlown
           });
+          lastDamager.set(target.id, attacker.id);
         });
 
         // Decrement ammo once per tick per firing vehicle
@@ -556,6 +561,7 @@ export function createTurnEngine(initialState: ZoneState, map?: ArenaMap): TurnE
           id: `wreck-${v.id}-${newTick}`,
           sourceVehicleId: v.id,
           playerId: v.playerId,
+          killedByVehicleId: lastDamager.get(v.id),
           position: { ...v.position },
           facing: v.facing,
           bodyType: v.stats.loadout?.bodyType,

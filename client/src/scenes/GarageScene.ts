@@ -1,10 +1,12 @@
 import Phaser from 'phaser';
 
-interface Vehicle { id: string; name: string; value: number; damage_state: any; loadout: any; }
+interface Vehicle { id: string; name: string; value: number; damage_state: any; loadout: any; in_arena?: boolean; }
+interface Driver { id: string; name: string; skill: number; assigned_vehicle_id: string | null; alive: boolean; }
 
 export class GarageScene extends Phaser.Scene {
   private token = '';
   private vehicles: Vehicle[] = [];
+  private drivers: Driver[] = [];
   private money = 0;
   private lastResult: { prize: number; jobPayout: number } | null = null;
 
@@ -19,13 +21,15 @@ export class GarageScene extends Phaser.Scene {
     const host = window.location.hostname;
 
     // Load player data
-    const [meRes, vRes] = await Promise.all([
+    const [meRes, vRes, dRes] = await Promise.all([
       fetch(`http://${host}:3001/api/me`, { headers: { Authorization: `Bearer ${this.token}` } }),
-      fetch(`http://${host}:3001/api/vehicles`, { headers: { Authorization: `Bearer ${this.token}` } })
+      fetch(`http://${host}:3001/api/vehicles`, { headers: { Authorization: `Bearer ${this.token}` } }),
+      fetch(`http://${host}:3001/api/drivers`, { headers: { Authorization: `Bearer ${this.token}` } })
     ]);
     const me = await meRes.json();
     this.money = me.money ?? 0;
     this.vehicles = await vRes.json();
+    this.drivers = await dRes.json();
 
     this.add.text(640, 30, 'GARAGE', {
       color: '#ff4444', fontSize: '28px', fontFamily: 'monospace', fontStyle: 'bold'
@@ -94,10 +98,7 @@ export class GarageScene extends Phaser.Scene {
         });
         if (!isDestroyed) {
           fightBtn.setInteractive();
-          fightBtn.on('pointerdown', () => {
-            const activeJobId = localStorage.getItem('cw_active_job') ?? undefined;
-            this.scene.start('ArenaScene', { token: this.token, vehicleId: v.id, jobId: activeJobId });
-          });
+          fightBtn.on('pointerdown', () => this.showSquadModal(v.id));
         }
 
         // [SELL] button
@@ -139,6 +140,104 @@ export class GarageScene extends Phaser.Scene {
         color: '#ff4444', fontSize: '14px', fontFamily: 'monospace'
       }).setOrigin(0.5);
     }
+  }
+
+  private showSquadModal(primaryId: string): void {
+    // Eligible = not destroyed AND has an assigned alive driver AND not already in another arena
+    const driverByVehicleId = new Map<string, Driver>();
+    for (const d of this.drivers) {
+      if (d.alive && d.assigned_vehicle_id) driverByVehicleId.set(d.assigned_vehicle_id, d);
+    }
+    const eligible = this.vehicles.filter(v =>
+      !v.damage_state?.destroyed && !v.in_arena && driverByVehicleId.has(v.id)
+    );
+    if (!eligible.find(v => v.id === primaryId)) {
+      // Primary has no driver or is otherwise ineligible — launch solo as fallback
+      this.launchArena([primaryId]);
+      return;
+    }
+
+    const selected = new Set<string>([primaryId]);
+    const MAX_SQUAD = 4;
+
+    // Dim overlay + modal bg
+    const overlay = this.add.rectangle(640, 360, 1280, 720, 0x000000, 0.75).setDepth(30).setInteractive();
+    const panel   = this.add.rectangle(640, 360, 640, 460, 0x111122, 0.98).setDepth(31).setStrokeStyle(2, 0x4466aa);
+    const title   = this.add.text(640, 160, 'BUILD SQUAD', {
+      color: '#ffcc00', fontSize: '22px', fontFamily: 'monospace', fontStyle: 'bold'
+    }).setOrigin(0.5).setDepth(32);
+    const hint    = this.add.text(640, 192, `Select up to ${MAX_SQUAD} — primary auto-highlighted`, {
+      color: '#888', fontSize: '12px', fontFamily: 'monospace'
+    }).setOrigin(0.5).setDepth(32);
+
+    const created: Phaser.GameObjects.GameObject[] = [overlay, panel, title, hint];
+
+    // Row per eligible vehicle
+    eligible.slice(0, 8).forEach((v, i) => {
+      const y = 230 + i * 36;
+      const driver = driverByVehicleId.get(v.id)!;
+      const isPrimary = v.id === primaryId;
+
+      const rowBg = this.add.rectangle(640, y, 580, 30, 0x222233, 1).setDepth(32).setInteractive();
+      const marker = this.add.text(370, y, '[X]', {
+        color: '#00ff88', fontSize: '14px', fontFamily: 'monospace'
+      }).setOrigin(0, 0.5).setDepth(33);
+      const label = this.add.text(410, y, `${v.name}${isPrimary ? '  (PRIMARY)' : ''}`, {
+        color: isPrimary ? '#00ff88' : '#cccccc', fontSize: '13px', fontFamily: 'monospace'
+      }).setOrigin(0, 0.5).setDepth(33);
+      const driverLabel = this.add.text(820, y, `Driver: ${driver.name} (skill ${driver.skill})`, {
+        color: '#888', fontSize: '11px', fontFamily: 'monospace'
+      }).setOrigin(1, 0.5).setDepth(33);
+
+      const refreshVisual = () => {
+        const on = selected.has(v.id);
+        marker.setText(on ? '[X]' : '[ ]');
+        marker.setColor(on ? '#00ff88' : '#666');
+        rowBg.setFillStyle(on ? 0x223322 : 0x222233);
+      };
+      refreshVisual();
+
+      rowBg.on('pointerdown', () => {
+        if (isPrimary) return;  // primary can't be deselected
+        if (selected.has(v.id)) {
+          selected.delete(v.id);
+        } else if (selected.size < MAX_SQUAD) {
+          selected.add(v.id);
+        }
+        refreshVisual();
+      });
+      created.push(rowBg, marker, label, driverLabel);
+    });
+
+    // Fight + Cancel buttons
+    const fightBtn = this.add.text(540, 555, '[FIGHT WITH SQUAD]', {
+      color: '#00ff88', fontSize: '14px', fontFamily: 'monospace',
+      backgroundColor: '#003322', padding: { x: 8, y: 4 }
+    }).setOrigin(0.5).setDepth(33).setInteractive();
+    const cancelBtn = this.add.text(760, 555, '[CANCEL]', {
+      color: '#888', fontSize: '14px', fontFamily: 'monospace',
+      backgroundColor: '#221122', padding: { x: 8, y: 4 }
+    }).setOrigin(0.5).setDepth(33).setInteractive();
+
+    const destroy = () => created.concat([fightBtn, cancelBtn]).forEach(o => o.destroy());
+    cancelBtn.on('pointerdown', destroy);
+    fightBtn.on('pointerdown', () => {
+      const ids = [primaryId, ...[...selected].filter(id => id !== primaryId)];
+      destroy();
+      this.launchArena(ids);
+    });
+
+    created.push(fightBtn, cancelBtn);
+  }
+
+  private launchArena(squadVehicleIds: string[]): void {
+    const activeJobId = localStorage.getItem('cw_active_job') ?? undefined;
+    this.scene.start('ArenaScene', {
+      token: this.token,
+      vehicleId: squadVehicleIds[0],
+      squadVehicleIds,
+      jobId: activeJobId,
+    });
   }
 
   private async sellVehicle(vehicleId: string, name: string): Promise<void> {

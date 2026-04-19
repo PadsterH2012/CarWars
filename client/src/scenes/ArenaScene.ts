@@ -22,6 +22,7 @@ export class ArenaScene extends Phaser.Scene {
   private fireKey!: Phaser.Input.Keyboard.Key;
   private autopilotKey!: Phaser.Input.Keyboard.Key;
   private myVehicleId = 'v1';
+  private squadVehicleIds: string[] = [];
   private token = '';
   private jobId = '';
   private lastInputSent = 0;
@@ -48,9 +49,12 @@ export class ArenaScene extends Phaser.Scene {
     super({ key: 'ArenaScene' });
   }
 
-  init(data: { token?: string; vehicleId?: string; jobId?: string }): void {
+  init(data: { token?: string; vehicleId?: string; jobId?: string; squadVehicleIds?: string[] }): void {
     this.token = data.token ?? '';
     this.myVehicleId = data.vehicleId ?? 'v1';
+    this.squadVehicleIds = data.squadVehicleIds && data.squadVehicleIds.length > 0
+      ? data.squadVehicleIds
+      : [this.myVehicleId];
     this.jobId = data.jobId ?? '';
 
     // Class-field state must be reset on every scene restart — Phaser reuses the
@@ -195,6 +199,7 @@ export class ArenaScene extends Phaser.Scene {
         vehicleId: this.myVehicleId,
         token: this.token,
         jobId: this.jobId || undefined,
+        squadVehicleIds: this.squadVehicleIds,
       });
     });
     this.connection.onMessage((msg) => {
@@ -238,7 +243,7 @@ export class ArenaScene extends Phaser.Scene {
     state.vehicles.forEach(v => {
       seen.add(v.id);
       let container = this.vehicleSprites.get(v.id);
-      const teamColor = teamColorForVehicle(v, this.myVehicleId);
+      const teamColor = teamColorForVehicle(v, this.myVehicleId, this.squadVehicleIds);
       const opts = { isPlayer: v.id === this.myVehicleId, teamColor };
 
       if (!container) {
@@ -527,6 +532,27 @@ export class ArenaScene extends Phaser.Scene {
         fontSize: '14px', color: '#ff5555', fontFamily: 'monospace'
       }).setOrigin(0.5).setScrollFactor(0).setDepth(11);
       y += 24;
+    }
+
+    // Per-vehicle kill breakdown when squad > 1
+    if (this.squadVehicleIds.length > 1 && this.zoneState) {
+      y += 6;
+      this.add.text(640, y, 'SQUAD REPORT', {
+        fontSize: '13px', color: '#aaa', fontFamily: 'monospace', fontStyle: 'bold'
+      }).setOrigin(0.5).setScrollFactor(0).setDepth(11);
+      y += 20;
+      for (const vid of this.squadVehicleIds) {
+        const alive = this.zoneState.vehicles.find(v => v.id === vid);
+        const wreck = this.zoneState.wreckage?.find(w => w.sourceVehicleId === vid);
+        const kills = (this.zoneState.wreckage ?? []).filter(w => w.killedByVehicleId === vid).length;
+        const name = (alive?.stats.name ?? wreck?.sourceVehicleId ?? vid).slice(0, 20);
+        const statusStr = alive ? 'survived' : wreck ? `[${wreck.state.toUpperCase()}]` : 'lost';
+        const statusColor = alive ? '#88ff88' : '#ff5555';
+        this.add.text(640, y, `${name}: ${kills} kill${kills === 1 ? '' : 's'}, ${statusStr}`, {
+          fontSize: '12px', color: statusColor, fontFamily: 'monospace'
+        }).setOrigin(0.5).setScrollFactor(0).setDepth(11);
+        y += 18;
+      }
     }
 
     // Return to garage button

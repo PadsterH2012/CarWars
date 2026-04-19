@@ -56,8 +56,15 @@ export const truckStopMap: ArenaMap = {
     { x:  -6, y: 16.5, w: 36, h: 18, type: 'building' },  // main wing
   ],
   spawnPoints: [
-    { x:   0, y:   3, facing:   0, team: 'player' },  // center courtyard, facing north
-    { x: -21, y: -18, facing: 135, team: 'ai' },      // NW area, facing SE
-    { x:  45, y:   7.5, facing: 270, team: 'ai' },    // east side, facing west
+    // Player team (up to 4): spread across the south courtyard
+    { x:  -9, y:   3, facing:   0, team: 'player' },
+    { x:   0, y:   3, facing:   0, team: 'player' },
+    { x:   9, y:   3, facing:   0, team: 'player' },
+    { x:  18, y:   3, facing:   0, team: 'player' },
+    // AI team (up to 4): spread across the north / east approaches
+    { x: -21, y: -18, facing: 135, team: 'ai' },
+    { x:   0, y: -21, facing: 180, team: 'ai' },
+    { x:  45, y:   7.5, facing: 270, team: 'ai' },
+    { x:  45, y:  18, facing: 270, team: 'ai' },
   ],
 };

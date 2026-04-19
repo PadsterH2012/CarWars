@@ -199,8 +199,9 @@ export function updateVehicleSprite(
   if (fireGlow) fireGlow.setVisible(!!damage.onFire);
 }
 
-export function teamColorForVehicle(v: VehicleState, myVehicleId: string): number {
-  if (v.id === myVehicleId) return 0x00ff88;
-  if (v.playerId === 'ai-team') return 0xff4444;
-  return 0xffaa00;
+export function teamColorForVehicle(v: VehicleState, myVehicleId: string, squadIds: string[] = []): number {
+  if (v.id === myVehicleId) return 0x00ff88;           // primary (you) — bright green
+  if (squadIds.includes(v.id)) return 0x66cc88;        // your squadmates — muted green
+  if (v.playerId === 'ai-team') return 0xff4444;       // enemies — red
+  return 0xffaa00;                                      // other (NPC traffic etc) — amber
 }

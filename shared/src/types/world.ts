@@ -77,6 +77,7 @@ export interface WreckageObject {
   id: string;
   sourceVehicleId: string;
   playerId: string;          // team identifier for salvage eligibility (winner doesn't salvage own wrecks)
+  killedByVehicleId?: string; // which vehicle landed the killing blow — for per-driver XP attribution
   position: Position;
   facing: number;
   bodyType?: BodyType;
