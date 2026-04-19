@@ -1,6 +1,6 @@
 import Phaser from 'phaser';
 import {
-  BODY_TYPES, POWER_PLANTS, SUSPENSIONS, TIRE_TYPES, ARMOR_TYPES, WEAPONS, ARCS,
+  BODY_TYPES, SUSPENSIONS, TIRE_TYPES, ARMOR_TYPES, WEAPONS, ARCS,
   type MountConfig, type ArcType,
 } from '../ui/DesignerUI';
 import { bindFullscreenToggle } from '../ui/responsive';
@@ -317,9 +317,10 @@ export class VehicleDesignerScene extends Phaser.Scene {
   private syncPowerPlantToBody(): void {
     const bodyDef = BODY_TYPES.find(b => b.id === this.bodyType);
     const isCycle = bodyDef?.isCycle ?? false;
-    const current = POWER_PLANTS.find(p => p.id === this.powerPlantType);
+    const plants = this.catalog?.plants ?? [];
+    const current = plants.find(p => p.id === this.powerPlantType);
     if ((current?.cycleOnly ?? false) !== isCycle) {
-      const first = POWER_PLANTS.find(p => p.cycleOnly === isCycle);
+      const first = plants.find(p => p.cycleOnly === isCycle);
       if (first) this.powerPlantType = first.id;
     }
   }
@@ -616,12 +617,14 @@ export class VehicleDesignerScene extends Phaser.Scene {
   private renderEnginePanel(): string {
     // Show every plant so players see what's out there; grey out the ones that
     // don't fit this body (wrong cycle-compat) or would bust the current
-    // spaces/weight budget.
+    // spaces/weight budget. Plant catalog comes from /api/catalog so IDs and
+    // labels stay in sync with the server's rules data.
+    const plants = this.catalog?.plants ?? [];
     return `
       <div class="cw-panel">
         <h3>POWER PLANT</h3>
         <div class="opt-grid">
-          ${POWER_PLANTS.map(p => {
+          ${plants.map(p => {
             const d = this.canFitEngine(p.id);
             const disabled = !d.fits && this.powerPlantType !== p.id;
             const disabledStyle = disabled ? 'opacity:0.35;cursor:not-allowed;pointer-events:none;' : '';
@@ -630,7 +633,7 @@ export class VehicleDesignerScene extends Phaser.Scene {
                       data-action="engine" data-value="${p.id}"
                       style="${disabledStyle}"
                       title="${esc(d.reason)}">
-                ${p.label}${disabled ? ' ✕' : ''}
+                ${esc(p.name)}${disabled ? ' ✕' : ''}
               </button>
             `;
           }).join('')}
@@ -843,8 +846,9 @@ export class VehicleDesignerScene extends Phaser.Scene {
 
     // Engines: show every plant, grey out non-fitting ones so you can see
     // the whole range and understand why a big engine is off-limits.
-    const engineItems = POWER_PLANTS.map((p, i) => row(
-      `E${i + 1}`, p.label, p.id === this.powerPlantType, 'engine', p.id,
+    const plants = this.catalog?.plants ?? [];
+    const engineItems = plants.map((p, i) => row(
+      `E${i + 1}`, p.name, p.id === this.powerPlantType, 'engine', p.id,
       '', '', this.canFitEngine(p.id),
     )).join('');
 
@@ -909,7 +913,7 @@ export class VehicleDesignerScene extends Phaser.Scene {
     return `
       <div class="cw-panel">
         ${section('BODY', bodyDef?.label ?? '', bodyItems)}
-        ${section('ENGINE', POWER_PLANTS.find(p => p.id === this.powerPlantType)?.label ?? '', engineItems)}
+        ${section('ENGINE', plants.find(p => p.id === this.powerPlantType)?.name ?? '', engineItems)}
         ${section('SUSPENSION', SUSPENSIONS.find(s => s.id === this.suspensionType)?.label ?? '', suspItems)}
         ${section('TIRES', TIRE_TYPES.find(t => t.id === this.tireType)?.label ?? '', tireItems)}
         ${section('ARMOR TYPE', ARMOR_TYPES.find(a => a.id === this.armorType)?.label ?? '', armorItems)}
