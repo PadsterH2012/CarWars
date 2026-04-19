@@ -197,22 +197,54 @@ function stationWagonBody(ctx: SKRSContext2D, w: number, h: number) {
   drawBaseCar(ctx, w, h);
 }
 
+// Cycle — narrow tapered pill (tips forward), distinct front wheel + headlight
+// and rear wheel + tail light so direction reads clearly at sprite scale.
+// Rider: helmet dot + torso block seated just ahead of midline (Popper /
+// Santa Cruz / Spider reference art).
 function cycleBody(ctx: SKRSContext2D, w: number, h: number) {
-  // Narrow pill
+  // Hull: tapered front, square back
   ctx.fillStyle = '#c8c8c8';
-  roundedRect(ctx, 1, 1, w - 2, h - 2, Math.min(w / 2 - 1, 5));
+  ctx.beginPath();
+  ctx.moveTo(w / 2, 1);
+  ctx.lineTo(w - 2, 4);
+  ctx.lineTo(w - 2, h - 2);
+  ctx.lineTo(2, h - 2);
+  ctx.lineTo(2, 4);
+  ctx.closePath();
   ctx.fill();
-  ctx.strokeStyle = '#2b2b2b';
+  ctx.strokeStyle = '#1a1a1a';
   ctx.lineWidth = 1;
-  roundedRect(ctx, 1, 1, w - 2, h - 2, Math.min(w / 2 - 1, 5));
   ctx.stroke();
-  // Rider silhouette
-  ctx.fillStyle = '#4a4a4a';
-  ctx.fillRect(Math.floor(w / 2) - 2, Math.floor(h / 2) - 4, 4, 8);
-  // Front + rear wheel bands
+
+  // Seat / tank break line under the rider
+  ctx.strokeStyle = '#5a5a5a';
+  ctx.beginPath();
+  ctx.moveTo(2, Math.round(h * 0.55));
+  ctx.lineTo(w - 2, Math.round(h * 0.55));
+  ctx.stroke();
+
+  // Rider: helmet + torso
+  ctx.fillStyle = '#2a2a2a';
+  ctx.beginPath();
+  ctx.arc(w / 2, Math.round(h * 0.40), Math.max(1.5, w * 0.18), 0, Math.PI * 2);
+  ctx.fill();
+  ctx.fillRect(Math.floor(w / 2) - 2, Math.round(h * 0.46), 4, Math.round(h * 0.12));
+
+  // Front wheel band + headlight
   ctx.fillStyle = '#1a1a1a';
-  ctx.fillRect(1, 1, w - 2, 2);
-  ctx.fillRect(1, h - 3, w - 2, 2);
+  ctx.fillRect(1, 2, w - 2, 3);
+  ctx.strokeStyle = '#ffffff';
+  ctx.lineWidth = 0.5;
+  ctx.strokeRect(1, 2, w - 2, 3);
+  ctx.fillStyle = '#ffffcc';
+  ctx.fillRect(Math.floor(w / 2) - 1, 1, 2, 1);
+
+  // Rear wheel band + tail light
+  ctx.fillStyle = '#1a1a1a';
+  ctx.fillRect(1, h - 5, w - 2, 3);
+  ctx.strokeRect(1, h - 5, w - 2, 3);
+  ctx.fillStyle = '#aa2222';
+  ctx.fillRect(Math.floor(w / 2) - 1, h - 2, 2, 1);
 }
 
 // Trike — sporty wedge (Imp / Sportster): pointed nose, flared rear, small
