@@ -1,8 +1,9 @@
 import Phaser from 'phaser';
+import { paintEmblem, EMBLEM_IDS, type EmblemId } from '../game/CoatOfArms';
 
 interface Vehicle { id: string; name: string; value: number; damage_state: any; loadout: any; in_arena?: boolean; }
 interface Driver { id: string; name: string; skill: number; assigned_vehicle_id: string | null; alive: boolean; }
-interface Gang { id: string; name: string; primary_colour: number; secondary_colour: number; treasury: number; reputation: number; }
+interface Gang { id: string; name: string; primary_colour: number; secondary_colour: number; emblem_id: EmblemId; treasury: number; reputation: number; }
 
 export class GarageScene extends Phaser.Scene {
   private token = '';
@@ -39,14 +40,16 @@ export class GarageScene extends Phaser.Scene {
       color: '#ff4444', fontSize: '28px', fontFamily: 'monospace', fontStyle: 'bold'
     }).setOrigin(0.5);
 
-    // Gang header — name + colour swatch, treasury, reputation, division
+    // Gang header — emblem + name + treasury/rep/division line
     if (this.gang) {
-      this.add.rectangle(100, 70, 18, 18, this.gang.primary_colour).setOrigin(0, 0.5).setStrokeStyle(1, 0xffffff);
-      const nameBtn = this.add.text(125, 70, this.gang.name, {
+      const key = `gang-emblem-header`;
+      this.renderEmblemTexture(key, this.gang.emblem_id, this.gang.primary_colour, this.gang.secondary_colour, 32);
+      this.add.image(100, 70, key).setOrigin(0, 0.5).setDisplaySize(32, 32);
+      const nameBtn = this.add.text(140, 70, this.gang.name, {
         color: '#ffffff', fontSize: '18px', fontFamily: 'monospace', fontStyle: 'bold'
       }).setOrigin(0, 0.5).setInteractive();
       nameBtn.on('pointerdown', () => this.showGangSettings());
-      this.add.text(100, 95, `Treasury: $${this.gang.treasury.toLocaleString()} | Rep: ${this.gang.reputation} | Division: ${me.division}`, {
+      this.add.text(100, 100, `Treasury: $${this.gang.treasury.toLocaleString()} | Rep: ${this.gang.reputation} | Division: ${me.division}`, {
         color: '#ffcc00', fontSize: '14px', fontFamily: 'monospace'
       });
     } else {
@@ -302,6 +305,17 @@ export class GarageScene extends Phaser.Scene {
     });
   }
 
+  // Render an emblem to an offscreen canvas and register it as a Phaser texture
+  // under the given key. Idempotent — existing texture is removed first so live
+  // previews in the settings modal can update instantly.
+  private renderEmblemTexture(key: string, emblem: EmblemId, primary: number, secondary: number, size: number): void {
+    if (this.textures.exists(key)) this.textures.remove(key);
+    const canvas = document.createElement('canvas');
+    canvas.width = size; canvas.height = size;
+    paintEmblem(canvas, emblem, primary, secondary);
+    this.textures.addCanvas(key, canvas);
+  }
+
   private showGangSettings(): void {
     if (!this.gang) return;
     const COLOURS = [
@@ -316,17 +330,42 @@ export class GarageScene extends Phaser.Scene {
 
     const created: Phaser.GameObjects.GameObject[] = [];
     const overlay = this.add.rectangle(640, 360, 1280, 720, 0x000000, 0.75).setDepth(30).setInteractive();
-    const panel   = this.add.rectangle(640, 360, 560, 360, 0x111122, 0.98).setDepth(31).setStrokeStyle(2, 0x4466aa);
-    const title   = this.add.text(640, 210, 'GANG SETTINGS', {
+    const panel   = this.add.rectangle(640, 360, 640, 540, 0x111122, 0.98).setDepth(31).setStrokeStyle(2, 0x4466aa);
+    const title   = this.add.text(640, 120, 'GANG SETTINGS', {
       color: '#ffcc00', fontSize: '20px', fontFamily: 'monospace', fontStyle: 'bold'
     }).setOrigin(0.5).setDepth(32);
     created.push(overlay, panel, title);
 
-    // Gang name — use a hidden input for typing
-    const nameLabel = this.add.text(400, 260, 'Name:', { color: '#ccc', fontSize: '13px', fontFamily: 'monospace' }).setDepth(32);
+    // Track live preview state so changes reflect before save
+    let chosenPrimary = this.gang.primary_colour;
+    let chosenSecondary = this.gang.secondary_colour;
+    let chosenEmblem: EmblemId = this.gang.emblem_id ?? 'stripes';
+
+    // Live preview emblem — top-centre of the modal, refreshes on any change.
+    // refreshAllEmblems also regenerates every thumbnail in the emblem picker so
+    // they preview in the currently-selected palette.
+    const previewKey = 'gang-emblem-preview';
+    this.renderEmblemTexture(previewKey, chosenEmblem, chosenPrimary, chosenSecondary, 96);
+    const preview = this.add.image(640, 175, previewKey).setOrigin(0.5).setDepth(32).setDisplaySize(72, 72);
+    created.push(preview);
+    const emblemTiles: Phaser.GameObjects.Image[] = [];
+    const emblemBorders: Phaser.GameObjects.Rectangle[] = [];
+    const refreshAllEmblems = () => {
+      this.renderEmblemTexture(previewKey, chosenEmblem, chosenPrimary, chosenSecondary, 96);
+      preview.setTexture(previewKey);
+      EMBLEM_IDS.forEach((id, i) => {
+        const tileKey = `gang-emblem-picker-${id}`;
+        this.renderEmblemTexture(tileKey, id, chosenPrimary, chosenSecondary, 40);
+        emblemTiles[i]?.setTexture(tileKey);
+        emblemBorders[i]?.setStrokeStyle(id === chosenEmblem ? 3 : 1, id === chosenEmblem ? 0x00ff88 : 0x666666);
+      });
+    };
+
+    // Gang name — a DOM input absolutely positioned over the canvas
+    const nameLabel = this.add.text(380, 250, 'Name:', { color: '#ccc', fontSize: '13px', fontFamily: 'monospace' }).setDepth(32);
     const nameInput = document.createElement('input');
     Object.assign(nameInput.style, {
-      position: 'absolute', left: '470px', top: '250px',
+      position: 'absolute', left: '450px', top: '240px',
       width: '400px', height: '28px', background: '#222',
       color: '#fff', border: '1px solid #4466aa', padding: '2px 6px',
       fontFamily: 'monospace', fontSize: '14px',
@@ -336,32 +375,53 @@ export class GarageScene extends Phaser.Scene {
     document.body.appendChild(nameInput);
     created.push(nameLabel);
 
-    const makeRow = (label: string, y: number, current: number, onPick: (value: number) => void) => {
-      const lab = this.add.text(400, y, label, { color: '#ccc', fontSize: '13px', fontFamily: 'monospace' }).setDepth(32);
+    // Colour rows: swatches with thick outline on the selected one; picking updates
+    // chosen* and re-renders the live preview.
+    const makeColourRow = (label: string, y: number, getCurrent: () => number, onPick: (v: number) => void) => {
+      const lab = this.add.text(380, y, label, { color: '#ccc', fontSize: '13px', fontFamily: 'monospace' }).setDepth(32);
       created.push(lab);
+      const swatches: Phaser.GameObjects.Rectangle[] = [];
       COLOURS.forEach((c, i) => {
-        const sw = this.add.rectangle(470 + i * 42, y + 8, 32, 18, c.value).setDepth(32).setStrokeStyle(
-          c.value === current ? 3 : 1, 0xffffff
+        const sw = this.add.rectangle(450 + i * 42, y + 8, 32, 18, c.value).setDepth(32).setStrokeStyle(
+          c.value === getCurrent() ? 3 : 1, 0xffffff
         ).setInteractive();
         sw.on('pointerdown', () => {
           onPick(c.value);
-          // Re-render swatch strokes
-          sw.setStrokeStyle(3, 0xffffff);
+          swatches.forEach((s, j) => s.setStrokeStyle(COLOURS[j].value === getCurrent() ? 3 : 1, 0xffffff));
+          refreshAllEmblems();
         });
+        swatches.push(sw);
         created.push(sw);
       });
     };
+    makeColourRow('Primary:',   300, () => chosenPrimary,   v => { chosenPrimary = v; });
+    makeColourRow('Secondary:', 340, () => chosenSecondary, v => { chosenSecondary = v; });
 
-    let chosenPrimary = this.gang.primary_colour;
-    let chosenSecondary = this.gang.secondary_colour;
-    makeRow('Primary:',   300, chosenPrimary,   v => { chosenPrimary = v; });
-    makeRow('Secondary:', 340, chosenSecondary, v => { chosenSecondary = v; });
+    // Emblem picker — thumbnails in a horizontal row, each rendered from the current
+    // primary + secondary so you can see them in your gang's palette.
+    const emblemLabel = this.add.text(380, 395, 'Emblem:', { color: '#ccc', fontSize: '13px', fontFamily: 'monospace' }).setDepth(32);
+    created.push(emblemLabel);
+    EMBLEM_IDS.forEach((id, i) => {
+      const tileKey = `gang-emblem-picker-${id}`;
+      this.renderEmblemTexture(tileKey, id, chosenPrimary, chosenSecondary, 40);
+      const tile = this.add.image(462 + i * 46, 420, tileKey).setOrigin(0.5).setDepth(32).setDisplaySize(36, 36).setInteractive();
+      const border = this.add.rectangle(tile.x, tile.y, 42, 42, 0, 0).setStrokeStyle(
+        id === chosenEmblem ? 3 : 1, id === chosenEmblem ? 0x00ff88 : 0x666666
+      ).setDepth(31);
+      tile.on('pointerdown', () => {
+        chosenEmblem = id;
+        refreshAllEmblems();
+      });
+      emblemTiles.push(tile);
+      emblemBorders.push(border);
+      created.push(tile, border);
+    });
 
-    const saveBtn = this.add.text(540, 480, '[SAVE]', {
+    const saveBtn = this.add.text(540, 580, '[SAVE]', {
       color: '#00ff88', fontSize: '14px', fontFamily: 'monospace',
       backgroundColor: '#003322', padding: { x: 8, y: 4 }
     }).setOrigin(0.5).setDepth(32).setInteractive();
-    const cancelBtn = this.add.text(740, 480, '[CANCEL]', {
+    const cancelBtn = this.add.text(740, 580, '[CANCEL]', {
       color: '#888', fontSize: '14px', fontFamily: 'monospace',
       backgroundColor: '#221122', padding: { x: 8, y: 4 }
     }).setOrigin(0.5).setDepth(32).setInteractive();
@@ -373,7 +433,12 @@ export class GarageScene extends Phaser.Scene {
       await fetch(`http://${host}:3001/api/gangs/mine`, {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${this.token}` },
-        body: JSON.stringify({ name: nameInput.value, primary_colour: chosenPrimary, secondary_colour: chosenSecondary }),
+        body: JSON.stringify({
+          name: nameInput.value,
+          primary_colour: chosenPrimary,
+          secondary_colour: chosenSecondary,
+          emblem_id: chosenEmblem,
+        }),
       });
       destroy();
       this.scene.restart({ token: this.token });

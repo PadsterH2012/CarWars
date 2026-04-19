@@ -78,6 +78,13 @@ CREATE TABLE IF NOT EXISTS gangs (
   created_at TIMESTAMPTZ DEFAULT NOW()
 );
 
+-- Emblem (coat-of-arms template id) — authored template + gang colours render the shield
+DO $$ BEGIN
+  IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='gangs' AND column_name='emblem_id') THEN
+    ALTER TABLE gangs ADD COLUMN emblem_id TEXT NOT NULL DEFAULT 'stripes';
+  END IF;
+END $$;
+
 -- Add gang_id FK to vehicles + drivers (nullable during the migration window)
 DO $$ BEGIN
   IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='vehicles' AND column_name='gang_id') THEN
