@@ -13,6 +13,7 @@ interface WeaponDef {
   id: string; name: string; category: string; cost: number;
   toHit: number; damageDice: number; damageMod: number;
   shotsPerMag: number; ammoCost: number;
+  spaces: number; weight: number; ammoWeight: number;
   allowedArcs: string[];
 }
 
@@ -625,6 +626,9 @@ export class VehicleDesignerScene extends Phaser.Scene {
   }
 
   private renderWeaponsPanel(): string {
+    // For the add/toggle grid the implicit arc is 'front' (new mounts default
+    // to front). Each inactive weapon is fit-checked against current capacity
+    // + its arc requirement; failures render disabled with a reason tooltip.
     return `
       <div class="cw-panel">
         <h3>WEAPONS (${this.mounts.length})</h3>
@@ -633,11 +637,28 @@ export class VehicleDesignerScene extends Phaser.Scene {
             const mount = this.mounts.find(m => m.weaponId === id);
             const active = !!mount;
             const arc = mount ? mount.arc.charAt(0).toUpperCase() : '';
+            let disabled = false;
+            let tip = '';
+            if (!active) {
+              if (!this.arcAllowed(id, 'front')) {
+                disabled = true;
+                tip = `front arc not allowed for this weapon`;
+              } else {
+                const fit = this.canFitWeapon(id);
+                if (!fit.fits) { disabled = true; tip = fit.reason; }
+              }
+            }
+            const disabledStyle = disabled
+              ? 'opacity:0.35;cursor:not-allowed;pointer-events:none;'
+              : '';
             return `
-              <button class="opt ${active ? 'selected' : ''}" data-action="weapon-toggle" data-value="${id}" style="text-align:left;padding-left:10px;">${label}</button>
+              <button class="opt ${active ? 'selected' : ''}" data-action="weapon-toggle" data-value="${id}" style="text-align:left;padding-left:10px;${disabledStyle}" title="${esc(tip)}">${label}${disabled ? ' ✕' : ''}</button>
               <button class="opt" data-action="cycle-arc" data-value="${id}" style="${active ? 'color:#ffcc00;border-color:#664400;background:#332200' : 'opacity:0.3'}" ${active ? '' : 'disabled'}>▸${arc}</button>
             `;
           }).join('')}
+        </div>
+        <div style="margin-top:10px;font-size:10px;color:#666;">
+          Greyed weapons don't fit the current body's spaces or weight budget.
         </div>
       </div>`;
   }
@@ -792,13 +813,21 @@ export class VehicleDesignerScene extends Phaser.Scene {
         </div>`);
       for (const wep of this.weaponCatalog) {
         if (wep.category === 'dropped') continue;
-        if (wep.allowedArcs?.length && !wep.allowedArcs.includes(m.arc)) continue;
         const isCurrent = m.weaponId === wep.id;
+        const arcBad = wep.allowedArcs?.length && !wep.allowedArcs.includes(m.arc);
+        const fit = isCurrent ? { fits: true, reason: '' } : this.canFitWeapon(wep.id, m);
+        const disabled = !isCurrent && (arcBad || !fit.fits);
+        const tip = arcBad
+          ? `not allowed in ${m.arc.toUpperCase()} arc — allowed: ${wep.allowedArcs.join(', ')}`
+          : fit.reason;
+        const disabledStyle = disabled
+          ? 'opacity:0.35;cursor:not-allowed;pointer-events:none;'
+          : '';
         const dmg = `${wep.damageDice}d${wep.damageMod ? (wep.damageMod > 0 ? `+${wep.damageMod}` : wep.damageMod) : ''}`;
         rows.push(`
-          <div class="item ${isCurrent ? 'current' : ''}" data-action="set-mount-weapon" data-value="${m.id}:${wep.id}">
+          <div class="item ${isCurrent ? 'current' : ''}" data-action="set-mount-weapon" data-value="${m.id}:${wep.id}" style="${disabledStyle}" title="${esc(tip)}">
             <span class="tag">${esc(wep.id.toUpperCase())}</span>
-            <span class="name">${esc(wep.name)}${isCurrent ? ' ▸ current' : ''}</span>
+            <span class="name">${esc(wep.name)}${isCurrent ? ' ▸ current' : disabled ? ` ✕ ${esc(tip)}` : ''}</span>
             <span class="stat">${dmg} tH${wep.toHit}</span>
             <span class="cost">$${wep.cost.toLocaleString()}</span>
           </div>`);
@@ -966,6 +995,42 @@ export class VehicleDesignerScene extends Phaser.Scene {
         ${weaponDots}
         ${faceLabels}
       </svg>`;
+  }
+
+  // ── Fit-check helpers (drive grey-out in UI) ─────────────────────────────
+
+  // Would `weaponId` fit if added (no replacement) or swapped onto `replacing`?
+  // Uses current-capacity snapshot from the server; legacy loadouts (no bodyType)
+  // have unlimited capacity so everything fits.
+  private canFitWeapon(weaponId: string, replacing?: MountConfig): { fits: boolean; reason: string } {
+    const wep = this.weaponCatalog.find(w => w.id === weaponId);
+    if (!wep) return { fits: false, reason: 'unknown weapon' };
+    const c = this.stats?.capacity;
+    if (!c) return { fits: true, reason: '' };
+    const ammoForNew = wep.shotsPerMag ?? 0;
+    let spacesAfter = c.spacesUsed + wep.spaces;
+    let loadAfter   = c.loadWeight + wep.weight + wep.ammoWeight * ammoForNew;
+    if (replacing?.weaponId) {
+      const oldWep = this.weaponCatalog.find(w => w.id === replacing.weaponId);
+      if (oldWep) {
+        spacesAfter -= oldWep.spaces;
+        loadAfter   -= oldWep.weight + oldWep.ammoWeight * replacing.ammo;
+      }
+    }
+    if (spacesAfter > c.spacesMax) {
+      return { fits: false, reason: `needs ${wep.spaces} spc — over budget` };
+    }
+    if (loadAfter > c.loadMax) {
+      return { fits: false, reason: `over weight by ${Math.round(loadAfter - c.loadMax)} lbs` };
+    }
+    return { fits: true, reason: '' };
+  }
+
+  // Is the weapon allowed in this arc? Empty allowedArcs means any arc.
+  private arcAllowed(weaponId: string, arc: string): boolean {
+    const wep = this.weaponCatalog.find(w => w.id === weaponId);
+    if (!wep || !wep.allowedArcs || wep.allowedArcs.length === 0) return true;
+    return wep.allowedArcs.includes(arc);
   }
 
   // ── Misc helpers ─────────────────────────────────────────────────────────
