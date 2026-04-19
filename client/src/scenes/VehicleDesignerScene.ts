@@ -16,12 +16,23 @@ interface WeaponDef {
   allowedArcs: string[];
 }
 
+interface CapacityReport {
+  spacesUsed: number;
+  spacesMax: number;
+  loadWeight: number;
+  loadMax: number;
+  overSpaces: boolean;
+  overWeight: boolean;
+  errors: string[];
+}
+
 interface DesignerStats {
   maxSpeed: number;
   acceleration: number;
   handlingClass: number;
   totalWeight: number;
   totalCost: number;
+  capacity: CapacityReport | null;
 }
 
 const LS_MODE = 'cw_designer_mode';
@@ -302,11 +313,6 @@ export class VehicleDesignerScene extends Phaser.Scene {
       this.mounts.splice(idx, 1);
       this.flashStatus('', '#888');
     } else {
-      if (this.mounts.length >= 3) {
-        this.flashStatus('Max 3 weapons', '#ff4444');
-        this.rebuild();
-        return;
-      }
       this.mounts.push({ id: `m${Date.now()}`, arc: 'front', weaponId: id, ammo: 50 });
     }
     this.markDirty();
@@ -334,11 +340,6 @@ export class VehicleDesignerScene extends Phaser.Scene {
   }
 
   private addMount(arc: ArcType): void {
-    if (this.mounts.length >= 3) {
-      this.flashStatus('Max 3 mounts', '#ff4444');
-      this.rebuild();
-      return;
-    }
     this.mounts.push({ id: `m${Date.now()}`, arc, weaponId: null, ammo: 0 });
     this.markDirty();
   }
@@ -526,7 +527,7 @@ export class VehicleDesignerScene extends Phaser.Scene {
       { id: 'body',       label: 'Body' },
       { id: 'engine',     label: 'Engine' },
       { id: 'armor',      label: 'Armor' },
-      { id: 'weapons',    label: 'Weapons', badge: `${this.mounts.length}/3` },
+      { id: 'weapons',    label: 'Weapons', badge: `${this.mounts.length}` },
       { id: 'tires',      label: 'Tires' },
       { id: 'suspension', label: 'Suspension' },
     ];
@@ -626,7 +627,7 @@ export class VehicleDesignerScene extends Phaser.Scene {
   private renderWeaponsPanel(): string {
     return `
       <div class="cw-panel">
-        <h3>WEAPONS (${this.mounts.length}/3)</h3>
+        <h3>WEAPONS (${this.mounts.length})</h3>
         <div style="display:grid;grid-template-columns:1fr 50px;gap:4px;">
           ${WEAPONS.map(({ id, label }) => {
             const mount = this.mounts.find(m => m.weaponId === id);
@@ -653,6 +654,7 @@ export class VehicleDesignerScene extends Phaser.Scene {
           <div class="stat-row"><span>Weight</span><span>${s ? `${s.totalWeight} lbs` : '—'}</span></div>
           <div class="stat-row"><span>Armor total</span><span>${this.armorTotal()} pts</span></div>
         </div>
+        ${this.renderCapacityBlock()}
         <h3 style="margin-top:18px;">COST</h3>
         <div class="stats-list">
           <div class="stat-row"><span>Build cost</span><span style="color:#ccc;">${s ? `$${s.totalCost.toLocaleString()}` : '—'}</span></div>
@@ -662,6 +664,24 @@ export class VehicleDesignerScene extends Phaser.Scene {
           ` : ''}
         </div>
       </div>`;
+  }
+
+  private renderCapacityBlock(): string {
+    const c = this.stats?.capacity;
+    if (!c) return '';
+    const spacesColor = c.overSpaces ? '#ff4444' : c.spacesUsed / Math.max(1, c.spacesMax) >= 0.85 ? '#ffaa00' : '#00ff88';
+    const weightColor = c.overWeight ? '#ff4444' : c.loadWeight / Math.max(1, c.loadMax) >= 0.85 ? '#ffaa00' : '#00ff88';
+    return `
+      <h3 style="margin-top:18px;">CAPACITY</h3>
+      <div class="stats-list">
+        <div class="stat-row"><span>Spaces</span><span style="color:${spacesColor};">${c.spacesUsed} / ${c.spacesMax}</span></div>
+        <div class="stat-row"><span>Load weight</span><span style="color:${weightColor};">${c.loadWeight} / ${c.loadMax} lbs</span></div>
+      </div>
+      ${c.overSpaces || c.overWeight ? `
+        <div style="background:#2a1111;border-left:3px solid #ff4444;padding:8px;font-size:10px;color:#ffaaaa;margin-top:8px;">
+          Over capacity — drop a weapon, downsize the engine, or pick a larger body.
+        </div>
+      ` : ''}`;
   }
 
   // ── DATASHEET mode (C) ───────────────────────────────────────────────────
@@ -798,7 +818,7 @@ export class VehicleDesignerScene extends Phaser.Scene {
         ${section('SUSPENSION', SUSPENSIONS.find(s => s.id === this.suspensionType)?.label ?? '', suspItems)}
         ${section('TIRES', TIRE_TYPES.find(t => t.id === this.tireType)?.label ?? '', tireItems)}
         ${section('ARMOR TYPE', ARMOR_TYPES.find(a => a.id === this.armorType)?.label ?? '', armorItems)}
-        ${section(`WEAPONS (${this.mounts.length}/3)`, weaponCurrent, weaponItems || '<div style="padding:10px;color:#666;font-size:11px;">No mounts — add one from the left panel.</div>')}
+        ${section(`WEAPONS (${this.mounts.length})`, weaponCurrent, weaponItems || '<div style="padding:10px;color:#666;font-size:11px;">No mounts — add one from the left panel.</div>')}
       </div>`;
   }
 
@@ -830,6 +850,7 @@ export class VehicleDesignerScene extends Phaser.Scene {
           <div class="stat-row"><span>Build cost</span><span style="color:#ffcc00;">${s ? `$${s.totalCost.toLocaleString()}` : '—'}</span></div>
           <div class="stat-row"><span>Treasury</span><span>$${this.treasury.toLocaleString()}</span></div>
         </div>
+        ${this.renderCapacityBlock()}
         ${weakWarn}
       </div>`;
   }
@@ -981,8 +1002,13 @@ export class VehicleDesignerScene extends Phaser.Scene {
           handlingClass: s.handlingClass,
           totalWeight: s.totalWeight,
           totalCost: s.totalCost,
+          capacity: s.capacity ?? null,
         };
-        this.flashStatus('', '#888');
+        if (s.capacity && (s.capacity.overSpaces || s.capacity.overWeight)) {
+          this.flashStatus(`Over capacity: ${s.capacity.errors.join('; ')}`, '#ff4444');
+        } else {
+          this.flashStatus('', '#888');
+        }
       } else {
         const err = await res.json().catch(() => ({}));
         this.stats = null;
@@ -1020,6 +1046,12 @@ export class VehicleDesignerScene extends Phaser.Scene {
   private async saveVehicle(): Promise<void> {
     if (!this.stats) {
       this.flashStatus('Stats still loading — try again', '#ffaa00');
+      this.rebuild();
+      return;
+    }
+    const cap = this.stats.capacity;
+    if (cap && (cap.overSpaces || cap.overWeight)) {
+      this.flashStatus(`Cannot save: ${cap.errors.join('; ')}`, '#ff4444');
       this.rebuild();
       return;
     }

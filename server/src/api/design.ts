@@ -6,6 +6,7 @@ import { SUSPENSIONS } from '../rules/data/suspensions';
 import { TIRES } from '../rules/data/tires';
 import { WEAPONS } from '../rules/data/weapons';
 import { deriveStats } from '../rules/vehicle';
+import { computeCapacity } from '../rules/capacity';
 
 // Armor type cost and weight multipliers (Compendium 2E, p.40)
 // costMul applies to armorCostPerPt, wtMul applies to armorWtPerPt
@@ -109,12 +110,14 @@ designRouter.post('/', (req, res) => {
       + armorPts * body.armorCostPerPt * armorMul.costMul
       + suspCost + weaponCost;
 
+    const capacity = computeCapacity(loadout);
     return res.json({
       maxSpeed: stats.maxSpeed,
       acceleration: stats.acceleration,
       handlingClass: stats.handlingClass,
       totalWeight: stats.weight,
       totalCost,
+      capacity,
     });
   } catch (e: any) {
     return res.status(400).json({ error: e.message });

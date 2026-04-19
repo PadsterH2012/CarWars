@@ -2,6 +2,7 @@ import { Router } from 'express';
 import { getDb } from '../db/client';
 import { requireAuth, AuthRequest } from './middleware';
 import { deriveStats } from '../rules/vehicle';
+import { computeCapacity } from '../rules/capacity';
 import { WEAPONS } from '../rules/data/weapons';
 import type { VehicleLoadout, WeaponMount } from '@carwars/shared';
 
@@ -20,6 +21,14 @@ vehiclesRouter.post('/', async (req: AuthRequest, res) => {
     stats = deriveStats('tmp', name, loadout);
   } catch (e: any) {
     return res.status(400).json({ error: e.message });
+  }
+
+  // Capacity guard — a cycle can't carry a heavy-laser-plus-rocket-launcher
+  // just because the designer permits the dropdown. Enforced for new builds;
+  // existing over-capacity vehicles (pre-rule) are grandfathered until edited.
+  const cap = computeCapacity(loadout);
+  if (cap.overSpaces || cap.overWeight) {
+    return res.status(400).json({ error: `Loadout exceeds body capacity — ${cap.errors.join('; ')}` });
   }
 
   const cost = loadout.totalCost ?? 0;
@@ -147,6 +156,14 @@ vehiclesRouter.patch('/:id/loadout', async (req: AuthRequest, res) => {
     deriveStats('workshop-preview', 'preview', newLoadout);
   } catch (e: any) {
     return res.status(400).json({ error: e.message ?? 'invalid loadout' });
+  }
+
+  // Capacity guard — workshop saves must leave the vehicle within its body's
+  // spaces + weight budget. Existing over-capacity vehicles are readable but
+  // can't be re-saved until brought into spec.
+  const cap = computeCapacity(newLoadout);
+  if (cap.overSpaces || cap.overWeight) {
+    return res.status(400).json({ error: `Loadout exceeds body capacity — ${cap.errors.join('; ')}` });
   }
 
   const db = getDb();
