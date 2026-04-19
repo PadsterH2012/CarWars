@@ -10,6 +10,21 @@ const VALID_EMBLEMS = new Set([
   'stripes', 'cross', 'chevron', 'quartered', 'star', 'skull', 'circle', 'tire',
 ]);
 
+// GET /api/gangs/mine/ledger — last 20 ledger entries for the caller's gang
+gangsRouter.get('/mine/ledger', async (req: AuthRequest, res) => {
+  const db = getDb();
+  const result = await db.query(
+    `SELECT l.event_type, l.amount, l.description, l.result, l.occurred_at
+     FROM gang_ledger l
+     JOIN gangs g ON g.id = l.gang_id
+     WHERE g.owner_player_id = $1
+     ORDER BY l.occurred_at DESC
+     LIMIT 20`,
+    [req.playerId]
+  );
+  return res.json(result.rows);
+});
+
 // GET /api/gangs/mine — the calling player's gang
 gangsRouter.get('/mine', async (req: AuthRequest, res) => {
   const db = getDb();

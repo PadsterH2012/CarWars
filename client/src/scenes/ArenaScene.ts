@@ -269,7 +269,7 @@ export class ArenaScene extends Phaser.Scene {
         // and the post-arena screen can show their banner + quote
         this.rival = msg.rival;
       } else if (msg.type === 'zone_end') {
-        this.showZoneEnd(msg.winnerId, msg.reason, msg.prize ?? 0, msg.jobPayout ?? 0, msg.salvage ?? 0, msg.rival, msg.rivalQuote);
+        this.showZoneEnd(msg.winnerId, msg.reason, msg.prize ?? 0, msg.jobPayout ?? 0, msg.salvage ?? 0, msg.wages ?? 0, msg.maintenance ?? 0, msg.rival, msg.rivalQuote);
       }
     });
   }
@@ -476,7 +476,7 @@ export class ArenaScene extends Phaser.Scene {
     });
   }
 
-  private showZoneEnd(winnerId: string | null, reason: string, prize: number, jobPayout: number, salvage: number, rival?: import('@carwars/shared').RivalInfo, rivalQuote?: string): void {
+  private showZoneEnd(winnerId: string | null, reason: string, prize: number, jobPayout: number, salvage: number, wages: number, maintenance: number, rival?: import('@carwars/shared').RivalInfo, rivalQuote?: string): void {
     if (this.zoneEnded) return;
     this.zoneEnded = true;
 
@@ -558,13 +558,35 @@ export class ArenaScene extends Phaser.Scene {
         }).setOrigin(0.5).setScrollFactor(0).setDepth(11);
         y += 30;
       }
-      const total = prize + jobPayout + salvage;
-      if (total > 0) {
-        this.add.text(640, y, `Total earned: $${total.toLocaleString()}`, {
-          fontSize: '20px', color: '#ffffff', fontFamily: 'monospace', fontStyle: 'bold'
+      const income = prize + jobPayout + salvage;
+      if (income > 0) {
+        this.add.text(640, y, `Income:  $${income.toLocaleString()}`, {
+          fontSize: '16px', color: '#ffffff', fontFamily: 'monospace', fontStyle: 'bold'
         }).setOrigin(0.5).setScrollFactor(0).setDepth(11);
-        y += 36;
+        y += 26;
       }
+    }
+
+    // Expenses — always shown if present (both winners and losers pay)
+    if (wages > 0 || maintenance > 0) {
+      if (wages > 0) {
+        this.add.text(640, y, `Wages:        -$${wages.toLocaleString()}`, {
+          fontSize: '16px', color: '#ff8888', fontFamily: 'monospace'
+        }).setOrigin(0.5).setScrollFactor(0).setDepth(11);
+        y += 24;
+      }
+      if (maintenance > 0) {
+        this.add.text(640, y, `Maintenance:  -$${maintenance.toLocaleString()}`, {
+          fontSize: '16px', color: '#ff8888', fontFamily: 'monospace'
+        }).setOrigin(0.5).setScrollFactor(0).setDepth(11);
+        y += 24;
+      }
+      const net = prize + jobPayout + salvage - wages - maintenance;
+      const netColor = net >= 0 ? '#00ff88' : '#ff4444';
+      this.add.text(640, y, `Net:     ${net >= 0 ? '+' : '-'}$${Math.abs(net).toLocaleString()}`, {
+        fontSize: '18px', color: netColor, fontFamily: 'monospace', fontStyle: 'bold'
+      }).setOrigin(0.5).setScrollFactor(0).setDepth(11);
+      y += 32;
     }
 
     // Damage summary

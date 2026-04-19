@@ -8,7 +8,7 @@ import { totalSalvageFor } from '../rules/salvage';
 const TICK_MS = 100;
 
 export interface ZoneRunnerOptions {
-  onEnd?: (winnerId: string | null, salvage: number, ctx: { reason: string; rival: RivalInfo | null }) => Promise<{ prize: number; jobPayout: number; salvage: number; rivalQuote?: string }>;
+  onEnd?: (winnerId: string | null, salvage: number, ctx: { reason: string; rival: RivalInfo | null }) => Promise<{ prize: number; jobPayout: number; salvage: number; wages: number; maintenance: number; rivalQuote?: string }>;
 }
 
 export class ZoneRunner {
@@ -29,7 +29,7 @@ export class ZoneRunner {
 
   hasEnded(): boolean { return this.ended; }
   readonly zoneId: string;
-  private onEnd?: (winnerId: string | null, salvage: number, ctx: { reason: string; rival: RivalInfo | null }) => Promise<{ prize: number; jobPayout: number; salvage: number; rivalQuote?: string }>;
+  private onEnd?: (winnerId: string | null, salvage: number, ctx: { reason: string; rival: RivalInfo | null }) => Promise<{ prize: number; jobPayout: number; salvage: number; wages: number; maintenance: number; rivalQuote?: string }>;
 
   constructor(
     zoneId: string,
@@ -190,7 +190,7 @@ export class ZoneRunner {
                   : winnerPlayerId === 'ai-team' ? 'ai_victory'
                   : 'last_standing';
     const outcome = (await this.onEnd?.(humanWinnerId, grossSalvage, { reason, rival: this.rival }))
-      ?? { prize: 0, jobPayout: 0, salvage: 0 };
+      ?? { prize: 0, jobPayout: 0, salvage: 0, wages: 0, maintenance: 0 };
 
     const endMsg: ServerMessage = {
       type: 'zone_end',
@@ -199,6 +199,8 @@ export class ZoneRunner {
       prize: outcome.prize,
       jobPayout: outcome.jobPayout,
       salvage: outcome.salvage,
+      wages: outcome.wages,
+      maintenance: outcome.maintenance,
       rival: this.rival ?? undefined,
       rivalQuote: outcome.rivalQuote,
     };

@@ -192,13 +192,22 @@ live at http://10.202.28.192:3001.
 - [ ] Rival emblem shown in-arena (HUD tag + on enemy sprites) — deferred to Phase 4b
 
 ### Phase 5 — Full Economy
-- [ ] `gang_ledger` audit table
-- [ ] Game-month tick (likely computed-on-login: process overdue cycles at login time)
-- [ ] Per-match deductions: wages ($50 × driver skill), maintenance ($10 × squad size)
-- [ ] Monthly deductions: garage fees ($100 × vehicle), insurance premiums ($50 per insured vehicle)
+
+**Phase 5a shipped:**
+- [x] `gang_ledger` audit table + `GET /api/gangs/mine/ledger` returning last 20 entries
+- [x] Per-match deductions applied regardless of outcome (winners + losers pay):
+  wages = $50 × driver skill per squadmate; maintenance = $10 × squad size
+- [x] Post-arena screen shows Income / Wages / Maintenance / Net P&L
+- [x] All income + expense lines logged to gang_ledger (arena_prize, job_payout, salvage, wages, maintenance)
+- [x] Treasury floored at 0 via `GREATEST(0, money - expense)` so match expenses can't drive it negative
+
+**Phase 5b deferred:**
+- [ ] Game-month tick (computed-on-login: process overdue cycles at login)
+- [ ] Monthly deductions: garage fees ($100 × vehicle count), insurance premiums ($50 per insured vehicle)
+- [ ] Insurance flag per vehicle + UI toggle in garage
 - [ ] Insurance payouts: 75% of rebuild cost on total loss if insured
-- [ ] Bankruptcy / repossession: can't go negative; overdue fees repossess most expensive vehicles
-- [ ] Garage UI: insurance toggle per vehicle + monthly statement
+- [ ] Bankruptcy / repossession: overdue monthly fees repossess most expensive vehicles until arrears clear
+- [ ] Garage ledger statement (tail of gang_ledger) shown in the garage UI
 
 ---
 

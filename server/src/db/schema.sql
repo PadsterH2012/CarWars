@@ -142,6 +142,20 @@ CREATE TABLE IF NOT EXISTS player_rival_rep (
 );
 CREATE INDEX IF NOT EXISTS idx_rival_rep_player_gang ON player_rival_rep(player_gang_id);
 
+-- Gang ledger — append-only record of every income and expense that hits the gang
+-- treasury. Gives the garage a 'last 10 entries' statement and the post-match
+-- screen an authoritative breakdown of where money went.
+CREATE TABLE IF NOT EXISTS gang_ledger (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  gang_id UUID NOT NULL REFERENCES gangs(id) ON DELETE CASCADE,
+  event_type TEXT NOT NULL,   -- 'arena_prize' | 'salvage' | 'wages' | 'maintenance' | 'job_payout' | 'vehicle_build' | 'vehicle_sell' | 'repair'
+  amount INTEGER NOT NULL,    -- signed: positive for income, negative for expenses
+  description TEXT NOT NULL DEFAULT '',
+  result JSONB NOT NULL DEFAULT '{}',  -- free-form context (zoneId, vehicleIds, rival, etc.)
+  occurred_at TIMESTAMPTZ DEFAULT NOW()
+);
+CREATE INDEX IF NOT EXISTS idx_gang_ledger_gang_occurred ON gang_ledger(gang_id, occurred_at DESC);
+
 -- Seed 5 rival gangs (idempotent — ON CONFLICT keeps existing rows untouched)
 INSERT INTO rival_gangs (id, name, description, base_skill, primary_colour, secondary_colour, emblem_id, min_division, boast_lines, defeat_lines) VALUES
   ('iron_wolves', 'The Iron Wolves',

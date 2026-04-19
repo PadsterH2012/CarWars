@@ -261,34 +261,73 @@ async function handleMessage(ws: WebSocket, raw: string): Promise<void> {
 
       const runner = new ZoneRunner(msg.zoneId, zoneType, isArena ? {
         onEnd: async (winnerId: string | null, salvage: number, ctx) => {
-          // Record rival rep + pick a quote regardless of who won (except mutual kills)
+          const db = getDb();
+
+          // Always-resolve: who's the player in this zone? Needed for expenses
+          // (paid regardless of outcome) and for rival rep updates.
+          const myWs = [...clientPlayers.entries()].find(([w]) => clientZones.get(w) === msg.zoneId)?.[0];
+          const myPid = myWs ? clientPlayers.get(myWs) : undefined;
+          const mySquad = myWs ? (clientSquads.get(myWs) ?? []) : [];
+
+          // Compute per-match expenses: wages = $50 × driver skill per squad member
+          //                             maintenance = $10 × squad size
+          // Applied regardless of win/lose — drivers and mechanics get paid either way.
+          let wages = 0, maintenance = 0, myGangId: string | null = null;
+          if (myPid && mySquad.length > 0) {
+            const gRes = await db.query<{ id: string }>(`SELECT id FROM gangs WHERE owner_player_id = $1`, [myPid]);
+            myGangId = gRes.rows[0]?.id ?? null;
+            maintenance = 10 * mySquad.length;
+            for (const vid of mySquad) {
+              const dRes = await db.query<{ skill: number }>(
+                `SELECT skill FROM drivers WHERE assigned_vehicle_id = $1 AND alive = TRUE LIMIT 1`,
+                [vid]
+              );
+              if (dRes.rows.length) wages += 50 * dRes.rows[0].skill;
+            }
+          }
+
+          // Record rival rep + pick a quote (except for mutual kills)
           let rivalQuote: string | undefined;
-          if (ctx.rival && ctx.reason !== 'all_destroyed') {
+          if (ctx.rival && ctx.reason !== 'all_destroyed' && myGangId) {
             try {
-              const db = getDb();
-              // Resolve the player's gang id from their playerId (winner or loser)
-              const myPid = winnerId
-                ?? [...clientPlayers.entries()].find(([w]) => clientZones.get(w) === msg.zoneId)?.[1]
-                ?? null;
-              if (myPid) {
-                const gRes = await db.query(`SELECT id FROM gangs WHERE owner_player_id = $1`, [myPid]);
-                const pgang = gRes.rows[0]?.id;
-                if (pgang) {
-                  const playerWon = !!winnerId;
-                  await recordRivalOutcome(db, pgang, ctx.rival.id, playerWon);
-                  // Pick a quote from the appropriate pool; fall back to a generic line
-                  const pool = playerWon
-                    ? (await db.query<{ defeat_lines: string[] }>(`SELECT defeat_lines FROM rival_gangs WHERE id = $1`, [ctx.rival.id])).rows[0]?.defeat_lines ?? []
-                    : (await db.query<{ boast_lines: string[]  }>(`SELECT boast_lines  FROM rival_gangs WHERE id = $1`, [ctx.rival.id])).rows[0]?.boast_lines  ?? [];
-                  rivalQuote = pool.length ? pool[Math.floor(Math.random() * pool.length)] : undefined;
-                }
-              }
+              const playerWon = !!winnerId;
+              await recordRivalOutcome(db, myGangId, ctx.rival.id, playerWon);
+              const pool = playerWon
+                ? (await db.query<{ defeat_lines: string[] }>(`SELECT defeat_lines FROM rival_gangs WHERE id = $1`, [ctx.rival.id])).rows[0]?.defeat_lines ?? []
+                : (await db.query<{ boast_lines: string[]  }>(`SELECT boast_lines  FROM rival_gangs WHERE id = $1`, [ctx.rival.id])).rows[0]?.boast_lines  ?? [];
+              rivalQuote = pool.length ? pool[Math.floor(Math.random() * pool.length)] : undefined;
             } catch (e) {
               console.error('Rival rep update failed:', e);
             }
           }
-          if (!winnerId) return { prize: 0, jobPayout: 0, salvage: 0, rivalQuote };
-          const db = getDb();
+
+          // Apply expenses to the gang's treasury (via players.money sync trigger)
+          // regardless of outcome, and log each line in gang_ledger for auditability.
+          if (myPid && myGangId && (wages > 0 || maintenance > 0)) {
+            const totalExpense = wages + maintenance;
+            try {
+              await db.query(`UPDATE players SET money = GREATEST(0, money - $1) WHERE id = $2`,
+                [totalExpense, myPid]);
+              if (wages > 0) {
+                await db.query(
+                  `INSERT INTO gang_ledger (gang_id, event_type, amount, description, result)
+                   VALUES ($1, 'wages', $2, $3, $4)`,
+                  [myGangId, -wages, `Driver wages (squad of ${mySquad.length})`, JSON.stringify({ zoneId: msg.zoneId, squadSize: mySquad.length })]
+                );
+              }
+              if (maintenance > 0) {
+                await db.query(
+                  `INSERT INTO gang_ledger (gang_id, event_type, amount, description, result)
+                   VALUES ($1, 'maintenance', $2, $3, $4)`,
+                  [myGangId, -maintenance, `Vehicle maintenance (squad of ${mySquad.length})`, JSON.stringify({ zoneId: msg.zoneId, squadSize: mySquad.length })]
+                );
+              }
+            } catch (e) {
+              console.error('Failed to apply match expenses:', e);
+            }
+          }
+
+          if (!winnerId) return { prize: 0, jobPayout: 0, salvage: 0, wages, maintenance, rivalQuote };
           try {
             const pRes = await db.query(`SELECT division FROM players WHERE id = $1`, [winnerId]);
             const division = pRes.rows[0]?.division ?? 5;
@@ -397,10 +436,39 @@ async function handleMessage(ws: WebSocket, raw: string): Promise<void> {
               }
             }
 
-            return { prize, jobPayout, salvage, rivalQuote };
+            // Log income lines to the gang ledger for auditability
+            try {
+              if (myGangId) {
+                if (prize > 0) {
+                  await db.query(
+                    `INSERT INTO gang_ledger (gang_id, event_type, amount, description, result)
+                     VALUES ($1, 'arena_prize', $2, $3, $4)`,
+                    [myGangId, prize, `Arena prize (div ${division})`, JSON.stringify({ zoneId: msg.zoneId, division })]
+                  );
+                }
+                if (jobPayout > 0) {
+                  await db.query(
+                    `INSERT INTO gang_ledger (gang_id, event_type, amount, description, result)
+                     VALUES ($1, 'job_payout', $2, $3, $4)`,
+                    [myGangId, jobPayout, `Job payout (${completedJobType})`, JSON.stringify({ jobId: completedJobId })]
+                  );
+                }
+                if (salvage > 0) {
+                  await db.query(
+                    `INSERT INTO gang_ledger (gang_id, event_type, amount, description, result)
+                     VALUES ($1, 'salvage', $2, $3, $4)`,
+                    [myGangId, salvage, 'Salvage from destroyed rivals', JSON.stringify({ zoneId: msg.zoneId })]
+                  );
+                }
+              }
+            } catch (e) {
+              console.error('Failed to log ledger entries:', e);
+            }
+
+            return { prize, jobPayout, salvage, wages, maintenance, rivalQuote };
           } catch (e) {
             console.error('Failed to credit arena prize:', e);
-            return { prize: 0, jobPayout: 0, salvage: 0, rivalQuote };
+            return { prize: 0, jobPayout: 0, salvage: 0, wages, maintenance, rivalQuote };
           }
         },
       } : {}, msg.mapId ?? mapIdForZone(msg.zoneId));
