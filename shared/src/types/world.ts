@@ -100,6 +100,8 @@ export interface ZoneState {
   hazardObjects: HazardObject[];
   wreckage?: WreckageObject[];
   combatEvents?: CombatEvent[];
-  mapId?: string;   // which arena map is loaded
-  walls?: Rect[];   // only present in the initial join state, not every tick
+  mapId?: string;      // which arena map is loaded
+  mapWidth?: number;   // world-unit width of the loaded map (sent on join)
+  mapHeight?: number;  // world-unit height of the loaded map (sent on join)
+  walls?: Rect[];      // only present in the initial join state, not every tick
 }

@@ -354,7 +354,7 @@ async function handleMessage(ws: WebSocket, raw: string): Promise<void> {
             return { prize: 0, jobPayout: 0, salvage: 0 };
           }
         },
-      } : {}, mapIdForZone(msg.zoneId));
+      } : {}, msg.mapId ?? mapIdForZone(msg.zoneId));
 
       if (isArena) {
         // Enemy count matches the player's squad size (1v1, 2v2, up to 4v4).

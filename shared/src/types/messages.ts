@@ -12,7 +12,7 @@ export type SquadOrder =
   | { type: 'clear' };
 
 export type ClientMessage =
-  | { type: 'join_zone'; zoneId: string; vehicleId: string; token?: string; jobId?: string; squadVehicleIds?: string[] }
+  | { type: 'join_zone'; zoneId: string; vehicleId: string; token?: string; jobId?: string; squadVehicleIds?: string[]; mapId?: string }
   | { type: 'input'; tick: number; speed: number; steer: number; fireWeapon: string | null }
   | { type: 'autopilot'; enabled: boolean }
   | { type: 'leave_zone' }

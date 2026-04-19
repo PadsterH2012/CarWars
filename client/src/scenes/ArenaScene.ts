@@ -23,6 +23,7 @@ export class ArenaScene extends Phaser.Scene {
   private autopilotKey!: Phaser.Input.Keyboard.Key;
   private myVehicleId = 'v1';
   private squadVehicleIds: string[] = [];
+  private mapId = 'truck-stop';
   private token = '';
   private jobId = '';
   private lastInputSent = 0;
@@ -49,12 +50,13 @@ export class ArenaScene extends Phaser.Scene {
     super({ key: 'ArenaScene' });
   }
 
-  init(data: { token?: string; vehicleId?: string; jobId?: string; squadVehicleIds?: string[] }): void {
+  init(data: { token?: string; vehicleId?: string; jobId?: string; squadVehicleIds?: string[]; mapId?: string }): void {
     this.token = data.token ?? '';
     this.myVehicleId = data.vehicleId ?? 'v1';
     this.squadVehicleIds = data.squadVehicleIds && data.squadVehicleIds.length > 0
       ? data.squadVehicleIds
       : [this.myVehicleId];
+    this.mapId = data.mapId ?? 'truck-stop';
     this.jobId = data.jobId ?? '';
 
     // Class-field state must be reset on every scene restart — Phaser reuses the
@@ -206,7 +208,8 @@ export class ArenaScene extends Phaser.Scene {
     const wsHost = window.location.hostname;
     this.connection = new Connection(`ws://${wsHost}:3001`);
     this.connection.onOpen(() => {
-      const zoneId = new URLSearchParams(window.location.search).get('zone') ?? 'arena-truck-stop';
+      const zoneOverride = new URLSearchParams(window.location.search).get('zone');
+      const zoneId = zoneOverride ?? `arena-${this.mapId}`;
       this.connection.send({
         type: 'join_zone',
         zoneId: zoneId,
@@ -214,6 +217,7 @@ export class ArenaScene extends Phaser.Scene {
         token: this.token,
         jobId: this.jobId || undefined,
         squadVehicleIds: this.squadVehicleIds,
+        mapId: this.mapId,
       });
     });
     this.connection.onMessage((msg) => {
@@ -226,20 +230,21 @@ export class ArenaScene extends Phaser.Scene {
         if (msg.state.walls && msg.state.walls.length > 0 && this.mapWalls.length === 0) {
           this.mapWalls = msg.state.walls;
           this.renderMapWalls(msg.state.walls);
-          if (msg.state.mapId === 'truck-stop') {
-            // Hide the embedded tilemap — it's sized for the small arena and doesn't
-            // match the truck-stop's dimensions
+          if (msg.state.mapWidth && msg.state.mapHeight) {
+            // Any map with explicit dimensions gets its own camera bounds + dark
+            // background fill. The embedded default tilemap is hidden since it's
+            // not authored to match this map's size.
             this.tilemapLayers.forEach(l => l.setVisible(false));
-            // Draw a full dark background for the 120×75 map (depth 0, behind walls at depth 1)
-            const mapW = 120 * PIXELS_PER_INCH;
-            const mapH = 75 * PIXELS_PER_INCH;
+            const mapW = msg.state.mapWidth * PIXELS_PER_INCH;
+            const mapH = msg.state.mapHeight * PIXELS_PER_INCH;
             const mapX = WORLD_CENTER_X - mapW / 2;
             const mapY = WORLD_CENTER_Y - mapH / 2;
             this.bgGraphics.fillStyle(0x0a0a14, 1);
             this.bgGraphics.fillRect(mapX, mapY, mapW, mapH);
-            // Constrain camera to the truck stop bounds; zoom 0.6x so the larger
-            // arena still fits reasonably on screen
-            this.cameras.main.setZoom(0.6);
+            // Zoom level tuned by map size — bigger maps zoom out more so the player
+            // can see across the arena
+            const zoomForMap = msg.state.mapWidth > 80 ? 0.6 : msg.state.mapWidth > 50 ? 0.85 : 1.1;
+            this.cameras.main.setZoom(zoomForMap);
             this.cameras.main.setBounds(mapX, mapY, mapW, mapH);
           }
         }

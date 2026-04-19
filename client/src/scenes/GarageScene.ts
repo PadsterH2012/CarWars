@@ -153,7 +153,8 @@ export class GarageScene extends Phaser.Scene {
     );
     if (!eligible.find(v => v.id === primaryId)) {
       // Primary has no driver or is otherwise ineligible — launch solo as fallback
-      this.launchArena([primaryId]);
+      const lastMap = localStorage.getItem('cw_selected_map') ?? 'truck-stop';
+      this.launchArena([primaryId], lastMap);
       return;
     }
 
@@ -209,6 +210,42 @@ export class GarageScene extends Phaser.Scene {
       created.push(rowBg, marker, label, driverLabel);
     });
 
+    // Map picker row — stored selection persists via localStorage across visits
+    const MAPS = [
+      { id: 'truck-stop',  label: 'Truck Stop' },
+      { id: 'town-square', label: 'Town Square' },
+      { id: 'open',        label: 'Open Arena' },
+    ];
+    let selectedMap = localStorage.getItem('cw_selected_map') ?? 'truck-stop';
+    if (!MAPS.find(m => m.id === selectedMap)) selectedMap = 'truck-stop';
+
+    const mapLabel = this.add.text(440, 510, 'MAP:', {
+      color: '#aaa', fontSize: '12px', fontFamily: 'monospace'
+    }).setOrigin(1, 0.5).setDepth(33);
+    const mapButtons: Phaser.GameObjects.Text[] = [];
+    const refreshMapButtons = () => {
+      mapButtons.forEach((btn, i) => {
+        const isSel = MAPS[i].id === selectedMap;
+        btn.setColor(isSel ? '#00ff88' : '#888');
+        btn.setBackgroundColor(isSel ? '#003322' : '#111122');
+      });
+    };
+    MAPS.forEach((m, i) => {
+      const btn = this.add.text(460 + i * 130, 510, m.label, {
+        fontSize: '12px', fontFamily: 'monospace',
+        padding: { x: 6, y: 3 },
+      }).setOrigin(0, 0.5).setDepth(33).setInteractive();
+      btn.on('pointerdown', () => {
+        selectedMap = m.id;
+        localStorage.setItem('cw_selected_map', selectedMap);
+        refreshMapButtons();
+      });
+      mapButtons.push(btn);
+      created.push(btn);
+    });
+    refreshMapButtons();
+    created.push(mapLabel);
+
     // Fight + Cancel buttons
     const fightBtn = this.add.text(540, 555, '[FIGHT WITH SQUAD]', {
       color: '#00ff88', fontSize: '14px', fontFamily: 'monospace',
@@ -224,19 +261,20 @@ export class GarageScene extends Phaser.Scene {
     fightBtn.on('pointerdown', () => {
       const ids = [primaryId, ...[...selected].filter(id => id !== primaryId)];
       destroy();
-      this.launchArena(ids);
+      this.launchArena(ids, selectedMap);
     });
 
     created.push(fightBtn, cancelBtn);
   }
 
-  private launchArena(squadVehicleIds: string[]): void {
+  private launchArena(squadVehicleIds: string[], mapId: string = 'truck-stop'): void {
     const activeJobId = localStorage.getItem('cw_active_job') ?? undefined;
     this.scene.start('ArenaScene', {
       token: this.token,
       vehicleId: squadVehicleIds[0],
       squadVehicleIds,
       jobId: activeJobId,
+      mapId,
     });
   }
 

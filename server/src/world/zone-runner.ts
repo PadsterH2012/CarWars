@@ -49,8 +49,14 @@ export class ZoneRunner {
     this.clients.add(ws);
     if (!this.interval) this.start();
     const state = this.engine.getState();
-    // Include map walls only in the initial join message — not broadcast every tick
-    const initialState = { ...state, mapId: this.map.id, walls: this.map.walls };
+    // Include map metadata only in the initial join message — not broadcast every tick
+    const initialState = {
+      ...state,
+      mapId: this.map.id,
+      mapWidth: this.map.width,
+      mapHeight: this.map.height,
+      walls: this.map.walls,
+    };
     const msg: ServerMessage = { type: 'zone_state', state: initialState };
     if (ws.readyState === WebSocket.OPEN) {
       ws.send(JSON.stringify(msg));
