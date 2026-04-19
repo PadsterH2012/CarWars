@@ -43,57 +43,13 @@ interface BodySpec {
   draw: (ctx: SKRSContext2D, w: number, h: number) => void;
 }
 
-function carBody(ctx: SKRSContext2D, w: number, h: number, opts?: { windshieldRatio?: number; wheelSize?: number }) {
-  const wsRatio = opts?.windshieldRatio ?? 0.35;
-  const wheelSize = opts?.wheelSize ?? 4;
-  // Hull — rounded rect, tintable via neutral fill
-  ctx.fillStyle = '#c8c8c8';
-  roundedRect(ctx, 2, 2, w - 4, h - 4, 3);
-  ctx.fill();
-  // Outline for definition
-  ctx.strokeStyle = '#1a1a1a';
-  ctx.lineWidth = 1;
-  roundedRect(ctx, 2, 2, w - 4, h - 4, 3);
-  ctx.stroke();
-
-  // Front marker: bright headlights strip + white chevron on the bonnet so
-  // the forward direction reads immediately even on a tinted sprite.
-  ctx.fillStyle = '#ffffcc';   // warm white — stays bright under any tint
-  ctx.fillRect(3, 3, Math.max(2, Math.floor(w * 0.2)), 2);
-  ctx.fillRect(w - 3 - Math.max(2, Math.floor(w * 0.2)), 3, Math.max(2, Math.floor(w * 0.2)), 2);
-  ctx.fillStyle = '#ffffff';
-  ctx.beginPath();
-  ctx.moveTo(w / 2, 3);
-  ctx.lineTo(w / 2 + 3, 8);
-  ctx.lineTo(w / 2 - 3, 8);
-  ctx.closePath();
-  ctx.fill();
-
-  // Windshield (front) — subtle blue, doesn't need tint contrast
-  ctx.fillStyle = '#506080';
-  const wsH = Math.round(h * wsRatio * 0.35);
-  const wsY = Math.round(h * 0.22);
-  roundedRect(ctx, 3, wsY, w - 6, wsH, 1);
-  ctx.fill();
-  // Rear window
-  const rwY = Math.round(h * 0.62);
-  ctx.fillStyle = '#3e4a60';
-  roundedRect(ctx, 3, rwY, w - 6, Math.round(h * 0.1), 1);
-  ctx.fill();
-
-  // Rear marker — dim red tail lights so back reads clearly too
-  ctx.fillStyle = '#aa2222';
-  ctx.fillRect(3, h - 5, Math.max(2, Math.floor(w * 0.2)), 2);
-  ctx.fillRect(w - 3 - Math.max(2, Math.floor(w * 0.2)), h - 5, Math.max(2, Math.floor(w * 0.2)), 2);
-
-  // Wheels — pure black, bigger than before so they read at any scale.
-  // Positioned so they slightly protrude from the hull (classic top-down
-  // car silhouette) which also gives the sprite a recognisable outline.
+// Shared 4-wheel drawer + forward/rear markers, used by every car-like silhouette.
+// Callers still draw their own hull + windows on top of this base pass.
+function drawBaseCar(ctx: SKRSContext2D, w: number, h: number, wheelSize = 4) {
   ctx.fillStyle = '#000000';
   const wheelH = Math.max(4, Math.round(h * 0.18));
   const frontY = Math.round(h * 0.22);
   const rearY  = Math.round(h * 0.66);
-  // Outline the wheels in white so they stand out against any body colour
   ctx.fillRect(-1, frontY, wheelSize + 1, wheelH);
   ctx.fillRect(w - wheelSize, frontY, wheelSize + 1, wheelH);
   ctx.fillRect(-1, rearY, wheelSize + 1, wheelH);
@@ -104,6 +60,141 @@ function carBody(ctx: SKRSContext2D, w: number, h: number, opts?: { windshieldRa
   ctx.strokeRect(w - wheelSize, frontY, wheelSize + 1, wheelH);
   ctx.strokeRect(-1, rearY, wheelSize + 1, wheelH);
   ctx.strokeRect(w - wheelSize, rearY, wheelSize + 1, wheelH);
+}
+
+function drawHeadlightsAndChevron(ctx: SKRSContext2D, w: number) {
+  ctx.fillStyle = '#ffffcc';
+  ctx.fillRect(3, 3, Math.max(2, Math.floor(w * 0.2)), 2);
+  ctx.fillRect(w - 3 - Math.max(2, Math.floor(w * 0.2)), 3, Math.max(2, Math.floor(w * 0.2)), 2);
+  ctx.fillStyle = '#ffffff';
+  ctx.beginPath();
+  ctx.moveTo(w / 2, 3);
+  ctx.lineTo(w / 2 + 3, 8);
+  ctx.lineTo(w / 2 - 3, 8);
+  ctx.closePath();
+  ctx.fill();
+}
+
+function drawTailLights(ctx: SKRSContext2D, w: number, h: number) {
+  ctx.fillStyle = '#aa2222';
+  ctx.fillRect(3, h - 5, Math.max(2, Math.floor(w * 0.2)), 2);
+  ctx.fillRect(w - 3 - Math.max(2, Math.floor(w * 0.2)), h - 5, Math.max(2, Math.floor(w * 0.2)), 2);
+}
+
+// Generic 3-box car (sedan / compact / mid-sized): hood, cabin with two
+// windows, short trunk. Wheel size tweakable so subcompacts look narrower.
+function carBody(ctx: SKRSContext2D, w: number, h: number, opts?: { windshieldRatio?: number; wheelSize?: number }) {
+  const wsRatio = opts?.windshieldRatio ?? 0.35;
+  const wheelSize = opts?.wheelSize ?? 4;
+  // Hull
+  ctx.fillStyle = '#c8c8c8';
+  roundedRect(ctx, 2, 2, w - 4, h - 4, 3);
+  ctx.fill();
+  ctx.strokeStyle = '#1a1a1a';
+  ctx.lineWidth = 1;
+  roundedRect(ctx, 2, 2, w - 4, h - 4, 3);
+  ctx.stroke();
+
+  drawHeadlightsAndChevron(ctx, w);
+
+  // Hood / cabin / trunk separation lines for more silhouette depth
+  ctx.strokeStyle = '#5a5a5a';
+  ctx.beginPath();
+  ctx.moveTo(3, Math.round(h * 0.3));
+  ctx.lineTo(w - 3, Math.round(h * 0.3));
+  ctx.moveTo(3, Math.round(h * 0.72));
+  ctx.lineTo(w - 3, Math.round(h * 0.72));
+  ctx.stroke();
+
+  // Windshield + rear window in subtle blue
+  ctx.fillStyle = '#506080';
+  const wsH = Math.round(h * wsRatio * 0.35);
+  const wsY = Math.round(h * 0.3);
+  roundedRect(ctx, 3, wsY, w - 6, wsH, 1);
+  ctx.fill();
+  ctx.fillStyle = '#3e4a60';
+  roundedRect(ctx, 3, Math.round(h * 0.58), w - 6, Math.round(h * 0.12), 1);
+  ctx.fill();
+
+  drawTailLights(ctx, w, h);
+  drawBaseCar(ctx, w, h, wheelSize);
+}
+
+// Luxury coupe: longer hood, smaller fastback cabin, tapered rear — gives
+// the sleek Hotshot/Bombardier profile.
+function luxuryBody(ctx: SKRSContext2D, w: number, h: number) {
+  // Hull with a slight taper at the back
+  ctx.fillStyle = '#c8c8c8';
+  ctx.beginPath();
+  ctx.moveTo(4, 3);
+  ctx.lineTo(w - 4, 3);
+  ctx.lineTo(w - 3, Math.round(h * 0.85));
+  ctx.lineTo(w - 5, h - 3);
+  ctx.lineTo(5, h - 3);
+  ctx.lineTo(3, Math.round(h * 0.85));
+  ctx.closePath();
+  ctx.fill();
+  ctx.strokeStyle = '#1a1a1a';
+  ctx.lineWidth = 1;
+  ctx.stroke();
+
+  drawHeadlightsAndChevron(ctx, w);
+
+  // Long hood → small fastback cabin (roof panel + windshield + rear)
+  ctx.fillStyle = '#506080';
+  roundedRect(ctx, 4, Math.round(h * 0.38), w - 8, Math.round(h * 0.08), 1);
+  ctx.fill();
+  ctx.fillStyle = '#3a3a3a';
+  roundedRect(ctx, 5, Math.round(h * 0.46), w - 10, Math.round(h * 0.18), 2);
+  ctx.fill();
+  ctx.fillStyle = '#3e4a60';
+  roundedRect(ctx, 4, Math.round(h * 0.64), w - 8, Math.round(h * 0.07), 1);
+  ctx.fill();
+
+  drawTailLights(ctx, w, h);
+  drawBaseCar(ctx, w, h);
+}
+
+// Station wagon: flatter roofline, wagon-style rear (no separate trunk),
+// longer greenhouse extending all the way back.
+function stationWagonBody(ctx: SKRSContext2D, w: number, h: number) {
+  ctx.fillStyle = '#c8c8c8';
+  roundedRect(ctx, 2, 2, w - 4, h - 4, 2);
+  ctx.fill();
+  ctx.strokeStyle = '#1a1a1a';
+  ctx.lineWidth = 1;
+  roundedRect(ctx, 2, 2, w - 4, h - 4, 2);
+  ctx.stroke();
+
+  drawHeadlightsAndChevron(ctx, w);
+
+  // Hood / cabin break
+  ctx.strokeStyle = '#5a5a5a';
+  ctx.beginPath();
+  ctx.moveTo(3, Math.round(h * 0.28));
+  ctx.lineTo(w - 3, Math.round(h * 0.28));
+  ctx.stroke();
+  // Windshield
+  ctx.fillStyle = '#506080';
+  roundedRect(ctx, 3, Math.round(h * 0.28), w - 6, Math.round(h * 0.1), 1);
+  ctx.fill();
+  // Extended roof / wagon greenhouse — one long dark-grey panel right to the back
+  ctx.fillStyle = '#4a4a4a';
+  roundedRect(ctx, 4, Math.round(h * 0.38), w - 8, Math.round(h * 0.48), 1);
+  ctx.fill();
+  // Thin rear glass strip
+  ctx.fillStyle = '#3e4a60';
+  roundedRect(ctx, 3, Math.round(h * 0.86), w - 6, Math.round(h * 0.06), 1);
+  ctx.fill();
+  // Roof rails hint (thin dark lines on the sides)
+  ctx.strokeStyle = '#2a2a2a';
+  ctx.beginPath();
+  ctx.moveTo(5, Math.round(h * 0.4)); ctx.lineTo(5, Math.round(h * 0.82));
+  ctx.moveTo(w - 5, Math.round(h * 0.4)); ctx.lineTo(w - 5, Math.round(h * 0.82));
+  ctx.stroke();
+
+  drawTailLights(ctx, w, h);
+  drawBaseCar(ctx, w, h);
 }
 
 function cycleBody(ctx: SKRSContext2D, w: number, h: number) {
@@ -118,7 +209,7 @@ function cycleBody(ctx: SKRSContext2D, w: number, h: number) {
   // Rider silhouette
   ctx.fillStyle = '#4a4a4a';
   ctx.fillRect(Math.floor(w / 2) - 2, Math.floor(h / 2) - 4, 4, 8);
-  // Front wheel dark band
+  // Front + rear wheel bands
   ctx.fillStyle = '#1a1a1a';
   ctx.fillRect(1, 1, w - 2, 2);
   ctx.fillRect(1, h - 3, w - 2, 2);
@@ -157,60 +248,14 @@ function trikeBody(ctx: SKRSContext2D, w: number, h: number) {
   ctx.strokeRect(w - wheelW, h - wheelH - 1, wheelW + 1, wheelH);
 }
 
-// Truck-style body with configurable rear-axle count.
-//   axleCount = 2 → 4 wheels (pickups, vans, campers)
-//   axleCount = 3 → 6 wheels (tractors / big trucks — 1 front axle + 2 rear)
-function truckBody(ctx: SKRSContext2D, w: number, h: number, axleCount: 2 | 3 = 2) {
-  // Cab
-  ctx.fillStyle = '#c8c8c8';
-  roundedRect(ctx, 1, 2, w - 2, Math.floor(h * 0.3), 2);
-  ctx.fill();
-  ctx.strokeStyle = '#2b2b2b';
-  ctx.lineWidth = 1;
-  roundedRect(ctx, 1, 2, w - 2, Math.floor(h * 0.3), 2);
-  ctx.stroke();
-  // Bed / flatbed
-  ctx.fillStyle = '#a8a8a8';
-  ctx.fillRect(2, Math.floor(h * 0.32), w - 4, Math.floor(h * 0.64));
-  ctx.strokeRect(2, Math.floor(h * 0.32), w - 4, Math.floor(h * 0.64));
-  // Windshield
-  ctx.fillStyle = '#506080';
-  ctx.fillRect(3, 4, w - 6, Math.floor(h * 0.16));
-  // Headlight strip + chevron so forward direction reads clearly
-  ctx.fillStyle = '#ffffcc';
-  ctx.fillRect(3, 3, Math.max(2, Math.floor(w * 0.18)), 2);
-  ctx.fillRect(w - 3 - Math.max(2, Math.floor(w * 0.18)), 3, Math.max(2, Math.floor(w * 0.18)), 2);
-  ctx.fillStyle = '#ffffff';
-  ctx.beginPath();
-  ctx.moveTo(w / 2, 3);
-  ctx.lineTo(w / 2 + 3, 8);
-  ctx.lineTo(w / 2 - 3, 8);
-  ctx.closePath();
-  ctx.fill();
-  // Rear tail lights
-  ctx.fillStyle = '#aa2222';
-  ctx.fillRect(3, h - 5, Math.max(2, Math.floor(w * 0.18)), 2);
-  ctx.fillRect(w - 3 - Math.max(2, Math.floor(w * 0.18)), h - 5, Math.max(2, Math.floor(w * 0.18)), 2);
-
-  // Wheels — one front axle + `axleCount - 1` rear axles. Bigger + white-outlined
-  // so 6-wheel tractors clearly look different from 4-wheel pickups/vans.
+// Small helper — draws the side wheels at a given set of row fractions, clean
+// black fills with a thin white outline so they read on any body tint.
+function drawAxles(ctx: SKRSContext2D, w: number, h: number, axleFractions: number[], wheelW = 5, wheelH = 6) {
   ctx.fillStyle = '#000000';
   ctx.strokeStyle = '#ffffff';
   ctx.lineWidth = 0.5;
-  const wheelW = 5, wheelH = 6;
-  // Front axle
-  const frontY = Math.floor(h * 0.12);
-  ctx.fillRect(-1, frontY, wheelW + 1, wheelH);
-  ctx.strokeRect(-1, frontY, wheelW + 1, wheelH);
-  ctx.fillRect(w - wheelW, frontY, wheelW + 1, wheelH);
-  ctx.strokeRect(w - wheelW, frontY, wheelW + 1, wheelH);
-  // Rear axle(s) — space them evenly across the rear two-thirds of the bed
-  const rearStart = 0.60;
-  const rearEnd   = 0.84;
-  const rearAxles = axleCount - 1;
-  for (let i = 0; i < rearAxles; i++) {
-    const t = rearAxles === 1 ? 0.5 : i / (rearAxles - 1);
-    const y = Math.floor(h * (rearStart + (rearEnd - rearStart) * t));
+  for (const yFrac of axleFractions) {
+    const y = Math.floor(h * yFrac);
     ctx.fillRect(-1, y, wheelW + 1, wheelH);
     ctx.strokeRect(-1, y, wheelW + 1, wheelH);
     ctx.fillRect(w - wheelW, y, wheelW + 1, wheelH);
@@ -218,23 +263,178 @@ function truckBody(ctx: SKRSContext2D, w: number, h: number, axleCount: 2 | 3 = 
   }
 }
 
+// Pickup — cab at front, open bed at back. The bed is clearly a different
+// shade and has side-walls to make it read as a pickup, not a hatchback.
+function pickupBody(ctx: SKRSContext2D, w: number, h: number) {
+  // Hull outline
+  ctx.fillStyle = '#c8c8c8';
+  roundedRect(ctx, 2, 2, w - 4, h - 4, 2);
+  ctx.fill();
+  ctx.strokeStyle = '#1a1a1a';
+  ctx.lineWidth = 1;
+  roundedRect(ctx, 2, 2, w - 4, h - 4, 2);
+  ctx.stroke();
+
+  drawHeadlightsAndChevron(ctx, w);
+  // Windshield
+  ctx.fillStyle = '#506080';
+  roundedRect(ctx, 3, Math.round(h * 0.16), w - 6, Math.round(h * 0.1), 1);
+  ctx.fill();
+  // Cab→bed dividing line
+  ctx.strokeStyle = '#3a3a3a';
+  ctx.beginPath();
+  ctx.moveTo(3, Math.round(h * 0.42));
+  ctx.lineTo(w - 3, Math.round(h * 0.42));
+  ctx.stroke();
+  // Bed (dark/empty, with inner wall outline)
+  ctx.fillStyle = '#7a7a7a';
+  ctx.fillRect(3, Math.round(h * 0.42), w - 6, Math.round(h * 0.54));
+  ctx.strokeStyle = '#3a3a3a';
+  ctx.strokeRect(5, Math.round(h * 0.44) + 2, w - 10, Math.round(h * 0.50) - 2);
+  // Tailgate hinge line
+  ctx.beginPath();
+  ctx.moveTo(3, h - 5);
+  ctx.lineTo(w - 3, h - 5);
+  ctx.stroke();
+
+  drawTailLights(ctx, w, h);
+  drawAxles(ctx, w, h, [0.16, 0.76]);
+}
+
+// Van — single box silhouette, small cab window at front, cargo area fills
+// the rest. Taller/boxier feel from the lack of hood/bed separation.
+function vanBody(ctx: SKRSContext2D, w: number, h: number) {
+  ctx.fillStyle = '#c8c8c8';
+  ctx.fillRect(2, 2, w - 4, h - 4);
+  ctx.strokeStyle = '#1a1a1a';
+  ctx.lineWidth = 1;
+  ctx.strokeRect(2, 2, w - 4, h - 4);
+
+  drawHeadlightsAndChevron(ctx, w);
+  // Cab windshield — single wide pane because there's no hood
+  ctx.fillStyle = '#506080';
+  ctx.fillRect(3, Math.round(h * 0.1), w - 6, Math.round(h * 0.11));
+  // Side panel ridges (hint of cargo body)
+  ctx.strokeStyle = '#888';
+  for (let i = 1; i < 4; i++) {
+    const y = Math.round(h * (0.28 + 0.16 * i));
+    ctx.beginPath();
+    ctx.moveTo(4, y);
+    ctx.lineTo(w - 4, y);
+    ctx.stroke();
+  }
+  // Rear roll-up door outline
+  ctx.strokeStyle = '#3a3a3a';
+  ctx.strokeRect(4, h - 9, w - 8, 6);
+
+  drawTailLights(ctx, w, h);
+  drawAxles(ctx, w, h, [0.15, 0.78]);
+}
+
+// Camper — truck cab at front, wider / taller-looking living module at back
+// with the characteristic "over-cab" bulge.
+function camperBody(ctx: SKRSContext2D, w: number, h: number) {
+  // Cab section (front ~30%)
+  ctx.fillStyle = '#c8c8c8';
+  roundedRect(ctx, 2, 2, w - 4, Math.round(h * 0.28), 2);
+  ctx.fill();
+  ctx.strokeStyle = '#1a1a1a';
+  ctx.lineWidth = 1;
+  roundedRect(ctx, 2, 2, w - 4, Math.round(h * 0.28), 2);
+  ctx.stroke();
+
+  // Camper body — bigger box overhanging the cab slightly
+  ctx.fillStyle = '#b0b0b0';
+  ctx.fillRect(1, Math.round(h * 0.26), w - 2, Math.round(h * 0.7));
+  ctx.strokeRect(1, Math.round(h * 0.26), w - 2, Math.round(h * 0.7));
+
+  drawHeadlightsAndChevron(ctx, w);
+  // Cab windshield
+  ctx.fillStyle = '#506080';
+  ctx.fillRect(3, Math.round(h * 0.12), w - 6, Math.round(h * 0.08));
+
+  // Camper side window + roof vent
+  ctx.fillStyle = '#3e4a60';
+  ctx.fillRect(Math.round(w * 0.35), Math.round(h * 0.38), Math.round(w * 0.3), 3);
+  ctx.fillStyle = '#4a4a4a';
+  ctx.fillRect(w / 2 - 3, Math.round(h * 0.55), 6, 5);
+  // Camper rear door
+  ctx.strokeStyle = '#3a3a3a';
+  ctx.strokeRect(Math.round(w * 0.38), h - 10, Math.round(w * 0.24), 7);
+
+  drawTailLights(ctx, w, h);
+  drawAxles(ctx, w, h, [0.14, 0.80]);
+}
+
+// Big-rig truck (tractor): short cab + very long flatbed. Used when
+// axleCount=3 (6 wheels) — see call site.
+function bigTruckBody(ctx: SKRSContext2D, w: number, h: number) {
+  // Cab (front ~22%)
+  ctx.fillStyle = '#c8c8c8';
+  roundedRect(ctx, 2, 2, w - 4, Math.round(h * 0.22), 2);
+  ctx.fill();
+  ctx.strokeStyle = '#1a1a1a';
+  ctx.lineWidth = 1;
+  roundedRect(ctx, 2, 2, w - 4, Math.round(h * 0.22), 2);
+  ctx.stroke();
+
+  // Flatbed (dark — empty)
+  ctx.fillStyle = '#6a6a6a';
+  ctx.fillRect(2, Math.round(h * 0.24), w - 4, Math.round(h * 0.72));
+  ctx.strokeRect(2, Math.round(h * 0.24), w - 4, Math.round(h * 0.72));
+  // Fifth-wheel / kingpin plate just behind cab
+  ctx.fillStyle = '#333';
+  ctx.beginPath();
+  ctx.arc(w / 2, Math.round(h * 0.3), 3, 0, Math.PI * 2);
+  ctx.fill();
+  // Bed slats (horizontal lines to suggest planking)
+  ctx.strokeStyle = '#4a4a4a';
+  for (let i = 1; i < 5; i++) {
+    const y = Math.round(h * (0.34 + 0.12 * i));
+    ctx.beginPath();
+    ctx.moveTo(4, y);
+    ctx.lineTo(w - 4, y);
+    ctx.stroke();
+  }
+
+  drawHeadlightsAndChevron(ctx, w);
+  // Cab windshield
+  ctx.fillStyle = '#506080';
+  ctx.fillRect(3, Math.round(h * 0.08), w - 6, Math.round(h * 0.08));
+
+  drawTailLights(ctx, w, h);
+  // Front axle + 2 rear axles spaced across the rear half
+  drawAxles(ctx, w, h, [0.12, 0.62, 0.82]);
+}
+
+
+// Trailer — long cargo box with visible panel seams, roof-mounted cupola
+// turrets (Econoforce reference), and a kingpin diamond at the front. Tandem
+// rear axles (4 wheels) drawn via drawAxles.
 function trailerBody(ctx: SKRSContext2D, w: number, h: number) {
-  // Plain cargo box
   ctx.fillStyle = '#b8b8b8';
   ctx.fillRect(2, 1, w - 4, h - 2);
   ctx.strokeStyle = '#2b2b2b';
   ctx.lineWidth = 1;
   ctx.strokeRect(2, 1, w - 4, h - 2);
-  // Ridges (segment lines)
+
+  // Panel seams — horizontal lines dividing the container into sections
   ctx.strokeStyle = '#888';
-  for (let i = 1; i < 5; i++) {
-    const y = (h * i) / 5;
+  for (let i = 1; i < 6; i++) {
+    const y = (h * i) / 6;
     ctx.beginPath();
     ctx.moveTo(3, y);
     ctx.lineTo(w - 3, y);
     ctx.stroke();
   }
-  // Coupling / kingpin marker at the front — tiny diamond so trailer direction reads
+  // Central spine (single dark line down the middle — suggests a reinforced frame)
+  ctx.strokeStyle = '#6a6a6a';
+  ctx.beginPath();
+  ctx.moveTo(w / 2, 3);
+  ctx.lineTo(w / 2, h - 3);
+  ctx.stroke();
+
+  // Kingpin at the front — small diamond outline
   ctx.fillStyle = '#555';
   ctx.beginPath();
   ctx.moveTo(w / 2, 2);
@@ -243,19 +443,34 @@ function trailerBody(ctx: SKRSContext2D, w: number, h: number) {
   ctx.lineTo(w / 2 - 2, 5);
   ctx.closePath();
   ctx.fill();
-  // Rear tandem axles — 2 axles × 2 wheels = 4 wheels, both axles clustered
-  // at the rear third (classic semi-trailer layout).
-  ctx.fillStyle = '#000000';
-  ctx.strokeStyle = '#ffffff';
-  ctx.lineWidth = 0.5;
-  const wheelW = 5, wheelH = 8;
-  const axleYs = [Math.floor(h * 0.66), Math.floor(h * 0.82)];
-  for (const y of axleYs) {
-    ctx.fillRect(-1, y, wheelW + 1, wheelH);
-    ctx.strokeRect(-1, y, wheelW + 1, wheelH);
-    ctx.fillRect(w - wheelW, y, wheelW + 1, wheelH);
-    ctx.strokeRect(w - wheelW, y, wheelW + 1, wheelH);
+
+  // Cupola turret rings along the roof — 2 symmetric pairs, evenly spaced.
+  // Sit them on the centreline so they read as rotating positions.
+  const cupolaYs = [h * 0.30, h * 0.58];
+  ctx.fillStyle = '#3a3a3a';
+  ctx.strokeStyle = '#1a1a1a';
+  for (const cy of cupolaYs) {
+    ctx.beginPath();
+    ctx.arc(w / 2, cy, 3, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.stroke();
+    ctx.fillStyle = '#6a6a6a';
+    ctx.beginPath();
+    ctx.arc(w / 2, cy, 1.5, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.fillStyle = '#3a3a3a';
   }
+
+  // Rear door indication
+  ctx.strokeStyle = '#3a3a3a';
+  ctx.strokeRect(4, h - 10, w - 8, 7);
+  ctx.beginPath();
+  ctx.moveTo(w / 2, h - 10);
+  ctx.lineTo(w / 2, h - 3);
+  ctx.stroke();
+
+  // Tandem rear axles
+  drawAxles(ctx, w, h, [0.66, 0.82], 5, 8);
 }
 
 const BODIES: BodySpec[] = [
@@ -267,12 +482,12 @@ const BODIES: BodySpec[] = [
   { id: 'compact',      w: 20, h: 30, draw: (c, w, h) => carBody(c, w, h) },
   { id: 'mid_sized',    w: 20, h: 32, draw: (c, w, h) => carBody(c, w, h) },
   { id: 'sedan',        w: 22, h: 34, draw: (c, w, h) => carBody(c, w, h, { windshieldRatio: 0.4 }) },
-  { id: 'station_wagon',w: 22, h: 36, draw: (c, w, h) => carBody(c, w, h, { windshieldRatio: 0.3 }) },
-  { id: 'luxury',       w: 24, h: 38, draw: (c, w, h) => carBody(c, w, h, { windshieldRatio: 0.42 }) },
-  { id: 'pickup',       w: 22, h: 40, draw: (c, w, h) => truckBody(c, w, h, 2) },
-  { id: 'van',          w: 24, h: 42, draw: (c, w, h) => truckBody(c, w, h, 2) },
-  { id: 'camper',       w: 24, h: 44, draw: (c, w, h) => truckBody(c, w, h, 2) },
-  { id: 'truck',        w: 26, h: 52, draw: (c, w, h) => truckBody(c, w, h, 3) },
+  { id: 'station_wagon',w: 22, h: 36, draw: stationWagonBody },
+  { id: 'luxury',       w: 24, h: 38, draw: luxuryBody },
+  { id: 'pickup',       w: 22, h: 40, draw: pickupBody },
+  { id: 'van',          w: 24, h: 42, draw: vanBody },
+  { id: 'camper',       w: 24, h: 44, draw: camperBody },
+  { id: 'truck',        w: 26, h: 52, draw: bigTruckBody },
   { id: 'trailer',      w: 26, h: 54, draw: trailerBody },
 ];
 
