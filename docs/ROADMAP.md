@@ -76,6 +76,8 @@ live at http://10.202.28.192:3001.
 - [x] `town-square` map (composed with snippets)
 - [x] Map snippet library + composer (`road_straight_20`, `road_bend_ws`, `road_t`, `road_cross`, `corner_turret`, `gatehouse`, `wall_straight_20`, `diner`, `gas_station`)
 - [x] Map selection in UI — garage squad modal has a map picker (Truck Stop / Town Square / Open Arena); selection persists via localStorage
+- [ ] **Detailed map rendering** — currently walls render as flat blue rectangles. Upgrade to colour-coded by `wall.type` (building = warm brown, turret = dark grey, wall = light grey), roof/window detail per building, shop signage for fixtures (diner = red "DINER" sign, gas_station = pump markers). No new data needed beyond what snippets already carry.
+- [ ] **Seed-based procedural map generation** — given a seed + parameters (size, theme, density, road count), compose a fresh map from the snippet library. Every match can be unique; shareable seeds make fights reproducible. Needs: seed-aware snippet placement algorithm, connector auto-alignment for road networks, collision-free building placement. Builds on the existing snippet composer.
 
 ---
 
@@ -209,7 +211,40 @@ From [`2026-03-27-carwars-design.md`](plans/2026-03-27-carwars-design.md). No pl
 
 ---
 
-## 10. Outstanding polish / loose ends
+## 10. UI Redesign
+
+No plan doc yet — needs a design + plan pair before execution. Current UI
+is monospace-on-black with minimal styling, functional but utilitarian. A
+coherent visual overhaul would elevate the whole feel.
+
+### Scope candidates (not yet scoped — pick before planning)
+
+- [ ] **Visual theme** — post-apocalyptic / gritty cyberpunk styling across
+  all scenes (garage, town, job board, designer, arena HUD). Colour palette,
+  typography, iconography, panel/border treatments
+- [ ] **Garage redesign** — card-based vehicle list with thumbnails (use the
+  sprite factory to render a miniature of each car), stat bars (HP/armor/value),
+  clearer action grouping (repair/fight/sell), action button icons
+- [ ] **Job board redesign** — job cards with flavour art, difficulty/payout
+  visualisation, rival-gang emblems (once Phase 4 lands)
+- [ ] **Vehicle designer redesign** — live preview sprite that updates as you
+  tweak the loadout; cost breakdown panel; armor allocation visualiser
+- [ ] **HUD polish** — icon-based weapon selector, animated armor bars, damage
+  particles, better minimap
+- [ ] **Post-arena screen** — cinematic outcome reveal with squad portraits,
+  per-driver XP bars, rival aftermath text (ties into Phase 4)
+- [ ] **Menus and transitions** — scene fade/slide transitions instead of hard
+  cuts; a main menu / pause menu overlay
+
+Recommended phased approach if pursued:
+  1. Define the visual language (colour, type, icons) as a style guide
+  2. Apply it to one scene end-to-end (garage is highest impact) as a proof
+  3. Roll out to remaining scenes one at a time
+  4. Add motion + polish passes last
+
+---
+
+## 11. Outstanding polish / loose ends
 
 Small independent items that don't belong to a larger plan.
 
