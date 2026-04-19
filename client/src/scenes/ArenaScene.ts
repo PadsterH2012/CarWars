@@ -17,6 +17,7 @@ export class ArenaScene extends Phaser.Scene {
   private vehicleTargets = new Map<string, VehicleTarget>();
   private hazardSprites = new Map<string, Phaser.GameObjects.GameObject>();
   private wreckSprites = new Map<string, Phaser.GameObjects.Container>();
+  private squadOrders = new Map<string, import('@carwars/shared').SquadOrder>();
   private zoneState: ZoneState | null = null;
   private cursors!: Phaser.Types.Input.Keyboard.CursorKeys;
   private fireKey!: Phaser.Input.Keyboard.Key;
@@ -68,6 +69,7 @@ export class ArenaScene extends Phaser.Scene {
     this.vehicleTargets.clear();
     this.hazardSprites.clear();
     this.wreckSprites.clear();
+    this.squadOrders.clear();
     this.mapWalls = [];
     this.tilemapLayers = [];
     this.zoneState = null;
@@ -95,8 +97,12 @@ export class ArenaScene extends Phaser.Scene {
         zoneState: this.zoneState,
         myVehicleId: this.myVehicleId,
         squadVehicleIds: this.squadVehicleIds,
-        sendOrder: (vid: string, order: import('@carwars/shared').SquadOrder) =>
-          this.connection.send({ type: 'squad_order', vehicleId: vid, order }),
+        sendOrder: (vid: string, order: import('@carwars/shared').SquadOrder) => {
+          // Track locally so we can draw an indicator over the squadmate sprite
+          if (order.type === 'clear') this.squadOrders.delete(vid);
+          else this.squadOrders.set(vid, order);
+          this.connection.send({ type: 'squad_order', vehicleId: vid, order });
+        },
         onClose: () => this.connection.send({ type: 'unpause' }),
       });
     });
@@ -263,7 +269,10 @@ export class ArenaScene extends Phaser.Scene {
       seen.add(v.id);
       let container = this.vehicleSprites.get(v.id);
       const teamColor = teamColorForVehicle(v, this.myVehicleId, this.squadVehicleIds);
-      const opts = { isPlayer: v.id === this.myVehicleId, teamColor };
+      // Orders only apply to squadmates other than the player-driven primary
+      const isSquadmate = this.squadVehicleIds.includes(v.id) && v.id !== this.myVehicleId;
+      const order = isSquadmate ? this.squadOrders.get(v.id) : undefined;
+      const opts = { isPlayer: v.id === this.myVehicleId, teamColor, order };
 
       if (!container) {
         container = buildVehicleSprite(this, v, opts);
@@ -291,6 +300,7 @@ export class ArenaScene extends Phaser.Scene {
         container.destroy();
         this.vehicleSprites.delete(id);
         this.vehicleTargets.delete(id);
+        this.squadOrders.delete(id); // clear stale order when squadmate is destroyed
       }
     });
 

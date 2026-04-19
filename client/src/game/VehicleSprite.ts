@@ -85,6 +85,17 @@ function weaponAnchor(arc: WeaponMount['arc'], body: BodyDims): { x: number; y: 
 export interface VehicleSpriteOpts {
   isPlayer: boolean;
   teamColor: number;  // RGB tint applied to the body sprite (e.g. 0x00ff88 for player green)
+  order?: import('@carwars/shared').SquadOrder;  // active commander order, if any
+}
+
+function orderDisplayText(order: import('@carwars/shared').SquadOrder, idShort: (id: string) => string): string {
+  switch (order.type) {
+    case 'attack':  return `▶ ATK ${idShort(order.targetId)}`;
+    case 'move':    return `→ MOVE (${order.x.toFixed(0)},${order.y.toFixed(0)})`;
+    case 'follow':  return '⎔ FOLLOW';
+    case 'retreat': return '⤺ RETREAT';
+    default:        return '';
+  }
 }
 
 // Builds a layered container: body sprite → weapon overlays → armor bars → label.
@@ -129,7 +140,14 @@ export function buildVehicleSprite(
     fontSize: '9px', color: '#ffffff', fontFamily: 'monospace',
   }).setOrigin(0.5).setName('label');
 
-  const children = [fireGlow, bodySprite, ...weaponLayers, barFront, barBack, barLeft, barRight, label];
+  // Order indicator — hidden unless the sprite is a squadmate with an active order.
+  // Populated externally via updateVehicleSprite's `order` option.
+  const orderLabel = scene.add.text(0, -barH / 2 - 14, '', {
+    fontSize: '11px', color: '#aaffaa', fontFamily: 'monospace', fontStyle: 'bold',
+    backgroundColor: '#001a11', padding: { x: 3, y: 1 },
+  }).setOrigin(0.5).setVisible(false).setName('order');
+
+  const children = [fireGlow, bodySprite, ...weaponLayers, barFront, barBack, barLeft, barRight, label, orderLabel];
   const container = scene.add.container(0, 0, children).setDepth(2);
   // Store dims for update-time calcs
   (container as Phaser.GameObjects.Container & { bodyDims?: BodyDims }).bodyDims = dims;
@@ -197,6 +215,17 @@ export function updateVehicleSprite(
   // State overlays
   const fireGlow = container.getByName('fire-glow') as Phaser.GameObjects.Arc | null;
   if (fireGlow) fireGlow.setVisible(!!damage.onFire);
+
+  // Commander order indicator — visible only if an order is set
+  const orderLabel = container.getByName('order') as Phaser.GameObjects.Text | null;
+  if (orderLabel) {
+    if (opts.order) {
+      orderLabel.setText(orderDisplayText(opts.order, id => id.slice(0, 6)));
+      orderLabel.setVisible(true);
+    } else {
+      orderLabel.setVisible(false);
+    }
+  }
 }
 
 export function teamColorForVehicle(v: VehicleState, myVehicleId: string, squadIds: string[] = []): number {
