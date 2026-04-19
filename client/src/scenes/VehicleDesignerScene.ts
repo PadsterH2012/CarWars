@@ -424,6 +424,22 @@ export class VehicleDesignerScene extends Phaser.Scene {
       { key: 'right', rx: cx + 50, ry: cy - 40, rw: 30,  rh: 80,  lx: cx + 65, ly: cy      },
     ];
 
+    // Static FRONT / BACK / LEFT / RIGHT labels so the schematic's orientation
+    // is obvious at any zoom. Drawn on top of the armor panels, small and
+    // pale so they don't obscure the armor value text underneath.
+    this.add.text(cx, cy - 105, 'FRONT', {
+      fontSize: '10px', fontFamily: 'monospace', color: '#ffcc88', fontStyle: 'bold'
+    }).setOrigin(0.5);
+    this.add.text(cx, cy + 105, 'BACK', {
+      fontSize: '10px', fontFamily: 'monospace', color: '#ccaa66'
+    }).setOrigin(0.5);
+    this.add.text(cx - 105, cy, 'L', {
+      fontSize: '10px', fontFamily: 'monospace', color: '#bbbbbb'
+    }).setOrigin(0.5);
+    this.add.text(cx + 105, cy, 'R', {
+      fontSize: '10px', fontFamily: 'monospace', color: '#bbbbbb'
+    }).setOrigin(0.5);
+
     // Create interactive hit zones (invisible rects) and value labels
     panels.forEach(({ key, rx, ry, rw, rh, lx, ly }) => {
       // Invisible hit zone
@@ -516,6 +532,16 @@ export class VehicleDesignerScene extends Phaser.Scene {
       this.schematicGfx.lineStyle(1, 0x444466, 1);
       this.schematicGfx.strokeRect(cx - 50, cy - 60, 100, 120);
     }
+
+    // Direction indicators: a bright up-arrow above the body + clear F/B
+    // letters on the armor panel labels, so front/back is obvious at a glance.
+    this.schematicGfx.fillStyle(0xffff88, 0.9);
+    this.schematicGfx.beginPath();
+    this.schematicGfx.moveTo(cx,     cy - 100);
+    this.schematicGfx.lineTo(cx + 6, cy - 92);
+    this.schematicGfx.lineTo(cx - 6, cy - 92);
+    this.schematicGfx.closePath();
+    this.schematicGfx.fillPath();
 
     // Panel definitions
     type FaceKey = 'front' | 'back' | 'left' | 'right';

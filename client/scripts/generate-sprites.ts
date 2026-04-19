@@ -45,17 +45,31 @@ interface BodySpec {
 
 function carBody(ctx: SKRSContext2D, w: number, h: number, opts?: { windshieldRatio?: number; wheelSize?: number }) {
   const wsRatio = opts?.windshieldRatio ?? 0.35;
-  const wheelSize = opts?.wheelSize ?? 3;
+  const wheelSize = opts?.wheelSize ?? 4;
   // Hull — rounded rect, tintable via neutral fill
   ctx.fillStyle = '#c8c8c8';
-  roundedRect(ctx, 1, 2, w - 2, h - 4, 3);
+  roundedRect(ctx, 2, 2, w - 4, h - 4, 3);
   ctx.fill();
   // Outline for definition
-  ctx.strokeStyle = '#2b2b2b';
+  ctx.strokeStyle = '#1a1a1a';
   ctx.lineWidth = 1;
-  roundedRect(ctx, 1, 2, w - 2, h - 4, 3);
+  roundedRect(ctx, 2, 2, w - 4, h - 4, 3);
   ctx.stroke();
-  // Windshield (front)
+
+  // Front marker: bright headlights strip + white chevron on the bonnet so
+  // the forward direction reads immediately even on a tinted sprite.
+  ctx.fillStyle = '#ffffcc';   // warm white — stays bright under any tint
+  ctx.fillRect(3, 3, Math.max(2, Math.floor(w * 0.2)), 2);
+  ctx.fillRect(w - 3 - Math.max(2, Math.floor(w * 0.2)), 3, Math.max(2, Math.floor(w * 0.2)), 2);
+  ctx.fillStyle = '#ffffff';
+  ctx.beginPath();
+  ctx.moveTo(w / 2, 3);
+  ctx.lineTo(w / 2 + 3, 8);
+  ctx.lineTo(w / 2 - 3, 8);
+  ctx.closePath();
+  ctx.fill();
+
+  // Windshield (front) — subtle blue, doesn't need tint contrast
   ctx.fillStyle = '#506080';
   const wsH = Math.round(h * wsRatio * 0.35);
   const wsY = Math.round(h * 0.22);
@@ -66,12 +80,30 @@ function carBody(ctx: SKRSContext2D, w: number, h: number, opts?: { windshieldRa
   ctx.fillStyle = '#3e4a60';
   roundedRect(ctx, 3, rwY, w - 6, Math.round(h * 0.1), 1);
   ctx.fill();
-  // Wheels
-  ctx.fillStyle = '#1a1a1a';
-  ctx.fillRect(0, Math.round(h * 0.25), wheelSize, Math.round(h * 0.18));
-  ctx.fillRect(w - wheelSize, Math.round(h * 0.25), wheelSize, Math.round(h * 0.18));
-  ctx.fillRect(0, Math.round(h * 0.65), wheelSize, Math.round(h * 0.18));
-  ctx.fillRect(w - wheelSize, Math.round(h * 0.65), wheelSize, Math.round(h * 0.18));
+
+  // Rear marker — dim red tail lights so back reads clearly too
+  ctx.fillStyle = '#aa2222';
+  ctx.fillRect(3, h - 5, Math.max(2, Math.floor(w * 0.2)), 2);
+  ctx.fillRect(w - 3 - Math.max(2, Math.floor(w * 0.2)), h - 5, Math.max(2, Math.floor(w * 0.2)), 2);
+
+  // Wheels — pure black, bigger than before so they read at any scale.
+  // Positioned so they slightly protrude from the hull (classic top-down
+  // car silhouette) which also gives the sprite a recognisable outline.
+  ctx.fillStyle = '#000000';
+  const wheelH = Math.max(4, Math.round(h * 0.18));
+  const frontY = Math.round(h * 0.22);
+  const rearY  = Math.round(h * 0.66);
+  // Outline the wheels in white so they stand out against any body colour
+  ctx.fillRect(-1, frontY, wheelSize + 1, wheelH);
+  ctx.fillRect(w - wheelSize, frontY, wheelSize + 1, wheelH);
+  ctx.fillRect(-1, rearY, wheelSize + 1, wheelH);
+  ctx.fillRect(w - wheelSize, rearY, wheelSize + 1, wheelH);
+  ctx.strokeStyle = '#ffffff';
+  ctx.lineWidth = 0.5;
+  ctx.strokeRect(-1, frontY, wheelSize + 1, wheelH);
+  ctx.strokeRect(w - wheelSize, frontY, wheelSize + 1, wheelH);
+  ctx.strokeRect(-1, rearY, wheelSize + 1, wheelH);
+  ctx.strokeRect(w - wheelSize, rearY, wheelSize + 1, wheelH);
 }
 
 function cycleBody(ctx: SKRSContext2D, w: number, h: number) {
