@@ -25,6 +25,7 @@ export class ArenaScene extends Phaser.Scene {
   private myVehicleId = 'v1';
   private squadVehicleIds: string[] = [];
   private mapId = 'truck-stop';
+  private gangPrimaryColour: number | undefined;
   private token = '';
   private jobId = '';
   private lastInputSent = 0;
@@ -51,13 +52,14 @@ export class ArenaScene extends Phaser.Scene {
     super({ key: 'ArenaScene' });
   }
 
-  init(data: { token?: string; vehicleId?: string; jobId?: string; squadVehicleIds?: string[]; mapId?: string }): void {
+  init(data: { token?: string; vehicleId?: string; jobId?: string; squadVehicleIds?: string[]; mapId?: string; gangPrimaryColour?: number }): void {
     this.token = data.token ?? '';
     this.myVehicleId = data.vehicleId ?? 'v1';
     this.squadVehicleIds = data.squadVehicleIds && data.squadVehicleIds.length > 0
       ? data.squadVehicleIds
       : [this.myVehicleId];
     this.mapId = data.mapId ?? 'truck-stop';
+    this.gangPrimaryColour = data.gangPrimaryColour;
     this.jobId = data.jobId ?? '';
 
     // Class-field state must be reset on every scene restart — Phaser reuses the
@@ -268,7 +270,7 @@ export class ArenaScene extends Phaser.Scene {
     state.vehicles.forEach(v => {
       seen.add(v.id);
       let container = this.vehicleSprites.get(v.id);
-      const teamColor = teamColorForVehicle(v, this.myVehicleId, this.squadVehicleIds);
+      const teamColor = teamColorForVehicle(v, this.myVehicleId, this.squadVehicleIds, this.gangPrimaryColour);
       // Orders only apply to squadmates other than the player-driven primary
       const isSquadmate = this.squadVehicleIds.includes(v.id) && v.id !== this.myVehicleId;
       const order = isSquadmate ? this.squadOrders.get(v.id) : undefined;

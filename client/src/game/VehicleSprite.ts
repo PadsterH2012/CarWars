@@ -228,9 +228,28 @@ export function updateVehicleSprite(
   }
 }
 
-export function teamColorForVehicle(v: VehicleState, myVehicleId: string, squadIds: string[] = []): number {
-  if (v.id === myVehicleId) return 0x00ff88;           // primary (you) — bright green
-  if (squadIds.includes(v.id)) return 0x66cc88;        // your squadmates — muted green
-  if (v.playerId === 'ai-team') return 0xff4444;       // enemies — red
-  return 0xffaa00;                                      // other (NPC traffic etc) — amber
+// Slightly lighten/darken a colour by a signed factor (-1..1). +0.3 → brighter, -0.3 → darker.
+function shiftBrightness(rgb: number, factor: number): number {
+  const r = (rgb >> 16) & 0xff;
+  const g = (rgb >> 8) & 0xff;
+  const b =  rgb       & 0xff;
+  const clamp = (n: number) => Math.max(0, Math.min(255, Math.round(n)));
+  const adj = (n: number) => factor >= 0 ? n + (255 - n) * factor : n * (1 + factor);
+  return (clamp(adj(r)) << 16) | (clamp(adj(g)) << 8) | clamp(adj(b));
+}
+
+export function teamColorForVehicle(
+  v: VehicleState,
+  myVehicleId: string,
+  squadIds: string[] = [],
+  gangPrimaryColour?: number,
+): number {
+  // Player's squad uses the gang primary colour when one is configured; primary is
+  // the bright version, squadmates are a darker shade for distinction.
+  if (v.id === myVehicleId) return gangPrimaryColour ?? 0x00ff88;
+  if (squadIds.includes(v.id)) {
+    return gangPrimaryColour !== undefined ? shiftBrightness(gangPrimaryColour, -0.3) : 0x66cc88;
+  }
+  if (v.playerId === 'ai-team') return 0xff4444;  // enemies
+  return 0xffaa00;                                 // other (NPC traffic etc)
 }

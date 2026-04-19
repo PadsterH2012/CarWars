@@ -8,6 +8,7 @@ import { economyRouter, jobsRouter } from './api/economy';
 import { divisionRouter } from './api/division';
 import { zonesRouter } from './api/zones';
 import { designRouter } from './api/design';
+import { gangsRouter } from './api/gangs';
 import { requireAuth, AuthRequest } from './api/middleware';
 import { getDb } from './db/client';
 
@@ -26,6 +27,7 @@ export function createApp() {
   app.use('/api/jobs', jobsRouter);
   app.use('/api/division', divisionRouter);
   app.use('/api/zones', zonesRouter);
+  app.use('/api/gangs', gangsRouter);
 
   app.get('/api/me', requireAuth, async (req: AuthRequest, res) => {
     const db = getDb();

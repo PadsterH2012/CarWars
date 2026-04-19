@@ -66,8 +66,82 @@ DO $$ BEGIN
   END IF;
 END $$;
 
+-- Gangs (added 2026-04-19 — Gang Management Phase 3)
+CREATE TABLE IF NOT EXISTS gangs (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  owner_player_id UUID UNIQUE NOT NULL REFERENCES players(id) ON DELETE CASCADE,
+  name TEXT NOT NULL,
+  primary_colour INTEGER NOT NULL DEFAULT 52616, -- 0x00CD68 (default green)
+  secondary_colour INTEGER NOT NULL DEFAULT 6710886, -- 0x666666 (default grey)
+  treasury INTEGER NOT NULL DEFAULT 0,
+  reputation INTEGER NOT NULL DEFAULT 0,
+  created_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+-- Add gang_id FK to vehicles + drivers (nullable during the migration window)
+DO $$ BEGIN
+  IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='vehicles' AND column_name='gang_id') THEN
+    ALTER TABLE vehicles ADD COLUMN gang_id UUID REFERENCES gangs(id) ON DELETE CASCADE;
+  END IF;
+END $$;
+DO $$ BEGIN
+  IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='drivers' AND column_name='gang_id') THEN
+    ALTER TABLE drivers ADD COLUMN gang_id UUID REFERENCES gangs(id) ON DELETE CASCADE;
+  END IF;
+END $$;
+
+-- Backfill: every player without a gang gets a default one, treasury = current money
+INSERT INTO gangs (owner_player_id, name, treasury)
+SELECT p.id, p.username || '''s Gang', p.money
+FROM players p
+LEFT JOIN gangs g ON g.owner_player_id = p.id
+WHERE g.id IS NULL;
+
+-- Backfill vehicles.gang_id from player's gang
+UPDATE vehicles v SET gang_id = g.id
+FROM gangs g
+WHERE g.owner_player_id = v.player_id AND v.gang_id IS NULL;
+
+-- Backfill drivers.gang_id from player's gang
+UPDATE drivers d SET gang_id = g.id
+FROM gangs g
+WHERE g.owner_player_id = d.player_id AND d.gang_id IS NULL;
+
+-- Trigger: keep gangs.treasury in sync with players.money so existing money-update
+-- paths automatically credit/debit the gang. One-way for Phase 3; later phases will
+-- retire players.money entirely and move the source of truth to gangs.treasury.
+CREATE OR REPLACE FUNCTION sync_gang_treasury() RETURNS TRIGGER AS $$
+BEGIN
+  UPDATE gangs SET treasury = NEW.money WHERE owner_player_id = NEW.id;
+  RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+DROP TRIGGER IF EXISTS trg_sync_gang_treasury ON players;
+CREATE TRIGGER trg_sync_gang_treasury
+AFTER UPDATE OF money ON players
+FOR EACH ROW
+WHEN (OLD.money IS DISTINCT FROM NEW.money)
+EXECUTE FUNCTION sync_gang_treasury();
+
+-- Same for reputation
+CREATE OR REPLACE FUNCTION sync_gang_reputation() RETURNS TRIGGER AS $$
+BEGIN
+  UPDATE gangs SET reputation = NEW.reputation WHERE owner_player_id = NEW.id;
+  RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+DROP TRIGGER IF EXISTS trg_sync_gang_reputation ON players;
+CREATE TRIGGER trg_sync_gang_reputation
+AFTER UPDATE OF reputation ON players
+FOR EACH ROW
+WHEN (OLD.reputation IS DISTINCT FROM NEW.reputation)
+EXECUTE FUNCTION sync_gang_reputation();
+
 -- Indexes for frequent foreign key lookups
 CREATE INDEX IF NOT EXISTS idx_vehicles_player_id ON vehicles(player_id);
+CREATE INDEX IF NOT EXISTS idx_vehicles_gang_id ON vehicles(gang_id);
 CREATE INDEX IF NOT EXISTS idx_drivers_player_id ON drivers(player_id);
+CREATE INDEX IF NOT EXISTS idx_drivers_gang_id ON drivers(gang_id);
 CREATE INDEX IF NOT EXISTS idx_drivers_assigned_vehicle_id ON drivers(assigned_vehicle_id);
 CREATE INDEX IF NOT EXISTS idx_event_history_player_id ON event_history(player_id);
+CREATE INDEX IF NOT EXISTS idx_gangs_owner_player_id ON gangs(owner_player_id);

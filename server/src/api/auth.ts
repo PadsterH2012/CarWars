@@ -16,11 +16,29 @@ authRouter.post('/register', async (req, res) => {
   try {
     const hash = await bcrypt.hash(password, SALT_ROUNDS);
     const db = getDb();
-    const result = await db.query(
-      `INSERT INTO players (username, password_hash) VALUES ($1, $2) RETURNING id`,
-      [username, hash]
-    );
-    const playerId = result.rows[0].id;
+    const client = await db.connect();
+    let playerId: string;
+    try {
+      await client.query('BEGIN');
+      const result = await client.query(
+        `INSERT INTO players (username, password_hash) VALUES ($1, $2) RETURNING id, money`,
+        [username, hash]
+      );
+      playerId = result.rows[0].id;
+      const startingMoney = result.rows[0].money;
+      // Every player gets an implicit gang at registration — treasury starts =
+      // the player's starting money so money accounting stays consistent.
+      await client.query(
+        `INSERT INTO gangs (owner_player_id, name, treasury) VALUES ($1, $2, $3)`,
+        [playerId, `${username}'s Gang`, startingMoney]
+      );
+      await client.query('COMMIT');
+    } catch (e) {
+      await client.query('ROLLBACK');
+      throw e;
+    } finally {
+      client.release();
+    }
     const token = jwt.sign({ playerId }, JWT_SECRET, { expiresIn: '30d' });
     return res.status(201).json({ token, playerId });
   } catch (err: any) {

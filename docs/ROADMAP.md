@@ -173,12 +173,12 @@ live at http://10.202.28.192:3001.
 - [ ] **Tactical overlay updates in real-time** — currently a one-shot snapshot when opened
 
 ### Phase 3 — Gang Entity
-- [ ] New `gangs` DB table (id, owner_player_id, name, primary_colour, secondary_colour, treasury, reputation)
-- [ ] Migration: default gang per player, move `vehicles.player_id` → `vehicles.gang_id`, ditto `drivers`
-- [ ] Gang API: `GET/PATCH /api/gangs/mine`
-- [ ] Garage UI: gang name header + colour picker
-- [ ] Squad vehicle sprite tinting uses gang primary colour
-- [ ] All match rewards credit gang treasury (retire personal `players.money` in UI)
+- [x] `gangs` DB table with name, primary/secondary colour, treasury, reputation
+- [x] Migration: default gang per player created on register; existing players back-filled on startup; `vehicles.gang_id` + `drivers.gang_id` FKs added + populated
+- [x] Gang API: `GET/PATCH /api/gangs/mine` (rename, recolour)
+- [x] Garage UI: gang name header with colour swatch + treasury/reputation line; click name to open settings modal with swatch-based colour picker
+- [x] Squad vehicle sprite tinting uses gang primary colour (primary = bright; mates = darker shade for contrast)
+- [x] DB trigger syncs `players.money ↔ gangs.treasury` so all existing money endpoints (build, repair, sell, arena, salvage, job) automatically credit the gang — no per-endpoint changes needed. Source-of-truth migration to `gangs.treasury` deferred to a later phase.
 
 ### Phase 4 — Persistent Rivals
 - [ ] `rival_gangs` seed table (5–8 authored rivals: names, style, base skill, colours)

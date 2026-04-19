@@ -2,11 +2,13 @@ import Phaser from 'phaser';
 
 interface Vehicle { id: string; name: string; value: number; damage_state: any; loadout: any; in_arena?: boolean; }
 interface Driver { id: string; name: string; skill: number; assigned_vehicle_id: string | null; alive: boolean; }
+interface Gang { id: string; name: string; primary_colour: number; secondary_colour: number; treasury: number; reputation: number; }
 
 export class GarageScene extends Phaser.Scene {
   private token = '';
   private vehicles: Vehicle[] = [];
   private drivers: Driver[] = [];
+  private gang: Gang | null = null;
   private money = 0;
   private lastResult: { prize: number; jobPayout: number } | null = null;
 
@@ -21,23 +23,37 @@ export class GarageScene extends Phaser.Scene {
     const host = window.location.hostname;
 
     // Load player data
-    const [meRes, vRes, dRes] = await Promise.all([
+    const [meRes, vRes, dRes, gRes] = await Promise.all([
       fetch(`http://${host}:3001/api/me`, { headers: { Authorization: `Bearer ${this.token}` } }),
       fetch(`http://${host}:3001/api/vehicles`, { headers: { Authorization: `Bearer ${this.token}` } }),
-      fetch(`http://${host}:3001/api/drivers`, { headers: { Authorization: `Bearer ${this.token}` } })
+      fetch(`http://${host}:3001/api/drivers`, { headers: { Authorization: `Bearer ${this.token}` } }),
+      fetch(`http://${host}:3001/api/gangs/mine`, { headers: { Authorization: `Bearer ${this.token}` } }),
     ]);
     const me = await meRes.json();
     this.money = me.money ?? 0;
     this.vehicles = await vRes.json();
     this.drivers = await dRes.json();
+    if (gRes.ok) this.gang = await gRes.json();
 
     this.add.text(640, 30, 'GARAGE', {
       color: '#ff4444', fontSize: '28px', fontFamily: 'monospace', fontStyle: 'bold'
     }).setOrigin(0.5);
 
-    this.add.text(100, 70, `Money: $${this.money.toLocaleString()} | Division: ${me.division}`, {
-      color: '#ffcc00', fontSize: '16px', fontFamily: 'monospace'
-    });
+    // Gang header — name + colour swatch, treasury, reputation, division
+    if (this.gang) {
+      this.add.rectangle(100, 70, 18, 18, this.gang.primary_colour).setOrigin(0, 0.5).setStrokeStyle(1, 0xffffff);
+      const nameBtn = this.add.text(125, 70, this.gang.name, {
+        color: '#ffffff', fontSize: '18px', fontFamily: 'monospace', fontStyle: 'bold'
+      }).setOrigin(0, 0.5).setInteractive();
+      nameBtn.on('pointerdown', () => this.showGangSettings());
+      this.add.text(100, 95, `Treasury: $${this.gang.treasury.toLocaleString()} | Rep: ${this.gang.reputation} | Division: ${me.division}`, {
+        color: '#ffcc00', fontSize: '14px', fontFamily: 'monospace'
+      });
+    } else {
+      this.add.text(100, 70, `Money: $${this.money.toLocaleString()} | Division: ${me.division}`, {
+        color: '#ffcc00', fontSize: '16px', fontFamily: 'monospace'
+      });
+    }
 
     if (this.lastResult) {
       const total = this.lastResult.prize + this.lastResult.jobPayout;
@@ -282,7 +298,87 @@ export class GarageScene extends Phaser.Scene {
       squadVehicleIds,
       jobId: activeJobId,
       mapId,
+      gangPrimaryColour: this.gang?.primary_colour,
     });
+  }
+
+  private showGangSettings(): void {
+    if (!this.gang) return;
+    const COLOURS = [
+      { value: 0x00cd68, name: 'Green'  },
+      { value: 0xff4400, name: 'Red'    },
+      { value: 0x4488ff, name: 'Blue'   },
+      { value: 0xffaa00, name: 'Amber'  },
+      { value: 0xaa66ff, name: 'Violet' },
+      { value: 0xffffff, name: 'White'  },
+      { value: 0x333333, name: 'Black'  },
+    ];
+
+    const created: Phaser.GameObjects.GameObject[] = [];
+    const overlay = this.add.rectangle(640, 360, 1280, 720, 0x000000, 0.75).setDepth(30).setInteractive();
+    const panel   = this.add.rectangle(640, 360, 560, 360, 0x111122, 0.98).setDepth(31).setStrokeStyle(2, 0x4466aa);
+    const title   = this.add.text(640, 210, 'GANG SETTINGS', {
+      color: '#ffcc00', fontSize: '20px', fontFamily: 'monospace', fontStyle: 'bold'
+    }).setOrigin(0.5).setDepth(32);
+    created.push(overlay, panel, title);
+
+    // Gang name — use a hidden input for typing
+    const nameLabel = this.add.text(400, 260, 'Name:', { color: '#ccc', fontSize: '13px', fontFamily: 'monospace' }).setDepth(32);
+    const nameInput = document.createElement('input');
+    Object.assign(nameInput.style, {
+      position: 'absolute', left: '470px', top: '250px',
+      width: '400px', height: '28px', background: '#222',
+      color: '#fff', border: '1px solid #4466aa', padding: '2px 6px',
+      fontFamily: 'monospace', fontSize: '14px',
+    });
+    nameInput.value = this.gang.name;
+    nameInput.maxLength = 64;
+    document.body.appendChild(nameInput);
+    created.push(nameLabel);
+
+    const makeRow = (label: string, y: number, current: number, onPick: (value: number) => void) => {
+      const lab = this.add.text(400, y, label, { color: '#ccc', fontSize: '13px', fontFamily: 'monospace' }).setDepth(32);
+      created.push(lab);
+      COLOURS.forEach((c, i) => {
+        const sw = this.add.rectangle(470 + i * 42, y + 8, 32, 18, c.value).setDepth(32).setStrokeStyle(
+          c.value === current ? 3 : 1, 0xffffff
+        ).setInteractive();
+        sw.on('pointerdown', () => {
+          onPick(c.value);
+          // Re-render swatch strokes
+          sw.setStrokeStyle(3, 0xffffff);
+        });
+        created.push(sw);
+      });
+    };
+
+    let chosenPrimary = this.gang.primary_colour;
+    let chosenSecondary = this.gang.secondary_colour;
+    makeRow('Primary:',   300, chosenPrimary,   v => { chosenPrimary = v; });
+    makeRow('Secondary:', 340, chosenSecondary, v => { chosenSecondary = v; });
+
+    const saveBtn = this.add.text(540, 480, '[SAVE]', {
+      color: '#00ff88', fontSize: '14px', fontFamily: 'monospace',
+      backgroundColor: '#003322', padding: { x: 8, y: 4 }
+    }).setOrigin(0.5).setDepth(32).setInteractive();
+    const cancelBtn = this.add.text(740, 480, '[CANCEL]', {
+      color: '#888', fontSize: '14px', fontFamily: 'monospace',
+      backgroundColor: '#221122', padding: { x: 8, y: 4 }
+    }).setOrigin(0.5).setDepth(32).setInteractive();
+
+    const destroy = () => { nameInput.remove(); [...created, saveBtn, cancelBtn].forEach(o => o.destroy()); };
+    cancelBtn.on('pointerdown', destroy);
+    saveBtn.on('pointerdown', async () => {
+      const host = window.location.hostname;
+      await fetch(`http://${host}:3001/api/gangs/mine`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${this.token}` },
+        body: JSON.stringify({ name: nameInput.value, primary_colour: chosenPrimary, secondary_colour: chosenSecondary }),
+      });
+      destroy();
+      this.scene.restart({ token: this.token });
+    });
+    created.push(saveBtn, cancelBtn);
   }
 
   private async sellVehicle(vehicleId: string, name: string): Promise<void> {
