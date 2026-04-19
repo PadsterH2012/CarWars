@@ -194,6 +194,28 @@ async function removeClientFromZone(ws: WebSocket): Promise<void> {
             'UPDATE vehicles SET damage_state = $1 WHERE id = $2 AND player_id = $3',
             [JSON.stringify(destroyedState), id, playerId]
           );
+
+          // ── Driver permadeath ──────────────────────────────────────────────
+          // Fire and explosion always kill the driver; kinetic/collision/energy
+          // kills roll a 40% death chance (driver bails in the other 60%).
+          const diesOutright = wreck.causedBy === 'fire' || wreck.causedBy === 'explosion';
+          const dies = diesOutright || Math.random() < 0.4;
+          if (dies) {
+            const dRes = await db.query(
+              `UPDATE drivers SET alive = FALSE, assigned_vehicle_id = NULL
+               WHERE assigned_vehicle_id = $1 AND alive = TRUE
+               RETURNING id, name`,
+              [id]
+            );
+            if (dRes.rows.length) {
+              const dead = dRes.rows[0];
+              console.log(`[driver-death] ${dead.name} (${dead.id}) killed — vehicle ${id} ${wreck.causedBy}`);
+              await db.query(
+                `INSERT INTO event_history (player_id, event_type, result, money_delta) VALUES ($1,'driver_killed',$2,0)`,
+                [playerId, JSON.stringify({ driverId: dead.id, driverName: dead.name, vehicleId: id, cause: wreck.causedBy })]
+              );
+            }
+          }
         }
         if (uuidRe.test(id)) {
           await db.query(`UPDATE vehicles SET in_arena = FALSE WHERE id = $1 AND player_id = $2`, [id, playerId]);

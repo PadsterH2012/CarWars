@@ -75,7 +75,7 @@ live at http://10.202.28.192:3001.
 - [x] `truck-stop` map — fortified 120×75 arena (scaled up from 80×50 for more combat space)
 - [x] `town-square` map (composed with snippets)
 - [x] Map snippet library + composer (`road_straight_20`, `road_bend_ws`, `road_t`, `road_cross`, `corner_turret`, `gatehouse`, `wall_straight_20`, `diner`, `gas_station`)
-- [ ] **Map selection in UI** — `town-square` and `open` exist but can't be chosen; only truck-stop playable from garage
+- [x] Map selection in UI — garage squad modal has a map picker (Truck Stop / Town Square / Open Arena); selection persists via localStorage
 
 ---
 
@@ -161,7 +161,7 @@ live at http://10.202.28.192:3001.
 - [x] AI driver honours orders (targeted attack, waypoint move, formation follow, flee from centroid)
 - [x] `TacticalOverlay` scene: top-down map, click-to-select, click-enemy-to-attack, click-ground-to-move, F/R/C hotkeys
 - [x] T key toggles tactical overlay from arena
-- [ ] **Live order indicators on squadmate sprites in-play** — visual arrows/icons showing active order
+- [x] Live order indicators on squadmate sprites in-play — green label floats above each squadmate showing current order (ATK/MOVE/FOLLOW/RETREAT)
 - [ ] **Tactical overlay updates in real-time** — currently a one-shot snapshot when opened
 
 ### Phase 3 — Gang Entity
@@ -213,7 +213,7 @@ From [`2026-03-27-carwars-design.md`](plans/2026-03-27-carwars-design.md). No pl
 
 Small independent items that don't belong to a larger plan.
 
-- [ ] **Driver permadeath** — `drivers.alive` column exists; nothing flips it to false on fatal damage. Probably wire from `damageState.driverWounded` + kill attribution.
+- [x] Driver permadeath — when a squad vehicle is destroyed, the assigned driver rolls for death. Fire/explosion = always die; other causes = 40% death chance. Dead drivers cleared from `assigned_vehicle_id`, logged as `driver_killed` event.
 - [ ] **Cycle / trike gameplay** — sprites + body types exist, collision half-extents are hard-coded to car dimensions, no real play-testing of 2/3-wheel handling
 - [ ] **Repair UI visibility** — [REPAIR] click just takes money and refreshes; no breakdown of what's fixed or partial repair options
 - [ ] **Ghost cars audit** — any vehicles built before the 2026-04-19 money-deduction fix were free; may want to reconcile historical `players.money` (minor; only affects accounts that built cars pre-fix)
