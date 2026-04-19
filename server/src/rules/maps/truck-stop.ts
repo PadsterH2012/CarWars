@@ -1,11 +1,14 @@
 import type { ArenaMap } from '@carwars/shared';
 
 /**
- * Fortified Truck Stop arena — 80×50 world units (±40x, ±25y).
+ * Fortified Truck Stop arena — 120×75 world units (±60x, ±37.5y).
  * Inspired by the Car Wars Truck Stop supplement map (Steve Jackson Games, 1983).
  *
+ * Uniformly scaled 1.5× from the original 80×50 layout (2026-04-19) to give
+ * more open combat space between buildings.
+ *
  * Layout (landscape):
- *   - Perimeter wall with main gate (top, x=-3..+3) and secondary gate (bottom-right, x=+25..+31)
+ *   - Perimeter wall with main gate (top) and secondary gate (bottom-right)
  *   - 4 corner turrets
  *   - Gatehouse top-center
  *   - Security/living quarters building center-left (L-shaped)
@@ -15,46 +18,46 @@ import type { ArenaMap } from '@carwars/shared';
  */
 export const truckStopMap: ArenaMap = {
   id: 'truck-stop',
-  width: 80,
-  height: 50,
+  width: 120,
+  height: 75,
   walls: [
     // ── Perimeter walls ──────────────────────────────────────────────────────
-    // North wall — gap at x=-3..+3 (main gate, 6 units wide)
-    { x: -21.5, y: -24.5, w: 37, h: 1, type: 'wall' },
-    { x:  21.5, y: -24.5, w: 37, h: 1, type: 'wall' },
-    // South wall — gap at x=+25..+31 (secondary gate, 6 units wide)
-    { x:  -7.5, y:  24.5, w: 65, h: 1, type: 'wall' },
-    { x:  35.5, y:  24.5, w:  9, h: 1, type: 'wall' },
+    // North wall — gap at x=-4.5..+4.5 (main gate, 9 units wide)
+    { x: -32.25, y: -36.75, w: 55.5, h: 1.5, type: 'wall' },
+    { x:  32.25, y: -36.75, w: 55.5, h: 1.5, type: 'wall' },
+    // South wall — gap at x=+37.5..+46.5 (secondary gate, 9 units wide)
+    { x: -11.25, y:  36.75, w: 97.5, h: 1.5, type: 'wall' },
+    { x:  53.25, y:  36.75, w: 13.5, h: 1.5, type: 'wall' },
     // West wall (full height between north/south walls)
-    { x: -39.5, y: 0, w: 1, h: 49, type: 'wall' },
+    { x: -59.25, y: 0, w: 1.5, h: 73.5, type: 'wall' },
     // East wall
-    { x:  39.5, y: 0, w: 1, h: 49, type: 'wall' },
+    { x:  59.25, y: 0, w: 1.5, h: 73.5, type: 'wall' },
 
     // ── Corner turrets ───────────────────────────────────────────────────────
-    { x: -38, y: -23, w: 3, h: 3, type: 'turret' },  // NW
-    { x:  38, y: -23, w: 3, h: 3, type: 'turret' },  // NE
-    { x: -38, y:  23, w: 3, h: 3, type: 'turret' },  // SW
-    { x:  38, y:  23, w: 3, h: 3, type: 'turret' },  // SE
+    { x: -57, y: -34.5, w: 4.5, h: 4.5, type: 'turret' },  // NW
+    { x:  57, y: -34.5, w: 4.5, h: 4.5, type: 'turret' },  // NE
+    { x: -57, y:  34.5, w: 4.5, h: 4.5, type: 'turret' },  // SW
+    { x:  57, y:  34.5, w: 4.5, h: 4.5, type: 'turret' },  // SE
 
     // ── Gatehouse (top-center, near main gate) ───────────────────────────────
-    { x: 0, y: -19, w: 6, h: 4, type: 'building' },
+    { x: 0, y: -28.5, w: 9, h: 6, type: 'building' },
 
     // ── Security / living quarters (center-left, L-shaped) ───────────────────
-    { x: -20, y: -2, w:  8, h: 12, type: 'building' },  // main vertical block
-    { x: -15, y:  3, w:  6, h:  6, type: 'building' },  // horizontal wing
+    { x: -30,   y: -3, w: 12, h: 18, type: 'building' },  // main vertical block
+    { x: -22.5, y:  4.5, w:  9, h:  9, type: 'building' },  // horizontal wing
 
     // ── Power building (center-right, U-shaped) ──────────────────────────────
-    { x:  10, y: -5, w: 3, h:  8, type: 'building' },  // left arm
-    { x:  16, y: -5, w: 3, h:  8, type: 'building' },  // right arm
-    { x:  13, y: -8, w: 9, h:  2, type: 'building' },  // top crossbar
+    { x:  15,   y: -7.5, w:  4.5, h: 12, type: 'building' },  // left arm
+    { x:  24,   y: -7.5, w:  4.5, h: 12, type: 'building' },  // right arm
+    { x:  19.5, y: -12, w: 13.5, h:  3, type: 'building' },   // top crossbar
 
     // ── Main building (bottom half, L-shaped) ────────────────────────────────
-    { x: -22, y: 14, w: 14, h: 10, type: 'building' },  // garage wing (9 bays)
-    { x:  -4, y: 11, w: 24, h: 12, type: 'building' },  // main wing (bar, restaurant, offices)
+    { x: -33, y: 21,   w: 21, h: 15, type: 'building' },  // garage wing (9 bays)
+    { x:  -6, y: 16.5, w: 36, h: 18, type: 'building' },  // main wing
   ],
   spawnPoints: [
-    { x:   0, y:  2, facing:   0, team: 'player' },  // center courtyard, facing north
-    { x: -14, y: -12, facing: 135, team: 'ai' },     // NW area, facing SE
-    { x:  30, y:   5, facing: 270, team: 'ai' },     // east side, facing west — avoids power building crossbar which blocks direct NE→center path
+    { x:   0, y:   3, facing:   0, team: 'player' },  // center courtyard, facing north
+    { x: -21, y: -18, facing: 135, team: 'ai' },      // NW area, facing SE
+    { x:  45, y:   7.5, facing: 270, team: 'ai' },    // east side, facing west
   ],
 };

@@ -208,17 +208,19 @@ export class ArenaScene extends Phaser.Scene {
           this.mapWalls = msg.state.walls;
           this.renderMapWalls(msg.state.walls);
           if (msg.state.mapId === 'truck-stop') {
-            // Hide old 40×23 tilemap — it sits inside the truck stop and confuses the layout
+            // Hide the embedded tilemap — it's sized for the small arena and doesn't
+            // match the truck-stop's dimensions
             this.tilemapLayers.forEach(l => l.setVisible(false));
-            // Draw a full dark background for the 80×50 map (depth 0, behind walls at depth 1)
-            const mapW = 80 * PIXELS_PER_INCH;
-            const mapH = 50 * PIXELS_PER_INCH;
+            // Draw a full dark background for the 120×75 map (depth 0, behind walls at depth 1)
+            const mapW = 120 * PIXELS_PER_INCH;
+            const mapH = 75 * PIXELS_PER_INCH;
             const mapX = WORLD_CENTER_X - mapW / 2;
             const mapY = WORLD_CENTER_Y - mapH / 2;
             this.bgGraphics.fillStyle(0x0a0a14, 1);
             this.bgGraphics.fillRect(mapX, mapY, mapW, mapH);
-            // Constrain camera to the truck stop bounds; zoom 1x so vehicles are clearly visible
-            this.cameras.main.setZoom(1.0);
+            // Constrain camera to the truck stop bounds; zoom 0.6x so the larger
+            // arena still fits reasonably on screen
+            this.cameras.main.setZoom(0.6);
             this.cameras.main.setBounds(mapX, mapY, mapW, mapH);
           }
         }
