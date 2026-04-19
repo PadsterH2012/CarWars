@@ -409,35 +409,33 @@ export class VehicleDesignerScene extends Phaser.Scene {
    */
   private buildSchematic(topY: number): void {
     const cx = 985;
-    const cy = topY + 90; // ~490 with topY=400
+    const cy = topY + 120;   // push centre down to accommodate the bigger panels
     this.schematicCy = cy;
 
     // Graphics layer for fills and borders (redrawn each update)
     this.schematicGfx = this.add.graphics();
 
-    // Panel definitions: key → rect [rx, ry, rw, rh]
+    // Panel definitions (1.5× the previous schematic size for a clearer preview)
     type FaceKey = 'front' | 'back' | 'left' | 'right';
     const panels: Array<{ key: FaceKey; rx: number; ry: number; rw: number; rh: number; lx: number; ly: number }> = [
-      { key: 'front', rx: cx - 50, ry: cy - 90, rw: 100, rh: 30,  lx: cx,      ly: cy - 75 },
-      { key: 'back',  rx: cx - 50, ry: cy + 60, rw: 100, rh: 30,  lx: cx,      ly: cy + 75 },
-      { key: 'left',  rx: cx - 80, ry: cy - 40, rw: 30,  rh: 80,  lx: cx - 65, ly: cy      },
-      { key: 'right', rx: cx + 50, ry: cy - 40, rw: 30,  rh: 80,  lx: cx + 65, ly: cy      },
+      { key: 'front', rx: cx - 75, ry: cy - 130, rw: 150, rh: 35,  lx: cx,       ly: cy - 113 },
+      { key: 'back',  rx: cx - 75, ry: cy +  95, rw: 150, rh: 35,  lx: cx,       ly: cy + 113 },
+      { key: 'left',  rx: cx -115, ry: cy -  60, rw: 35,  rh: 120, lx: cx - 97,  ly: cy       },
+      { key: 'right', rx: cx + 80, ry: cy -  60, rw: 35,  rh: 120, lx: cx + 97,  ly: cy       },
     ];
 
-    // Static FRONT / BACK / LEFT / RIGHT labels so the schematic's orientation
-    // is obvious at any zoom. Drawn on top of the armor panels, small and
-    // pale so they don't obscure the armor value text underneath.
-    this.add.text(cx, cy - 105, 'FRONT', {
-      fontSize: '10px', fontFamily: 'monospace', color: '#ffcc88', fontStyle: 'bold'
+    // Static FRONT / BACK / L / R labels above / below / outside each armor panel
+    this.add.text(cx, cy - 145, 'FRONT', {
+      fontSize: '11px', fontFamily: 'monospace', color: '#ffcc88', fontStyle: 'bold'
     }).setOrigin(0.5);
-    this.add.text(cx, cy + 105, 'BACK', {
-      fontSize: '10px', fontFamily: 'monospace', color: '#ccaa66'
+    this.add.text(cx, cy + 145, 'BACK', {
+      fontSize: '11px', fontFamily: 'monospace', color: '#ccaa66'
     }).setOrigin(0.5);
-    this.add.text(cx - 105, cy, 'L', {
-      fontSize: '10px', fontFamily: 'monospace', color: '#bbbbbb'
+    this.add.text(cx - 130, cy, 'L', {
+      fontSize: '11px', fontFamily: 'monospace', color: '#bbbbbb'
     }).setOrigin(0.5);
-    this.add.text(cx + 105, cy, 'R', {
-      fontSize: '10px', fontFamily: 'monospace', color: '#bbbbbb'
+    this.add.text(cx + 130, cy, 'R', {
+      fontSize: '11px', fontFamily: 'monospace', color: '#bbbbbb'
     }).setOrigin(0.5);
 
     // Create interactive hit zones (invisible rects) and value labels
@@ -458,7 +456,7 @@ export class VehicleDesignerScene extends Phaser.Scene {
     });
 
     // Selected face label + ± controls below the diagram
-    const controlY = cy + 110;
+    const controlY = cy + 165;   // below the larger back panel + BACK label
     this.selectedFaceLabel = this.add.text(cx, controlY, `Selected: ${this.selectedArmorFace.toUpperCase()}`, {
       fontSize: '12px', fontFamily: 'monospace', color: LABEL_COLOR,
     }).setOrigin(0.5);
@@ -514,14 +512,14 @@ export class VehicleDesignerScene extends Phaser.Scene {
     this.previewWeapons = [];
 
     // Render the body sprite at the centre of the schematic, tinted with the
-    // gang primary colour. Scale so the sprite fits the 100×120 area comfortably.
+    // gang primary colour. Scale so the sprite fits the 150×180 area.
     const bKey = `body_${bodySpriteKey(this.bodyType)}`;
-    let bodyHalfW = 36;  // fallback half-width for wheel placement
-    let bodyHalfH = 56;
+    let bodyHalfW = 50;  // fallback half-width for wheel placement
+    let bodyHalfH = 80;
     if (this.textures.exists(bKey)) {
       const tex = this.textures.get(bKey).getSourceImage();
-      const scaleX = 100 / tex.width;
-      const scaleY = 120 / tex.height;
+      const scaleX = 150 / tex.width;
+      const scaleY = 180 / tex.height;
       const scale = Math.min(scaleX, scaleY);
       bodyHalfW = (tex.width  * scale) / 2;
       bodyHalfH = (tex.height * scale) / 2;
@@ -532,9 +530,9 @@ export class VehicleDesignerScene extends Phaser.Scene {
     } else {
       // Fallback: original dark-blue rectangle if the sprite hasn't loaded yet
       this.schematicGfx.fillStyle(0x1a1a3a, 1);
-      this.schematicGfx.fillRect(cx - 50, cy - 60, 100, 120);
+      this.schematicGfx.fillRect(cx - 75, cy - 90, 150, 180);
       this.schematicGfx.lineStyle(1, 0x444466, 1);
-      this.schematicGfx.strokeRect(cx - 50, cy - 60, 100, 120);
+      this.schematicGfx.strokeRect(cx - 75, cy - 90, 150, 180);
     }
 
     // Draw wheels as separate graphics on TOP of the tinted body sprite so
@@ -544,8 +542,8 @@ export class VehicleDesignerScene extends Phaser.Scene {
     // that the body sprite itself reads correctly.
     const isCycle = this.bodyType.includes('cycle');
     if (!isCycle) {
-      const wheelW = 9;
-      const wheelH = 18;
+      const wheelW = 14;
+      const wheelH = 26;
       const wheelXOut = bodyHalfW - 2;  // slight overlap with hull
       const wheelFrontY = -bodyHalfH * 0.45;
       const wheelRearY  =  bodyHalfH * 0.35;
@@ -571,9 +569,9 @@ export class VehicleDesignerScene extends Phaser.Scene {
     // Direction indicator: bright yellow chevron above the body
     this.schematicGfx.fillStyle(0xffff88, 0.9);
     this.schematicGfx.beginPath();
-    this.schematicGfx.moveTo(cx,     cy - 100);
-    this.schematicGfx.lineTo(cx + 6, cy - 92);
-    this.schematicGfx.lineTo(cx - 6, cy - 92);
+    this.schematicGfx.moveTo(cx,     cy - 160);
+    this.schematicGfx.lineTo(cx + 8, cy - 150);
+    this.schematicGfx.lineTo(cx - 8, cy - 150);
     this.schematicGfx.closePath();
     this.schematicGfx.fillPath();
 
