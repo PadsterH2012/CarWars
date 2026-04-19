@@ -138,15 +138,29 @@ function trikeBody(ctx: SKRSContext2D, w: number, h: number) {
   ctx.strokeStyle = '#2b2b2b';
   ctx.lineWidth = 1;
   ctx.stroke();
-  // Rear axle wheels
-  ctx.fillStyle = '#1a1a1a';
-  ctx.fillRect(0, h - 8, 3, 6);
-  ctx.fillRect(w - 3, h - 8, 3, 6);
-  // Front wheel
-  ctx.fillRect(Math.floor(w / 2) - 1, 1, 2, 4);
+  // Rider/seat silhouette so it reads as a trike not an arrow
+  ctx.fillStyle = '#4a4a4a';
+  ctx.fillRect(Math.floor(w / 2) - 2, Math.floor(h * 0.35), 4, 8);
+  // Wheels — 3 total: 1 up front, 2 on rear axle. Larger than before so they
+  // actually read at sprite scale. White outline to stand out against any tint.
+  ctx.fillStyle = '#000000';
+  ctx.strokeStyle = '#ffffff';
+  ctx.lineWidth = 0.5;
+  const wheelW = 4, wheelH = 7;
+  // Front (centered)
+  ctx.fillRect(Math.floor(w / 2) - wheelW / 2, 1, wheelW, wheelH);
+  ctx.strokeRect(Math.floor(w / 2) - wheelW / 2, 1, wheelW, wheelH);
+  // Rear left / right (protrude from hull)
+  ctx.fillRect(-1, h - wheelH - 1, wheelW + 1, wheelH);
+  ctx.strokeRect(-1, h - wheelH - 1, wheelW + 1, wheelH);
+  ctx.fillRect(w - wheelW, h - wheelH - 1, wheelW + 1, wheelH);
+  ctx.strokeRect(w - wheelW, h - wheelH - 1, wheelW + 1, wheelH);
 }
 
-function truckBody(ctx: SKRSContext2D, w: number, h: number) {
+// Truck-style body with configurable rear-axle count.
+//   axleCount = 2 → 4 wheels (pickups, vans, campers)
+//   axleCount = 3 → 6 wheels (tractors / big trucks — 1 front axle + 2 rear)
+function truckBody(ctx: SKRSContext2D, w: number, h: number, axleCount: 2 | 3 = 2) {
   // Cab
   ctx.fillStyle = '#c8c8c8';
   roundedRect(ctx, 1, 2, w - 2, Math.floor(h * 0.3), 2);
@@ -162,15 +176,46 @@ function truckBody(ctx: SKRSContext2D, w: number, h: number) {
   // Windshield
   ctx.fillStyle = '#506080';
   ctx.fillRect(3, 4, w - 6, Math.floor(h * 0.16));
-  // Wheels (6: front 2, rear 4)
-  ctx.fillStyle = '#1a1a1a';
-  const wh = 4;
-  ctx.fillRect(0, Math.floor(h * 0.12), wh, 5);
-  ctx.fillRect(w - wh, Math.floor(h * 0.12), wh, 5);
-  ctx.fillRect(0, Math.floor(h * 0.62), wh, 5);
-  ctx.fillRect(w - wh, Math.floor(h * 0.62), wh, 5);
-  ctx.fillRect(0, Math.floor(h * 0.80), wh, 5);
-  ctx.fillRect(w - wh, Math.floor(h * 0.80), wh, 5);
+  // Headlight strip + chevron so forward direction reads clearly
+  ctx.fillStyle = '#ffffcc';
+  ctx.fillRect(3, 3, Math.max(2, Math.floor(w * 0.18)), 2);
+  ctx.fillRect(w - 3 - Math.max(2, Math.floor(w * 0.18)), 3, Math.max(2, Math.floor(w * 0.18)), 2);
+  ctx.fillStyle = '#ffffff';
+  ctx.beginPath();
+  ctx.moveTo(w / 2, 3);
+  ctx.lineTo(w / 2 + 3, 8);
+  ctx.lineTo(w / 2 - 3, 8);
+  ctx.closePath();
+  ctx.fill();
+  // Rear tail lights
+  ctx.fillStyle = '#aa2222';
+  ctx.fillRect(3, h - 5, Math.max(2, Math.floor(w * 0.18)), 2);
+  ctx.fillRect(w - 3 - Math.max(2, Math.floor(w * 0.18)), h - 5, Math.max(2, Math.floor(w * 0.18)), 2);
+
+  // Wheels — one front axle + `axleCount - 1` rear axles. Bigger + white-outlined
+  // so 6-wheel tractors clearly look different from 4-wheel pickups/vans.
+  ctx.fillStyle = '#000000';
+  ctx.strokeStyle = '#ffffff';
+  ctx.lineWidth = 0.5;
+  const wheelW = 5, wheelH = 6;
+  // Front axle
+  const frontY = Math.floor(h * 0.12);
+  ctx.fillRect(-1, frontY, wheelW + 1, wheelH);
+  ctx.strokeRect(-1, frontY, wheelW + 1, wheelH);
+  ctx.fillRect(w - wheelW, frontY, wheelW + 1, wheelH);
+  ctx.strokeRect(w - wheelW, frontY, wheelW + 1, wheelH);
+  // Rear axle(s) — space them evenly across the rear two-thirds of the bed
+  const rearStart = 0.60;
+  const rearEnd   = 0.84;
+  const rearAxles = axleCount - 1;
+  for (let i = 0; i < rearAxles; i++) {
+    const t = rearAxles === 1 ? 0.5 : i / (rearAxles - 1);
+    const y = Math.floor(h * (rearStart + (rearEnd - rearStart) * t));
+    ctx.fillRect(-1, y, wheelW + 1, wheelH);
+    ctx.strokeRect(-1, y, wheelW + 1, wheelH);
+    ctx.fillRect(w - wheelW, y, wheelW + 1, wheelH);
+    ctx.strokeRect(w - wheelW, y, wheelW + 1, wheelH);
+  }
 }
 
 function trailerBody(ctx: SKRSContext2D, w: number, h: number) {
@@ -189,12 +234,28 @@ function trailerBody(ctx: SKRSContext2D, w: number, h: number) {
     ctx.lineTo(w - 3, y);
     ctx.stroke();
   }
-  // Rear wheels
-  ctx.fillStyle = '#1a1a1a';
-  ctx.fillRect(0, Math.floor(h * 0.55), 4, 5);
-  ctx.fillRect(w - 4, Math.floor(h * 0.55), 4, 5);
-  ctx.fillRect(0, Math.floor(h * 0.78), 4, 5);
-  ctx.fillRect(w - 4, Math.floor(h * 0.78), 4, 5);
+  // Coupling / kingpin marker at the front — tiny diamond so trailer direction reads
+  ctx.fillStyle = '#555';
+  ctx.beginPath();
+  ctx.moveTo(w / 2, 2);
+  ctx.lineTo(w / 2 + 2, 5);
+  ctx.lineTo(w / 2, 8);
+  ctx.lineTo(w / 2 - 2, 5);
+  ctx.closePath();
+  ctx.fill();
+  // Rear tandem axles — 2 axles × 2 wheels = 4 wheels, both axles clustered
+  // at the rear third (classic semi-trailer layout).
+  ctx.fillStyle = '#000000';
+  ctx.strokeStyle = '#ffffff';
+  ctx.lineWidth = 0.5;
+  const wheelW = 5, wheelH = 8;
+  const axleYs = [Math.floor(h * 0.66), Math.floor(h * 0.82)];
+  for (const y of axleYs) {
+    ctx.fillRect(-1, y, wheelW + 1, wheelH);
+    ctx.strokeRect(-1, y, wheelW + 1, wheelH);
+    ctx.fillRect(w - wheelW, y, wheelW + 1, wheelH);
+    ctx.strokeRect(w - wheelW, y, wheelW + 1, wheelH);
+  }
 }
 
 const BODIES: BodySpec[] = [
@@ -208,10 +269,10 @@ const BODIES: BodySpec[] = [
   { id: 'sedan',        w: 22, h: 34, draw: (c, w, h) => carBody(c, w, h, { windshieldRatio: 0.4 }) },
   { id: 'station_wagon',w: 22, h: 36, draw: (c, w, h) => carBody(c, w, h, { windshieldRatio: 0.3 }) },
   { id: 'luxury',       w: 24, h: 38, draw: (c, w, h) => carBody(c, w, h, { windshieldRatio: 0.42 }) },
-  { id: 'pickup',       w: 22, h: 40, draw: (c, w, h) => truckBody(c, w, h) },
-  { id: 'van',          w: 24, h: 42, draw: (c, w, h) => truckBody(c, w, h) },
-  { id: 'camper',       w: 24, h: 44, draw: (c, w, h) => truckBody(c, w, h) },
-  { id: 'truck',        w: 26, h: 52, draw: truckBody },
+  { id: 'pickup',       w: 22, h: 40, draw: (c, w, h) => truckBody(c, w, h, 2) },
+  { id: 'van',          w: 24, h: 42, draw: (c, w, h) => truckBody(c, w, h, 2) },
+  { id: 'camper',       w: 24, h: 44, draw: (c, w, h) => truckBody(c, w, h, 2) },
+  { id: 'truck',        w: 26, h: 52, draw: (c, w, h) => truckBody(c, w, h, 3) },
   { id: 'trailer',      w: 26, h: 54, draw: trailerBody },
 ];
 

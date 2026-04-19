@@ -840,11 +840,15 @@ export class VehicleDesignerScene extends Phaser.Scene {
     const primary = `#${this.gangPrimaryColour.toString(16).padStart(6, '0')}`;
     const primaryDark = `#${Math.floor(this.gangPrimaryColour * 0.35).toString(16).padStart(6, '0')}`;
     const isCycle = BODY_TYPES.find(b => b.id === this.bodyType)?.isCycle ?? false;
-    const bodyW = isCycle ? 40 : 90;
-    const bodyH = isCycle ? 140 : 200;
+    const isTrike = this.bodyType === 'trike';
+    const isTruck = this.bodyType === 'truck';
+    const isTrailer = this.bodyType === 'trailer';
+    // Body dimensions in SVG units — matches the visual proportions of each sprite
+    const bodyW = isCycle && !isTrike ? 40 : isTrike ? 70 : 90;
+    const bodyH = isCycle ? 140 : (isTruck || isTrailer) ? 240 : 200;
 
     const vbW = 240;
-    const vbH = 340;
+    const vbH = Math.max(340, bodyH + 100);
     const cx = vbW / 2;
     const cy = vbH / 2;
     const halfW = bodyW / 2;
@@ -864,12 +868,48 @@ export class VehicleDesignerScene extends Phaser.Scene {
         <text x="${p.x + p.w / 2}" y="${p.labelY}" text-anchor="middle" fill="#fff" font-size="10" font-family="monospace" font-weight="bold" dominant-baseline="middle">${pts}</text>`;
     }).join('');
 
-    const wheels = isCycle ? '' : [
-      { x: cx - halfW - 10, y: cy - halfH * 0.7 },
-      { x: cx + halfW - 4,  y: cy - halfH * 0.7 },
-      { x: cx - halfW - 10, y: cy + halfH * 0.4 },
-      { x: cx + halfW - 4,  y: cy + halfH * 0.4 },
-    ].map(w => `<rect x="${w.x}" y="${w.y}" width="14" height="30" fill="#000" stroke="#fff" stroke-width="1" rx="3"/>`).join('');
+    // Wheel layout varies by body type. Car = 4; trike = 3 (1 front + 2 rear);
+    // truck = 6 (2 front + 4 rear across two rear axles); trailer = 4 tandem
+    // at the rear (no front wheels — hitched). Cycles render no wheels (body
+    // sprite already reads as two-wheeled via its narrow pill shape).
+    type WheelPos = { x: number; y: number; w: number; h: number };
+    const wheelList: WheelPos[] = [];
+    const stdWheel = { w: 14, h: 30 };
+    const bigWheel = { w: 13, h: 26 };
+    const smallWheel = { w: 10, h: 20 };
+    if (isCycle && !isTrike) {
+      // No visible wheels — the narrow pill body sells the two-wheeled silhouette
+    } else if (isTrike) {
+      // Front wheel, centered + protruding
+      wheelList.push({ x: cx - smallWheel.w / 2, y: cy - halfH - 10, ...smallWheel });
+      // Rear axle (2 wheels)
+      wheelList.push({ x: cx - halfW - 8,  y: cy + halfH * 0.5, ...smallWheel });
+      wheelList.push({ x: cx + halfW - 2,  y: cy + halfH * 0.5, ...smallWheel });
+    } else if (isTruck) {
+      // Front axle (2 wheels)
+      wheelList.push({ x: cx - halfW - 10, y: cy - halfH * 0.75, ...bigWheel });
+      wheelList.push({ x: cx + halfW - 3,  y: cy - halfH * 0.75, ...bigWheel });
+      // Two rear axles (4 wheels)
+      [0.25, 0.55].forEach(yFrac => {
+        wheelList.push({ x: cx - halfW - 10, y: cy + halfH * yFrac, ...bigWheel });
+        wheelList.push({ x: cx + halfW - 3,  y: cy + halfH * yFrac, ...bigWheel });
+      });
+    } else if (isTrailer) {
+      // Tandem rear axles only — trailers have no front wheels
+      [0.25, 0.55].forEach(yFrac => {
+        wheelList.push({ x: cx - halfW - 10, y: cy + halfH * yFrac, ...bigWheel });
+        wheelList.push({ x: cx + halfW - 3,  y: cy + halfH * yFrac, ...bigWheel });
+      });
+    } else {
+      // Default 4-wheel car
+      wheelList.push({ x: cx - halfW - 10, y: cy - halfH * 0.7, ...stdWheel });
+      wheelList.push({ x: cx + halfW - 4,  y: cy - halfH * 0.7, ...stdWheel });
+      wheelList.push({ x: cx - halfW - 10, y: cy + halfH * 0.4, ...stdWheel });
+      wheelList.push({ x: cx + halfW - 4,  y: cy + halfH * 0.4, ...stdWheel });
+    }
+    const wheels = wheelList.map(w =>
+      `<rect x="${w.x}" y="${w.y}" width="${w.w}" height="${w.h}" fill="#000" stroke="#fff" stroke-width="1" rx="3"/>`
+    ).join('');
 
     const weaponDots = this.mounts.map(m => {
       if (!m.weaponId) return '';
