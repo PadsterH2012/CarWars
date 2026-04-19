@@ -684,7 +684,9 @@ async function handleMessage(ws: WebSocket, raw: string): Promise<void> {
     const runner = zones.get(zoneId);
     const vehicleState = runner?.getEngine().getState().vehicles.find(v => v.id === vehicleId);
     const maxSpeed = vehicleState?.stats.maxSpeed ?? 100;
-    const speed = Math.max(0, Math.min(maxSpeed, Number(msg.speed) || 0));
+    // Allow negative speed (reverse) up to -30 mph; forward cap is the vehicle's maxSpeed
+    const REVERSE_MAX = -30;
+    const speed = Math.max(REVERSE_MAX, Math.min(maxSpeed, Number(msg.speed) || 0));
     const fireWeapon = typeof msg.fireWeapon === 'string' && msg.fireWeapon.length <= 20
       ? msg.fireWeapon
       : null;

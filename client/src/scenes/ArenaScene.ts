@@ -788,11 +788,15 @@ export class ArenaScene extends Phaser.Scene {
     this.selectedWeapon = mount?.weaponId ?? null;
     const maxSpeed = myVehicle?.stats.maxSpeed ?? 70;
 
-    // Continuous acceleration: ±5 mph per 100ms tick
+    // Continuous acceleration: ±5 mph per 100ms tick.
+    // Forward range: 0 → maxSpeed (hold up/W).
+    // Reverse range: 0 → -30 mph (hold down/S past 0). Reverse is capped at a
+    // fraction of forward max, matching real vehicle feel.
     const upHeld = this.cursors.up?.isDown || this.wasdKeys.w.isDown;
     const downHeld = this.cursors.down?.isDown || this.wasdKeys.s.isDown;
+    const REVERSE_MAX = -30;
     if (upHeld)   this.clientSpeed = Math.min(this.clientSpeed + 5, maxSpeed);
-    if (downHeld) this.clientSpeed = Math.max(this.clientSpeed - 5, 0);
+    if (downHeld) this.clientSpeed = Math.max(this.clientSpeed - 5, REVERSE_MAX);
     // No key held = coast (speed persists)
 
     const leftHeld  = this.cursors.left?.isDown  || this.wasdKeys.a.isDown;

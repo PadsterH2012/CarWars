@@ -21,10 +21,16 @@ interface DriverState {
   stuckTicks: number;     // ticks without meaningful movement
   lastX: number;
   lastY: number;
+  positionHistory: { x: number; y: number }[];  // ring buffer, last ~20 ticks; used for robust stuck detection
+  reverseTicks: number;   // countdown of remaining ticks in an active reverse-out-of-wall manoeuvre
   inClose: boolean;       // hysteresis flag: true when inside closeRange dead-zone
   fireCooldown: number;   // ticks until next shot allowed (Car Wars: once per phase = 10 ticks)
 }
 const driverState = new Map<string, DriverState>();
+
+const POS_HISTORY_LEN = 20;
+const REVERSE_BURST_TICKS = 10;   // after hitting a stuck state, reverse for this many ticks
+const REVERSE_SPEED = -25;
 
 function getState(vehicleId: string): DriverState {
   if (!driverState.has(vehicleId)) {
@@ -38,6 +44,8 @@ function getState(vehicleId: string): DriverState {
       stuckTicks: 0,
       lastX: 0,
       lastY: 0,
+      positionHistory: [],
+      reverseTicks: 0,
       inClose: false,
       fireCooldown: 0,
     });
@@ -265,9 +273,28 @@ export function computeAiInput(
 
   const ds = getState(self.id);
 
-  // Stuck detection: if we haven't moved >0.1 units in a tick, increment counter
+  // Record current position in the ring buffer (last 20 ticks)
+  ds.positionHistory.push({ x: self.position.x, y: self.position.y });
+  if (ds.positionHistory.length > POS_HISTORY_LEN) ds.positionHistory.shift();
+
+  // Stuck detection — two layers:
+  //   Fast: moved < 0.1 this tick → increment
+  //   Robust: net distance travelled over the last 15 ticks < 3 units means the
+  //           vehicle is bouncing-but-not-progressing (wall pin). We force stuckTicks
+  //           to at least 5 so the escape logic kicks in.
   const moved = dist2d(self.position, { x: ds.lastX, y: ds.lastY });
   ds.stuckTicks = moved < 0.1 ? ds.stuckTicks + 1 : 0;
+  if (ds.positionHistory.length >= 15) {
+    const window = ds.positionHistory.slice(-15);
+    let maxSpread = 0;
+    for (let i = 0; i < window.length; i++) {
+      for (let j = i + 1; j < window.length; j++) {
+        const d2 = dist2d(window[i], window[j]);
+        if (d2 > maxSpread) maxSpread = d2;
+      }
+    }
+    if (maxSpread < 3) ds.stuckTicks = Math.max(ds.stuckTicks, 5);
+  }
   ds.lastX = self.position.x;
   ds.lastY = self.position.y;
 
@@ -311,26 +338,48 @@ export function computeAiInput(
   let desiredSpeed: number;
 
   // ── Recovery: if stuck against a wall/building ───────────────────────────
+  // When stuck transitions from 0→non-zero, kick off a reverse burst: back
+  // away from whatever we're pinned on for REVERSE_BURST_TICKS, then resume
+  // forward-escape. reverseTicks counts down each tick we're in the burst.
+  //
   // Phase 1 (4–29 ticks): sidestep perpendicular to enemy bearing, alternating sides
   // Phase 2 (30–59 ticks): drive away from enemy (bearing + 180)
   // Phase 3 (60+ ticks):   sweep 8 world compass directions, 10 ticks each
   if (ds.stuckTicks >= 4) {
-    let escapeHeading: number;
-    if (ds.stuckTicks >= 60) {
-      const compassStep = Math.floor(ds.stuckTicks / 10) % 8;
-      escapeHeading = compassStep * 45;
-    } else if (ds.stuckTicks >= 30) {
-      escapeHeading = (bearing + 180 + 360) % 360;
-    } else {
-      const phase = Math.floor(ds.stuckTicks / 10);
-      const dir: 1 | -1 = phase % 2 === 0 ? ds.orbitDir : (ds.orbitDir === 1 ? -1 : 1);
-      escapeHeading = (bearing + dir * 90 + 360) % 360;
+    // If we just became stuck (and aren't already reversing), start a reverse burst
+    if (ds.reverseTicks <= 0 && ds.stuckTicks === 5) {
+      ds.reverseTicks = REVERSE_BURST_TICKS;
     }
-    desiredFacing = escapeHeading;
-    desiredSpeed = self.stats.maxSpeed;
-    console.log(`[AI] ${self.id.padEnd(10)} STUCK×${ds.stuckTicks} — escape heading=${escapeHeading.toFixed(0)}° pos=(${self.position.x.toFixed(1)},${self.position.y.toFixed(1)})`);
+
+    if (ds.reverseTicks > 0) {
+      // Reverse burst: keep facing roughly the current direction (we just want to
+      // back out). Slight steering toward the escape heading so we gain clearance.
+      const reverseFacingHint = (bearing + 180 + 360) % 360;  // back toward enemy side
+      desiredFacing = reverseFacingHint;
+      desiredSpeed = REVERSE_SPEED;
+      ds.reverseTicks--;
+      console.log(`[AI] ${self.id.padEnd(10)} REVERSE×${ds.reverseTicks} — pos=(${self.position.x.toFixed(1)},${self.position.y.toFixed(1)}) spd=${desiredSpeed}`);
+    } else {
+      let escapeHeading: number;
+      if (ds.stuckTicks >= 60) {
+        const compassStep = Math.floor(ds.stuckTicks / 10) % 8;
+        escapeHeading = compassStep * 45;
+      } else if (ds.stuckTicks >= 30) {
+        escapeHeading = (bearing + 180 + 360) % 360;
+      } else {
+        const phase = Math.floor(ds.stuckTicks / 10);
+        const dir: 1 | -1 = phase % 2 === 0 ? ds.orbitDir : (ds.orbitDir === 1 ? -1 : 1);
+        escapeHeading = (bearing + dir * 90 + 360) % 360;
+      }
+      desiredFacing = escapeHeading;
+      desiredSpeed = self.stats.maxSpeed;
+      console.log(`[AI] ${self.id.padEnd(10)} STUCK×${ds.stuckTicks} — escape heading=${escapeHeading.toFixed(0)}° pos=(${self.position.x.toFixed(1)},${self.position.y.toFixed(1)})`);
+    }
     // Fall through to wall avoidance — do NOT early-return here.
     // Blind escape at max speed into a wall is what caused the original bug.
+  } else {
+    // Not stuck — clear any pending reverse ticks so future matches start fresh
+    ds.reverseTicks = 0;
   }
 
   switch (tactic) {
