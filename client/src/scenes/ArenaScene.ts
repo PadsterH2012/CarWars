@@ -73,6 +73,7 @@ export class ArenaScene extends Phaser.Scene {
     this.hazardSprites.clear();
     this.wreckSprites.clear();
     this.squadOrders.clear();
+    this.combatLog = [];
     this.rival = null;
     this.mapWalls = [];
     this.tilemapLayers = [];
@@ -207,6 +208,15 @@ export class ArenaScene extends Phaser.Scene {
 
     this.minimapGfx = this.add.graphics().setScrollFactor(0).setDepth(20);
     this.mapGraphics = this.add.graphics().setDepth(1);  // above ground, below vehicles
+
+    // Combat log panel — bottom-left, shows the last 6 events
+    this.add.text(16, 580, 'COMBAT', {
+      fontSize: '11px', color: '#888', fontFamily: 'monospace', fontStyle: 'bold'
+    }).setScrollFactor(0).setDepth(20);
+    this.combatLogText = this.add.text(16, 598, '', {
+      fontSize: '11px', color: '#cccccc', fontFamily: 'monospace',
+      backgroundColor: '#000000aa', padding: { x: 6, y: 4 }, lineSpacing: 2,
+    }).setScrollFactor(0).setDepth(20);
     // Minimap label
     this.add.text(1144, 4, 'MAP', {
       fontSize: '9px', color: '#666666', fontFamily: 'monospace'
@@ -331,20 +341,17 @@ export class ArenaScene extends Phaser.Scene {
       const toX   = WORLD_CENTER_X + ev.toX   * PIXELS_PER_INCH;
       const toY   = WORLD_CENTER_Y + ev.toY   * PIXELS_PER_INCH;
 
-      // Tracer line
+      // Weapon-typed tracer: colour by hit/miss, keep it subtle
       const tracer = this.add.graphics().setDepth(5);
-      if (ev.hit) {
-        tracer.lineStyle(2, 0xff4400, 0.9);
-      } else {
-        tracer.lineStyle(1, 0xffff00, 0.6);
-      }
+      if (ev.hit) tracer.lineStyle(2, 0xff4400, 0.9);
+      else        tracer.lineStyle(1, 0xffff00, 0.5);
       tracer.beginPath();
       tracer.moveTo(fromX, fromY);
       tracer.lineTo(toX, toY);
       tracer.strokePath();
-      this.time.delayedCall(180, () => tracer.destroy());
+      this.time.delayedCall(220, () => tracer.destroy());
 
-      // Hit flash on target vehicle
+      // Hit flash + floating "−{dmg} {weapon}" in red, MISS label in grey
       if (ev.hit) {
         const flash = this.add.graphics().setDepth(5);
         flash.fillStyle(0xff6600, 0.85);
@@ -352,8 +359,61 @@ export class ArenaScene extends Phaser.Scene {
         flash.lineStyle(2, 0xffffff, 0.7);
         flash.strokeCircle(toX, toY, 14);
         this.time.delayedCall(200, () => flash.destroy());
+
+        const damage = ev.damage ?? 0;
+        const destroyed = !!ev.destroyed;
+        const label = destroyed
+          ? `💀 -${damage} ${ev.weapon.toUpperCase()}`
+          : `-${damage} ${ev.weapon.toUpperCase()}`;
+        const color = destroyed ? '#ffdd44' : '#ff5544';
+        const fontSize = destroyed ? '18px' : '15px';
+        const txt = this.add.text(toX, toY - 18, label, {
+          fontSize, color, fontFamily: 'monospace', fontStyle: 'bold',
+          stroke: '#000', strokeThickness: 3,
+        }).setOrigin(0.5).setDepth(15);
+        this.tweens.add({
+          targets: txt,
+          y: toY - 48,
+          alpha: 0,
+          duration: 1000,
+          ease: 'Cubic.easeOut',
+          onComplete: () => txt.destroy(),
+        });
+      } else {
+        const txt = this.add.text(toX, toY - 18, `MISS ${ev.weapon.toUpperCase()}`, {
+          fontSize: '12px', color: '#888888', fontFamily: 'monospace',
+          stroke: '#000', strokeThickness: 2,
+        }).setOrigin(0.5).setDepth(15);
+        this.tweens.add({
+          targets: txt,
+          y: toY - 38,
+          alpha: 0,
+          duration: 700,
+          ease: 'Cubic.easeOut',
+          onComplete: () => txt.destroy(),
+        });
       }
+
+      // Combat log: append this event and re-render
+      this.logCombatEvent(ev);
     });
+  }
+
+  private combatLog: string[] = [];
+  private combatLogText!: Phaser.GameObjects.Text;
+
+  private logCombatEvent(ev: CombatEvent): void {
+    const shortId = (id: string) => {
+      if (id === this.myVehicleId) return 'YOU';
+      if (id.startsWith('ai-')) return id.toUpperCase();
+      return id.slice(0, 6);
+    };
+    const line = ev.hit
+      ? `${shortId(ev.attackerId)} → ${shortId(ev.targetId)}  ${ev.weapon.toUpperCase()}  -${ev.damage ?? 0}${ev.destroyed ? ' 💀' : ''}`
+      : `${shortId(ev.attackerId)} → ${shortId(ev.targetId)}  ${ev.weapon.toUpperCase()}  MISS`;
+    this.combatLog.push(line);
+    if (this.combatLog.length > 6) this.combatLog.shift();
+    if (this.combatLogText) this.combatLogText.setText(this.combatLog.join('\n'));
   }
 
   private drawMinimap(state: ZoneState): void {
@@ -495,8 +555,11 @@ export class ArenaScene extends Phaser.Scene {
       localStorage.removeItem('cw_active_job_payout');
     }
 
-    // Dim overlay
-    this.add.rectangle(640, 360, 700, 380, 0x000000, 0.85).setScrollFactor(0).setDepth(10);
+    // Sidebar-style panel on the right so the battlefield remains visible
+    const PX = 1080;     // panel centre x
+    const PW = 360;      // panel width
+    this.add.rectangle(PX, 360, PW, 700, 0x000000, 0.92).setScrollFactor(0).setDepth(10)
+      .setStrokeStyle(2, 0x4466aa);
 
     // Title: VICTORY if we survived as the winner; DEFEATED if our car was destroyed
     // or the AI was the last team standing; DRAW if everyone died simultaneously.
@@ -515,53 +578,52 @@ export class ArenaScene extends Phaser.Scene {
       titleText = 'BATTLE OVER';
       titleColor = '#ffaa00';
     }
-    this.add.text(640, 215, titleText, {
-      fontSize: '42px', color: titleColor, fontFamily: 'monospace', fontStyle: 'bold'
+    this.add.text(PX, 80, titleText, {
+      fontSize: '32px', color: titleColor, fontFamily: 'monospace', fontStyle: 'bold'
     }).setOrigin(0.5).setScrollFactor(0).setDepth(11);
 
-    let y = 253;
+    let y = 120;
 
     // Rival banner: name + quote (if the server sent us one)
     if (rival) {
       const bannerColor = '#' + rival.primary_colour.toString(16).padStart(6, '0');
-      this.add.text(640, y, `vs. ${rival.name}`, {
+      this.add.text(PX, y, `vs. ${rival.name}`, {
         fontSize: '16px', color: bannerColor, fontFamily: 'monospace', fontStyle: 'italic'
       }).setOrigin(0.5).setScrollFactor(0).setDepth(11);
       y += 22;
       if (rivalQuote) {
-        this.add.text(640, y, `"${rivalQuote}"`, {
-          fontSize: '12px', color: '#bbb', fontFamily: 'monospace',
-          wordWrap: { width: 620 }, align: 'center',
+        const quoteText = this.add.text(PX, y, `"${rivalQuote}"`, {
+          fontSize: '11px', color: '#bbb', fontFamily: 'monospace',
+          wordWrap: { width: PW - 30 }, align: 'center',
         }).setOrigin(0.5, 0).setScrollFactor(0).setDepth(11);
-        y += 40;
+        y += quoteText.height + 10;
       }
     }
-    if (y < 275) y = 275;
 
     // Financial summary (only meaningful for winner)
     if (isWinner) {
       if (prize > 0) {
-        this.add.text(640, y, `Arena prize:  $${prize.toLocaleString()}`, {
-          fontSize: '18px', color: '#ffcc00', fontFamily: 'monospace'
+        this.add.text(PX, y, `Prize:      $${prize.toLocaleString()}`, {
+          fontSize: '14px', color: '#ffcc00', fontFamily: 'monospace'
         }).setOrigin(0.5).setScrollFactor(0).setDepth(11);
-        y += 30;
+        y += 22;
       }
       if (jobPayout > 0) {
-        this.add.text(640, y, `Job payout:   $${jobPayout.toLocaleString()}`, {
-          fontSize: '18px', color: '#ffcc00', fontFamily: 'monospace'
+        this.add.text(PX, y, `Job:        $${jobPayout.toLocaleString()}`, {
+          fontSize: '14px', color: '#ffcc00', fontFamily: 'monospace'
         }).setOrigin(0.5).setScrollFactor(0).setDepth(11);
-        y += 30;
+        y += 22;
       }
       if (salvage > 0) {
-        this.add.text(640, y, `Salvage:      $${salvage.toLocaleString()}`, {
-          fontSize: '18px', color: '#aa88ff', fontFamily: 'monospace'
+        this.add.text(PX, y, `Salvage:    $${salvage.toLocaleString()}`, {
+          fontSize: '14px', color: '#aa88ff', fontFamily: 'monospace'
         }).setOrigin(0.5).setScrollFactor(0).setDepth(11);
-        y += 30;
+        y += 22;
       }
       const income = prize + jobPayout + salvage;
       if (income > 0) {
-        this.add.text(640, y, `Income:  $${income.toLocaleString()}`, {
-          fontSize: '16px', color: '#ffffff', fontFamily: 'monospace', fontStyle: 'bold'
+        this.add.text(PX, y, `Income:     $${income.toLocaleString()}`, {
+          fontSize: '14px', color: '#ffffff', fontFamily: 'monospace', fontStyle: 'bold'
         }).setOrigin(0.5).setScrollFactor(0).setDepth(11);
         y += 26;
       }
@@ -570,23 +632,23 @@ export class ArenaScene extends Phaser.Scene {
     // Expenses — always shown if present (both winners and losers pay)
     if (wages > 0 || maintenance > 0) {
       if (wages > 0) {
-        this.add.text(640, y, `Wages:        -$${wages.toLocaleString()}`, {
-          fontSize: '16px', color: '#ff8888', fontFamily: 'monospace'
+        this.add.text(PX, y, `Wages:     -$${wages.toLocaleString()}`, {
+          fontSize: '14px', color: '#ff8888', fontFamily: 'monospace'
         }).setOrigin(0.5).setScrollFactor(0).setDepth(11);
-        y += 24;
+        y += 22;
       }
       if (maintenance > 0) {
-        this.add.text(640, y, `Maintenance:  -$${maintenance.toLocaleString()}`, {
-          fontSize: '16px', color: '#ff8888', fontFamily: 'monospace'
+        this.add.text(PX, y, `Upkeep:    -$${maintenance.toLocaleString()}`, {
+          fontSize: '14px', color: '#ff8888', fontFamily: 'monospace'
         }).setOrigin(0.5).setScrollFactor(0).setDepth(11);
-        y += 24;
+        y += 22;
       }
       const net = prize + jobPayout + salvage - wages - maintenance;
       const netColor = net >= 0 ? '#00ff88' : '#ff4444';
-      this.add.text(640, y, `Net:     ${net >= 0 ? '+' : '-'}$${Math.abs(net).toLocaleString()}`, {
-        fontSize: '18px', color: netColor, fontFamily: 'monospace', fontStyle: 'bold'
+      this.add.text(PX, y, `Net:  ${net >= 0 ? '+' : '-'}$${Math.abs(net).toLocaleString()}`, {
+        fontSize: '15px', color: netColor, fontFamily: 'monospace', fontStyle: 'bold'
       }).setOrigin(0.5).setScrollFactor(0).setDepth(11);
-      y += 32;
+      y += 28;
     }
 
     // Damage summary
@@ -604,12 +666,12 @@ export class ArenaScene extends Phaser.Scene {
       ].filter(Boolean).join('  ');
 
       const dmgColor = armorLost > 0 ? '#ff8888' : '#88ff88';
-      this.add.text(640, y, `Damage: ${armorLost} armor pts lost${flags ? `  [${flags}]` : ''}`, {
+      this.add.text(PX, y, `Damage: ${armorLost} armor pts lost${flags ? `  [${flags}]` : ''}`, {
         fontSize: '14px', color: dmgColor, fontFamily: 'monospace'
       }).setOrigin(0.5).setScrollFactor(0).setDepth(11);
       y += 24;
     } else if (wasDestroyed) {
-      this.add.text(640, y, `Vehicle: TOTAL LOSS  [${myWreck!.state.toUpperCase()}]`, {
+      this.add.text(PX, y, `Vehicle: TOTAL LOSS  [${myWreck!.state.toUpperCase()}]`, {
         fontSize: '14px', color: '#ff5555', fontFamily: 'monospace'
       }).setOrigin(0.5).setScrollFactor(0).setDepth(11);
       y += 24;
@@ -618,7 +680,7 @@ export class ArenaScene extends Phaser.Scene {
     // Per-vehicle kill breakdown when squad > 1
     if (this.squadVehicleIds.length > 1 && this.zoneState) {
       y += 6;
-      this.add.text(640, y, 'SQUAD REPORT', {
+      this.add.text(PX, y, 'SQUAD REPORT', {
         fontSize: '13px', color: '#aaa', fontFamily: 'monospace', fontStyle: 'bold'
       }).setOrigin(0.5).setScrollFactor(0).setDepth(11);
       y += 20;
@@ -629,18 +691,18 @@ export class ArenaScene extends Phaser.Scene {
         const name = (alive?.stats.name ?? wreck?.sourceVehicleId ?? vid).slice(0, 20);
         const statusStr = alive ? 'survived' : wreck ? `[${wreck.state.toUpperCase()}]` : 'lost';
         const statusColor = alive ? '#88ff88' : '#ff5555';
-        this.add.text(640, y, `${name}: ${kills} kill${kills === 1 ? '' : 's'}, ${statusStr}`, {
+        this.add.text(PX, y, `${name}: ${kills} kill${kills === 1 ? '' : 's'}, ${statusStr}`, {
           fontSize: '12px', color: statusColor, fontFamily: 'monospace'
         }).setOrigin(0.5).setScrollFactor(0).setDepth(11);
         y += 18;
       }
     }
 
-    // Return to garage button
-    y = Math.max(y + 10, 460);
-    const garageBtn = this.add.text(640, y, '[RETURN TO GARAGE]', {
-      fontSize: '20px', color: '#aaaaff', fontFamily: 'monospace',
-      backgroundColor: '#111133', padding: { x: 12, y: 6 }
+    // Return to garage button — always near bottom of the sidebar
+    y = Math.max(y + 10, 620);
+    const garageBtn = this.add.text(PX, y, '[RETURN TO GARAGE]', {
+      fontSize: '14px', color: '#aaaaff', fontFamily: 'monospace',
+      backgroundColor: '#111133', padding: { x: 10, y: 5 }
     }).setOrigin(0.5).setScrollFactor(0).setDepth(11).setInteractive();
 
     garageBtn.on('pointerdown', () => {

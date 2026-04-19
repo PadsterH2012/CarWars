@@ -65,6 +65,9 @@ export interface CombatEvent {
   toX: number;
   toY: number;
   weapon: string;
+  damage?: number;     // damage dealt on a hit (undefined or 0 on miss)
+  location?: string;   // face hit: 'front' | 'back' | 'left' | 'right' | 'top' | 'underbody'
+  destroyed?: boolean; // true if this hit destroyed the target
 }
 
 // A destroyed vehicle persists as wreckage — a collidable, optionally burning obstacle.

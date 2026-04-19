@@ -407,6 +407,9 @@ export function createTurnEngine(initialState: ZoneState, map?: ArenaMap): TurnE
             fromX: attacker.position.x, fromY: attacker.position.y,
             toX: target.position.x, toY: target.position.y,
             weapon: weapon.id,
+            damage: damageResult.damageDealt,
+            location: toHit.location,
+            destroyed: willDestroy && !currentDamage.destroyed,  // only flag the hit that first kills
           });
 
           const tireIndex = (toHit.location === 'front' || toHit.location === 'left') ? 0
