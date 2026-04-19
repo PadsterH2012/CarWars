@@ -52,6 +52,24 @@ export class ArenaScene extends Phaser.Scene {
     this.token = data.token ?? '';
     this.myVehicleId = data.vehicleId ?? 'v1';
     this.jobId = data.jobId ?? '';
+
+    // Class-field state must be reset on every scene restart — Phaser reuses the
+    // same scene instance when scene.start() is called a second time, so field
+    // initializers don't re-run. Without this reset, the mapWalls guard
+    // (`this.mapWalls.length === 0`) on the first zone_state silently skips
+    // rendering the new match's walls, leaving the previous map on screen.
+    this.vehicleSprites.clear();
+    this.vehicleTargets.clear();
+    this.hazardSprites.clear();
+    this.wreckSprites.clear();
+    this.mapWalls = [];
+    this.tilemapLayers = [];
+    this.zoneState = null;
+    this.zoneEnded = false;
+    this.firePending = false;
+    this.selectedMountIndex = 0;
+    this.autopilot = false;
+    this.clientSpeed = 0;
   }
 
   preload(): void {
