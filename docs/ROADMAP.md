@@ -76,8 +76,14 @@ live at http://10.202.28.192:3001.
 - [x] `town-square` map (composed with snippets)
 - [x] Map snippet library + composer (`road_straight_20`, `road_bend_ws`, `road_t`, `road_cross`, `corner_turret`, `gatehouse`, `wall_straight_20`, `diner`, `gas_station`)
 - [x] Map selection in UI — garage squad modal has a map picker (Truck Stop / Town Square / Open Arena); selection persists via localStorage
-- [ ] **Detailed map rendering** — currently walls render as flat blue rectangles. Upgrade to colour-coded by `wall.type` (building = warm brown, turret = dark grey, wall = light grey), roof/window detail per building, shop signage for fixtures (diner = red "DINER" sign, gas_station = pump markers). No new data needed beyond what snippets already carry.
-- [ ] **Seed-based procedural map generation** — given a seed + parameters (size, theme, density, road count), compose a fresh map from the snippet library. Every match can be unique; shareable seeds make fights reproducible. Needs: seed-aware snippet placement algorithm, connector auto-alignment for road networks, collision-free building placement. Builds on the existing snippet composer.
+- [ ] **Dynamic/living map rendering** — current walls render as flat blue rectangles. Target: atmospheric dusk/stormy feel with per-building detail and motion. Specifically:
+  - Walls colour-coded by `wall.type` (building = warm brown, turret = dark grey + pulsing red light, wall = weathered concrete)
+  - Per-building detail tiles (roof, windows, door gap) — per body of building
+  - Shop signage per fixture type (flickering neon "DINER", gas station pumps + canopy lights, gatehouse guard tower)
+  - Ambient motion: smoke from chimneys, neon flicker, rotating beacon on turrets
+  - Damage states: buildings track accumulated nearby hit count and visibly crack/scorch as they take collateral damage
+  - Needs: sprite assets per building type (extend the placeholder generator), animation system for ambient effects, wall/building damage state tracking
+- [-] **Seed-based procedural map generation** — subsumed by "Procedural World" (section 9) which is the richer version of this idea
 
 ---
 
@@ -197,11 +203,52 @@ live at http://10.202.28.192:3001.
 
 From [`2026-03-27-carwars-design.md`](plans/2026-03-27-carwars-design.md). No plan written yet — would need design + plan pair before execution.
 
-### Open World
-- [ ] Highways as live combat zones with seamless transitions
-- [ ] NPC traffic (civilians, haulers)
-- [ ] Random encounters (ambushes, hitchhikers, roadside hazards)
-- [ ] Gang territory on the map with persistent control
+### Open World — procedural world of cities linked by roads
+
+The world is a graph: **cities as nodes, roads as edges**, all generated
+from a root seed. Each city is itself a procedurally-composed zone built
+from the snippet library; each road stretch between cities is another
+zone. The player / gang travels between cities via the road zones,
+encountering traffic, ambushes, and hazards en route.
+
+**World graph (new)**
+- [ ] World-level seed → deterministic graph: N cities placed on a 2D
+  world map with road edges connecting them (minimum-spanning-tree plus
+  a few redundant loops for route choice)
+- [ ] Each city has its own city-seed (derived from world-seed + city
+  index) so a city is reproducible across sessions
+- [ ] Each road edge has its own road-seed for encounter/decor variation
+
+**City generation (builds on the snippet composer)**
+- [ ] Greatly expanded snippet library (urban blocks, industrial yards,
+  residential zones, commercial strips, fortified compounds, arena
+  venues — each with multiple variants)
+- [ ] City generator places districts from the library based on city
+  theme (industrial / commercial / residential / mixed), hooks roads
+  into the district graph, and designates an arena venue
+- [ ] Town features remain composable: garage, job board, bar (future)
+
+**Road stretches (new zone type)**
+- [ ] Highway/rural-road snippets with dashed centre lines, shoulders,
+  guard rails, occasional billboards / abandoned wrecks / crossroads
+- [ ] Road generator strings snippets along the edge between two cities
+  based on distance + theme (arid / forest / wasteland)
+- [ ] NPC traffic populated with procedural loadouts scaling to road
+  danger level
+
+**Travel + encounters**
+- [ ] World map UI: click a destination city → game chooses the route
+  (if multiple options) or lets the player pick
+- [ ] Road zone loads, player drives through; random encounters trigger
+  along the stretch (ambushes, hitchhikers, police patrols)
+- [ ] Seamless transition from road zone into the arriving city
+- [ ] Gang territory: which rival gang controls which cities/roads;
+  entering hostile territory escalates encounter chance
+
+**Dependencies:** Gang Phase 3 (gangs), Phase 4 (rivals), the
+dynamic/living map rendering (section 4), and a much larger snippet
+library. This is the biggest body of work on the roadmap — probably 5+
+sittings even after the precursors land.
 
 ### Multiplayer
 - [ ] Online PvP
@@ -216,6 +263,10 @@ From [`2026-03-27-carwars-design.md`](plans/2026-03-27-carwars-design.md). No pl
 No plan doc yet — needs a design + plan pair before execution. Current UI
 is monospace-on-black with minimal styling, functional but utilitarian. A
 coherent visual overhaul would elevate the whole feel.
+
+**Visual direction: not yet decided** — needs a choice between gritty
+post-apoc, neon cyberpunk, 80s VHS pulp, retro-terminal, or something
+else before detailed planning can begin.
 
 ### Scope candidates (not yet scoped — pick before planning)
 
