@@ -19,6 +19,9 @@ vehiclesRouter.post('/', async (req: AuthRequest, res) => {
     return res.status(400).json({ error: e.message });
   }
 
+  const cost = loadout.totalCost ?? 0;
+  if (cost <= 0) return res.status(400).json({ error: 'loadout.totalCost must be positive' });
+
   const defaultDamageState = {
     armor: { ...loadout.armor },
     engineDamaged: false,
@@ -28,12 +31,36 @@ vehiclesRouter.post('/', async (req: AuthRequest, res) => {
   };
 
   const db = getDb();
-  const result = await db.query(
-    `INSERT INTO vehicles (player_id, name, loadout, original_loadout, damage_state, value)
-     VALUES ($1, $2, $3, $3, $4, $5) RETURNING id`,
-    [req.playerId, name, JSON.stringify(loadout), JSON.stringify(defaultDamageState), loadout.totalCost]
-  );
-  return res.status(201).json({ id: result.rows[0].id });
+  const client = await db.connect();
+  try {
+    await client.query('BEGIN');
+    // Atomic debit: only deducts if the player has enough money. Returns the new
+    // balance when successful; no rows when the player can't afford it.
+    const debitRes = await client.query(
+      `UPDATE players SET money = money - $1 WHERE id = $2 AND money >= $1 RETURNING money`,
+      [cost, req.playerId]
+    );
+    if (!debitRes.rows.length) {
+      await client.query('ROLLBACK');
+      return res.status(400).json({ error: 'Insufficient funds' });
+    }
+    const insertRes = await client.query(
+      `INSERT INTO vehicles (player_id, name, loadout, original_loadout, damage_state, value)
+       VALUES ($1, $2, $3, $3, $4, $5) RETURNING id`,
+      [req.playerId, name, JSON.stringify(loadout), JSON.stringify(defaultDamageState), cost]
+    );
+    await client.query(
+      `INSERT INTO event_history (player_id, event_type, result, money_delta) VALUES ($1,'vehicle_build',$2,$3)`,
+      [req.playerId, JSON.stringify({ vehicleId: insertRes.rows[0].id, name, cost }), -cost]
+    );
+    await client.query('COMMIT');
+    return res.status(201).json({ id: insertRes.rows[0].id, moneyRemaining: debitRes.rows[0].money });
+  } catch (e) {
+    await client.query('ROLLBACK');
+    throw e;
+  } finally {
+    client.release();
+  }
 });
 
 vehiclesRouter.get('/', async (req: AuthRequest, res) => {

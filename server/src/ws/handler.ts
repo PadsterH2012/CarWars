@@ -14,8 +14,11 @@ function skillToMaxSteer(skill: number): number {
   return 30;
 }
 
-export function calcPrize(division: number): number {
-  return division * 500;
+export function calcPrize(division: number, squadSize: number = 1): number {
+  // Base purse scales by division; squad multiplier rewards bigger fights.
+  // 1v1 → 1.0×, 2v2 → 1.5×, 3v3 → 2.0×, 4v4 → 2.5×
+  const squadMul = 1 + (Math.max(1, Math.min(4, squadSize)) - 1) * 0.5;
+  return Math.round(division * 500 * squadMul);
 }
 
 async function loadVehicleFromDb(vehicleId: string, token: string): Promise<{ vehicle: VehicleState; playerId: string } | null> {
@@ -240,7 +243,10 @@ async function handleMessage(ws: WebSocket, raw: string): Promise<void> {
           try {
             const pRes = await db.query(`SELECT division FROM players WHERE id = $1`, [winnerId]);
             const division = pRes.rows[0]?.division ?? 5;
-            const prize = calcPrize(division);
+            // Prize scales with squad size — reward bigger fights
+            const winnerWs2 = [...clientPlayers.entries()].find(([, pid]) => pid === winnerId)?.[0];
+            const squadSize = winnerWs2 ? (clientSquads.get(winnerWs2)?.length ?? 1) : 1;
+            const prize = calcPrize(division, squadSize);
 
             // Find winner's WebSocket to check for active job
             let jobPayout = 0;

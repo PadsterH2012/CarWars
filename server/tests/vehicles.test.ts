@@ -107,4 +107,47 @@ describe('vehicle CRUD', () => {
       .set('Authorization', `Bearer ${token}`);
     expect(meAfterRes.body.money).toBe(moneyBefore + 5000);
   });
+
+  it('POST /api/vehicles deducts totalCost from the players money', async () => {
+    const meBefore = await request(app).get('/api/me').set('Authorization', `Bearer ${token}`);
+    const before = meBefore.body.money;
+    const createRes = await request(app)
+      .post('/api/vehicles')
+      .set('Authorization', `Bearer ${token}`)
+      .send({ name: 'Paid For', loadout: { ...defaultLoadout, totalCost: 8000 } });
+    expect(createRes.status).toBe(201);
+    expect(createRes.body.moneyRemaining).toBe(before - 8000);
+    const meAfter = await request(app).get('/api/me').set('Authorization', `Bearer ${token}`);
+    expect(meAfter.body.money).toBe(before - 8000);
+  });
+
+  it('POST /api/vehicles rejects with 400 when the player cant afford it', async () => {
+    const meBefore = await request(app).get('/api/me').set('Authorization', `Bearer ${token}`);
+    const before = meBefore.body.money;
+    const unaffordable = before + 100;
+    const res = await request(app)
+      .post('/api/vehicles')
+      .set('Authorization', `Bearer ${token}`)
+      .send({ name: 'Too Pricey', loadout: { ...defaultLoadout, totalCost: unaffordable } });
+    expect(res.status).toBe(400);
+    expect(res.body.error).toMatch(/Insufficient funds/i);
+    // Balance unchanged
+    const meAfter = await request(app).get('/api/me').set('Authorization', `Bearer ${token}`);
+    expect(meAfter.body.money).toBe(before);
+  });
+});
+
+describe('calcPrize squad scaling', () => {
+  it('scales linearly with squad size', async () => {
+    const { calcPrize } = await import('../src/ws/handler');
+    expect(calcPrize(5, 1)).toBe(2500);
+    expect(calcPrize(5, 2)).toBe(3750);
+    expect(calcPrize(5, 3)).toBe(5000);
+    expect(calcPrize(5, 4)).toBe(6250);
+  });
+
+  it('defaults to solo (×1) when squadSize is omitted', async () => {
+    const { calcPrize } = await import('../src/ws/handler');
+    expect(calcPrize(5)).toBe(2500);
+  });
 });
