@@ -504,6 +504,46 @@ export function computeAiInput(
     }
   }
 
+  // ── Friendly avoidance overlay ───────────────────────────────────────────
+  // Squadmates are soft obstacles: if a friendly is directly ahead within a
+  // short radius, nudge the heading around them and shed speed. Doesn't trigger
+  // on enemies — those are handled by the tactical engine above. Uses
+  // `allVehicles` when plumbed through (from zone-runner) so we see the whole
+  // state including stationary squadmates.
+  if (allVehicles && allVehicles.length > 1 && desiredSpeed > 0) {
+    const FRIEND_AVOID_RANGE = 4;   // world units; start nudging inside this
+    const FRIEND_AVOID_ARC   = 45;  // degrees off the current facing
+    let nearestFriend: VehicleState | null = null;
+    let nearestDist = Infinity;
+    for (const v of allVehicles) {
+      if (v.id === self.id) continue;
+      if (v.playerId !== self.playerId) continue;
+      if (v.stats.damageState.destroyed) continue;
+      const d = dist2d(self.position, v.position);
+      if (d >= FRIEND_AVOID_RANGE) continue;
+      // Is this friend ahead of us within the arc?
+      const toFriend = bearingTo(self.position, v.position);
+      const turnToFriend = Math.abs(shortestTurn(self.facing, toFriend));
+      if (turnToFriend > FRIEND_AVOID_ARC) continue;
+      if (d < nearestDist) { nearestDist = d; nearestFriend = v; }
+    }
+    if (nearestFriend) {
+      // Steer away by 60°+ off the friend's bearing, on the side opposite to
+      // where they are relative to the current facing.
+      const toFriend = bearingTo(self.position, nearestFriend.position);
+      const side = shortestTurn(self.facing, toFriend) >= 0 ? -1 : 1;  // turn opposite
+      const avoidHeading = (self.facing + side * 60 + 360) % 360;
+      const urgency = 1 - (nearestDist / FRIEND_AVOID_RANGE);
+      const tactTurn  = shortestTurn(self.facing, desiredFacing);
+      const avoidTurn = shortestTurn(self.facing, avoidHeading);
+      desiredFacing = (self.facing + tactTurn * (1 - urgency) + avoidTurn * urgency + 360) % 360;
+      desiredSpeed  = Math.floor(desiredSpeed * (1 - urgency * 0.6));  // shed speed when close
+      if (urgency >= 0.5) {
+        console.log(`[FRIEND] ${self.id.padEnd(10)} avoid ${nearestFriend.id.padEnd(10)} dist=${nearestDist.toFixed(1)} urgency=${urgency.toFixed(2)}`);
+      }
+    }
+  }
+
   // ── Wall avoidance overlay (final pass — cannot be overridden) ──────────
   // Probes along both current facing AND desiredFacing to catch cases where the
   // tactic or survival overlay just aimed us at a wall.

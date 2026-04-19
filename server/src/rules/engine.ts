@@ -172,22 +172,28 @@ export function createTurnEngine(initialState: ZoneState, map?: ArenaMap): TurnE
           const aHasRamplate = false; // ramplate not yet in loadout type
           const result = resolveCollision(vA.speed, vB.speed, type, aHasRamplate);
 
+          // Friendly bump: same-playerId vehicles don't damage each other.
+          // They still get physically separated below so they don't stack.
+          const friendly = vA.playerId === vB.playerId;
+
           // Apply damage to each vehicle on the face that took the impact
           const locA = getAttackLocation(vB, vA); // which face of A did B hit
           const locB = getAttackLocation(vA, vB); // which face of B did A hit
 
-          for (const [veh, other, dmg, loc] of [
-            [vA, vB, result.damageA, locA],
-            [vB, vA, result.damageB, locB],
-          ] as [VehicleState, VehicleState, number, ArmorLocation][]) {
-            if (dmg <= 0) continue;
-            const ds   = damageUpdates.get(veh.id) ?? { ...veh.stats.damageState };
-            const armor = { ...ds.armor };
-            const remaining = (armor[loc] ?? 0) - dmg;
-            armor[loc] = Math.max(0, remaining);
-            const destroyed = ds.destroyed || armor[loc] === 0;
-            damageUpdates.set(veh.id, { ...ds, armor, destroyed });
-            lastDamager.set(veh.id, other.id);
+          if (!friendly) {
+            for (const [veh, other, dmg, loc] of [
+              [vA, vB, result.damageA, locA],
+              [vB, vA, result.damageB, locB],
+            ] as [VehicleState, VehicleState, number, ArmorLocation][]) {
+              if (dmg <= 0) continue;
+              const ds   = damageUpdates.get(veh.id) ?? { ...veh.stats.damageState };
+              const armor = { ...ds.armor };
+              const remaining = (armor[loc] ?? 0) - dmg;
+              armor[loc] = Math.max(0, remaining);
+              const destroyed = ds.destroyed || armor[loc] === 0;
+              damageUpdates.set(veh.id, { ...ds, armor, destroyed });
+              lastDamager.set(veh.id, other.id);
+            }
           }
 
           // Push vehicles apart on minimum penetration axis, zero both speeds
@@ -204,9 +210,11 @@ export function createTurnEngine(initialState: ZoneState, map?: ArenaMap): TurnE
           newVehicles[j] = vB;
 
           console.log(
-            `[t${state.tick}] CRASH ${vA.id} ↔ ${vB.id} ` +
+            `[t${state.tick}] ${friendly ? 'BUMP ' : 'CRASH'} ${vA.id} ↔ ${vB.id} ` +
             `type=${type} closingSpd=${result.closingSpeed} ` +
-            `A-${locA}:${result.damageA}pts B-${locB}:${result.damageB}pts`,
+            (friendly
+              ? `(friendly — no damage)`
+              : `A-${locA}:${result.damageA}pts B-${locB}:${result.damageB}pts`)
           );
         }
       }
