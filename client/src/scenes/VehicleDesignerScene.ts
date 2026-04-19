@@ -3,786 +3,963 @@ import {
   BODY_TYPES, POWER_PLANTS, SUSPENSIONS, TIRE_TYPES, ARMOR_TYPES, WEAPONS, ARCS,
   type MountConfig, type ArcType,
 } from '../ui/DesignerUI';
-import { preloadVehicleSprites, bodySpriteKey, weaponSpriteKey } from '../game/VehicleSprite';
-import { bindFullscreenToggle, onLayout } from '../ui/responsive';
+import { bindFullscreenToggle } from '../ui/responsive';
 
-const DESIGN_W = 1280;
-const DESIGN_H = 720;
+type Mode = 'simple' | 'datasheet';
+type Face = 'front' | 'back' | 'left' | 'right';
+type Tab = 'body' | 'engine' | 'armor' | 'weapons' | 'tires' | 'suspension';
 
-const SEL_COLOR   = '#00ff88';
-const SEL_BG      = '#003322';
-const UNSEL_COLOR = '#888888';
-const UNSEL_BG    = '#222233';
-const LABEL_COLOR = '#aaaaaa';
-const HEADING_COLOR = '#ff4444';
+interface WeaponDef {
+  id: string; name: string; category: string; cost: number;
+  toHit: number; damageDice: number; damageMod: number;
+  shotsPerMag: number; ammoCost: number;
+  allowedArcs: string[];
+}
 
-const BTN_STYLE: Phaser.Types.GameObjects.Text.TextStyle = {
-  fontSize: '12px', fontFamily: 'monospace',
-  backgroundColor: UNSEL_BG, padding: { x: 6, y: 3 },
-};
+interface DesignerStats {
+  maxSpeed: number;
+  acceleration: number;
+  handlingClass: number;
+  totalWeight: number;
+  totalCost: number;
+}
 
-const LABEL_STYLE: Phaser.Types.GameObjects.Text.TextStyle = {
-  fontSize: '13px', fontFamily: 'monospace', color: LABEL_COLOR,
-};
+const LS_MODE = 'cw_designer_mode';
 
-const STAT_STYLE: Phaser.Types.GameObjects.Text.TextStyle = {
-  fontSize: '13px', fontFamily: 'monospace', color: '#cccccc',
-};
+function armorFillCss(pts: number): string {
+  if (pts >= 15) return '#00aa44';
+  if (pts >= 5)  return '#aaaa00';
+  if (pts >= 1)  return '#aa4400';
+  return '#440000';
+}
 
-function armorColor(pts: number): number {
-  if (pts >= 15) return 0x00aa44;  // green
-  if (pts >= 5)  return 0xaaaa00;  // yellow
-  if (pts >= 1)  return 0xaa4400;  // orange
-  return 0x440000;                  // dark red
+function esc(s: string): string {
+  return s.replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c] as string));
+}
+
+// Replace the contents of `el` by parsing `html` through the DOM parser.
+// Every user-supplied substring in our templates is routed through esc() first,
+// so dynamic values are HTML-safe by the time they land here.
+function renderInto(el: HTMLElement, html: string): void {
+  el.textContent = '';
+  const range = document.createRange();
+  range.selectNodeContents(el);
+  const fragment = range.createContextualFragment(html);
+  el.appendChild(fragment);
 }
 
 export class VehicleDesignerScene extends Phaser.Scene {
   private token = '';
+  private editVehicleId: string | null = null;
+  private gangPrimaryColour = 0x00cd68;
+  private treasury = 0;
 
-  // State
-  private bodyType      = 'mid_sized';
+  // Design state
+  private vehicleName = 'My Car';
+  private bodyType = 'mid_sized';
   private powerPlantType = 'elec_medium';
   private suspensionType = 'standard';
-  private tireType      = 'standard';
-  private armorType     = 'ablative';
-  private mounts: MountConfig[] = [
-    { id: 'm0', arc: 'front', weaponId: 'mg', ammo: 50 },
-  ];
-  private armor = { front: 20, back: 15, left: 15, right: 15 };
-  private vehicleName   = 'My Car';
-  private derivedCost   = 0;
-  private statsReqId    = 0;
+  private tireType = 'standard';
+  private armorType = 'ablative';
+  private mounts: MountConfig[] = [{ id: 'm0', arc: 'front', weaponId: 'mg', ammo: 50 }];
+  private armor: Record<Face, number> = { front: 20, back: 15, left: 15, right: 15 };
 
-  // Debounce timer for stats refresh
-  private statsDebounceTimer: ReturnType<typeof setTimeout> | null = null;
+  // UI state
+  private mode: Mode = 'simple';
+  private activeTab: Tab = 'body';
+  private selectedFace: Face = 'front';
+  private weaponCatalog: WeaponDef[] = [];
+  private stats: DesignerStats | null = null;
+  private statusMsg = '';
+  private statusColor = '#888';
 
-  // Button maps for in-place updates
-  private bodyBtns       = new Map<string, Phaser.GameObjects.Text>();
-  private powerBtns      = new Map<string, Phaser.GameObjects.Text>();
-  private suspBtns       = new Map<string, Phaser.GameObjects.Text>();
-  private tireBtns       = new Map<string, Phaser.GameObjects.Text>();
-  private armorTypeBtns  = new Map<string, Phaser.GameObjects.Text>();
-  private weaponBtns     = new Map<string, Phaser.GameObjects.Text>();
-  private arcBtns        = new Map<string, Phaser.GameObjects.Text>();
+  // Debounce
+  private statsReqId = 0;
+  private statsDebounce: ReturnType<typeof setTimeout> | null = null;
 
-  // Stats panel texts
-  private statsSpeedText!:  Phaser.GameObjects.Text;
-  private statsAccelText!:  Phaser.GameObjects.Text;
-  private statsHcText!:     Phaser.GameObjects.Text;
-  private statsWeightText!: Phaser.GameObjects.Text;
-  private statsCostText!:   Phaser.GameObjects.Text;
-  private statusText!:      Phaser.GameObjects.Text;
-
-  // Schematic state
-  private schematicCy = 0;
-  private selectedArmorFace: 'front' | 'back' | 'left' | 'right' = 'front';
-  private schematicGfx!: Phaser.GameObjects.Graphics;
-  private schematicTexts = new Map<string, Phaser.GameObjects.Text>();
-  private selectedFaceLabel!: Phaser.GameObjects.Text;
-  private armorEditText!: Phaser.GameObjects.Text;
+  // DOM root
+  private root!: HTMLDivElement;
 
   constructor() { super({ key: 'VehicleDesignerScene' }); }
-
-  // Workshop edit-mode state (when launched from garage [WORKSHOP])
-  private editVehicleId: string | null = null;
-  private gangPrimaryColour: number = 0x00cd68;  // default green, replaced from /api/gangs/mine
-
-  // Sprite preview objects (recreated each redraw)
-  private previewBody: Phaser.GameObjects.Image | null = null;
-  private previewWeapons: Phaser.GameObjects.Image[] = [];
 
   init(data: { token?: string; vehicleId?: string }): void {
     this.token = data.token ?? '';
     this.editVehicleId = data.vehicleId ?? null;
-  }
 
-  preload(): void {
-    // Ensure body + weapon sprites are available for the schematic preview
-    preloadVehicleSprites(this);
+    // Reset state on scene restart (Phaser reuses instances)
+    this.vehicleName = 'My Car';
+    this.bodyType = 'mid_sized';
+    this.powerPlantType = 'elec_medium';
+    this.suspensionType = 'standard';
+    this.tireType = 'standard';
+    this.armorType = 'ablative';
+    this.mounts = [{ id: 'm0', arc: 'front', weaponId: 'mg', ammo: 50 }];
+    this.armor = { front: 20, back: 15, left: 15, right: 15 };
+    this.activeTab = 'body';
+    this.selectedFace = 'front';
+    this.stats = null;
+    this.statusMsg = '';
   }
 
   async create(): Promise<void> {
-    // Background
-    this.add.rectangle(640, 360, 1280, 720, 0x111122);
+    const savedMode = localStorage.getItem(LS_MODE) as Mode | null;
+    this.mode = savedMode === 'datasheet' ? 'datasheet' : 'simple';
 
-    // Pull the gang's primary colour so the preview sprite tints correctly
-    try {
-      const host = window.location.hostname;
-      const gRes = await fetch(`http://${host}:3001/api/gangs/mine`, {
-        headers: { Authorization: `Bearer ${this.token}` },
-      });
-      if (gRes.ok) {
-        const g = await gRes.json();
-        if (typeof g.primary_colour === 'number') this.gangPrimaryColour = g.primary_colour;
-      }
-    } catch { /* fall back to default green */ }
+    await Promise.all([this.loadGang(), this.loadWeaponCatalog(), this.loadVehicleIfEditing()]);
 
-    // When launched in workshop edit mode, pre-load the existing vehicle's loadout
-    // into our state fields BEFORE the UI is built, so every panel renders with the
-    // real current settings (body type, power plant, tires, weapons, armor). The
-    // vehicle name also defaults to the existing one so we don't overwrite it.
-    if (this.editVehicleId) {
-      try {
-        const host = window.location.hostname;
-        const res = await fetch(`http://${host}:3001/api/vehicles/${this.editVehicleId}`, {
-          headers: { Authorization: `Bearer ${this.token}` },
-        });
-        if (res.ok) {
-          const v: any = await res.json();
-          const l = v.loadout ?? {};
-          this.vehicleName     = v.name ?? this.vehicleName;
-          this.bodyType        = l.bodyType        ?? this.bodyType;
-          this.powerPlantType  = l.powerPlantType  ?? this.powerPlantType;
-          this.suspensionType  = l.suspensionType  ?? this.suspensionType;
-          this.tireType        = l.tireType        ?? this.tireType;
-          this.armorType       = l.armorType       ?? this.armorType;
-          if (Array.isArray(l.mounts) && l.mounts.length > 0) this.mounts = l.mounts;
-          if (l.armor) {
-            this.armor = {
-              front: l.armor.front ?? this.armor.front,
-              back:  l.armor.back  ?? this.armor.back,
-              left:  l.armor.left  ?? this.armor.left,
-              right: l.armor.right ?? this.armor.right,
-            };
-          }
-        }
-      } catch {
-        // If the load fails we fall back to defaults and the user can still edit
-      }
-    }
+    this.root = document.createElement('div');
+    this.root.className = 'cw-designer';
+    Object.assign(this.root.style, {
+      position: 'fixed', inset: '0', zIndex: '50',
+      background: '#0a0a1a', color: '#ccc',
+      fontFamily: "'Courier New', monospace",
+      display: 'grid', gridTemplateRows: 'auto auto 1fr auto',
+      minHeight: '0',
+    });
+    document.body.appendChild(this.root);
 
-    // Title — switches between BUILD and WORKSHOP depending on mode
-    const titleText = this.editVehicleId ? `WORKSHOP — ${this.vehicleName}` : 'VEHICLE DESIGNER';
-    this.add.text(640, 25, titleText, {
-      color: HEADING_COLOR, fontSize: '24px', fontFamily: 'monospace', fontStyle: 'bold',
-    }).setOrigin(0.5);
+    this.events.once(Phaser.Scenes.Events.SHUTDOWN, () => {
+      this.root.remove();
+      if (this.statsDebounce) clearTimeout(this.statsDebounce);
+    });
 
-    this.buildLeftPanel();
-    this.buildWeaponsPanel();
-    this.buildRightPanel();
-    this.buildBottomButtons();
-
-    // Trigger initial stats fetch (immediate, no debounce)
+    this.rebuild();
     this.refreshStats();
 
-    // Draw initial schematic after objects are created
-    this.redrawSchematic();
-
-    // Responsive: zoom + center the 1280×720 design to fit whatever viewport we
-    // have. Keeps all existing hardcoded positions working.
     bindFullscreenToggle(this);
-    onLayout(this, () => {
-      const { width, height } = this.scale;
-      const zoom = Math.min(1, width / DESIGN_W, height / DESIGN_H);
-      const cam = this.cameras.main;
-      cam.setZoom(zoom);
-      cam.centerOn(DESIGN_W / 2, DESIGN_H / 2);
-    });
   }
 
-  // ─── LEFT PANEL (x=10..430) ──────────────────────────────────────────────
+  // ── Loaders ──────────────────────────────────────────────────────────────
 
-  private buildLeftPanel(): void {
-    let y = 55;
-    const x0 = 10;
-
-    // Body Type
-    this.add.text(x0, y, 'Body Type:', LABEL_STYLE);
-    y += 18;
-    y = this.buildOptionGrid(BODY_TYPES, x0, y, 3, this.bodyBtns, () => this.bodyType,
-      (id) => {
-        this.bodyType = id;
-        this.updateOptionBtns(this.bodyBtns, () => this.bodyType);
-        this.syncPowerPlantToBody();
-        this.scheduleStatsRefresh();
-        this.redrawSchematic();  // body-type changed → refresh preview sprite
+  private async loadGang(): Promise<void> {
+    try {
+      const host = window.location.hostname;
+      const res = await fetch(`http://${host}:3001/api/gangs/mine`, {
+        headers: { Authorization: `Bearer ${this.token}` },
       });
-
-    y += 6;
-    // Power Plant
-    this.add.text(x0, y, 'Power Plant:', LABEL_STYLE);
-    y += 18;
-    y = this.buildOptionGrid(POWER_PLANTS, x0, y, 3, this.powerBtns, () => this.powerPlantType,
-      (id) => { this.powerPlantType = id; this.updateOptionBtns(this.powerBtns, () => this.powerPlantType); this.scheduleStatsRefresh(); });
-
-    y += 6;
-    // Suspension
-    this.add.text(x0, y, 'Suspension:', LABEL_STYLE);
-    y += 18;
-    y = this.buildOptionGrid(SUSPENSIONS, x0, y, 3, this.suspBtns, () => this.suspensionType,
-      (id) => { this.suspensionType = id; this.updateOptionBtns(this.suspBtns, () => this.suspensionType); this.scheduleStatsRefresh(); });
-
-    y += 6;
-    // Tires
-    this.add.text(x0, y, 'Tires:', LABEL_STYLE);
-    y += 18;
-    y = this.buildOptionGrid(TIRE_TYPES, x0, y, 3, this.tireBtns, () => this.tireType,
-      (id) => { this.tireType = id; this.updateOptionBtns(this.tireBtns, () => this.tireType); this.scheduleStatsRefresh(); });
-
-    y += 6;
-    // Armor Type
-    this.add.text(x0, y, 'Armor Type:', LABEL_STYLE);
-    y += 18;
-    this.buildOptionGrid(ARMOR_TYPES, x0, y, 3, this.armorTypeBtns, () => this.armorType,
-      (id) => { this.armorType = id; this.updateOptionBtns(this.armorTypeBtns, () => this.armorType); this.scheduleStatsRefresh(); });
+      if (res.ok) {
+        const g = await res.json();
+        if (typeof g.primary_colour === 'number') this.gangPrimaryColour = g.primary_colour;
+        if (typeof g.treasury === 'number') this.treasury = g.treasury;
+      }
+    } catch { /* defaults */ }
   }
 
-  /**
-   * Lay out option buttons in a grid of `cols` columns.
-   * Returns the y position after the last row.
-   */
-  private buildOptionGrid<T extends { id: string; label: string }>(
-    options: readonly T[],
-    x0: number,
-    y: number,
-    cols: number,
-    btnMap: Map<string, Phaser.GameObjects.Text>,
-    getCurrent: () => string,
-    onSelect: (id: string) => void,
-  ): number {
-    const colWidth = 138;
-    const rowHeight = 28;
-    let maxRow = 0;
-
-    options.forEach(({ id, label }, i) => {
-      const col = i % cols;
-      const row = Math.floor(i / cols);
-      maxRow = Math.max(maxRow, row);
-      const bx = x0 + col * colWidth;
-      const by = y + row * rowHeight;
-      const isSelected = getCurrent() === id;
-      const btn = this.add.text(bx, by, label, {
-        ...BTN_STYLE,
-        color: isSelected ? SEL_COLOR : UNSEL_COLOR,
-        backgroundColor: isSelected ? SEL_BG : UNSEL_BG,
-      }).setInteractive();
-      btn.on('pointerdown', () => onSelect(id));
-      btnMap.set(id, btn);
-    });
-
-    return y + (maxRow + 1) * rowHeight;
+  private async loadWeaponCatalog(): Promise<void> {
+    try {
+      const host = window.location.hostname;
+      const res = await fetch(`http://${host}:3001/api/weapons`);
+      if (res.ok) this.weaponCatalog = await res.json();
+    } catch { /* empty */ }
   }
 
-  private updateOptionBtns(btnMap: Map<string, Phaser.GameObjects.Text>, getCurrent: () => string): void {
-    btnMap.forEach((btn, id) => {
-      const selected = getCurrent() === id;
-      btn.setColor(selected ? SEL_COLOR : UNSEL_COLOR);
-      btn.setBackgroundColor(selected ? SEL_BG : UNSEL_BG);
-    });
+  private async loadVehicleIfEditing(): Promise<void> {
+    if (!this.editVehicleId) return;
+    try {
+      const host = window.location.hostname;
+      const res = await fetch(`http://${host}:3001/api/vehicles/${this.editVehicleId}`, {
+        headers: { Authorization: `Bearer ${this.token}` },
+      });
+      if (!res.ok) return;
+      const v: any = await res.json();
+      const l = v.loadout ?? {};
+      this.vehicleName    = v.name ?? this.vehicleName;
+      this.bodyType       = l.bodyType       ?? this.bodyType;
+      this.powerPlantType = l.powerPlantType ?? this.powerPlantType;
+      this.suspensionType = l.suspensionType ?? this.suspensionType;
+      this.tireType       = l.tireType       ?? this.tireType;
+      this.armorType      = l.armorType      ?? this.armorType;
+      if (Array.isArray(l.mounts) && l.mounts.length > 0) this.mounts = l.mounts;
+      if (l.armor) {
+        this.armor = {
+          front: l.armor.front ?? this.armor.front,
+          back:  l.armor.back  ?? this.armor.back,
+          left:  l.armor.left  ?? this.armor.left,
+          right: l.armor.right ?? this.armor.right,
+        };
+      }
+    } catch { /* keep defaults */ }
+  }
+
+  // ── Rebuild + event delegation ───────────────────────────────────────────
+
+  private rebuild(): void {
+    const html = this.renderStyles() + this.renderHeader()
+      + (this.mode === 'simple' ? this.renderSimple() : this.renderDatasheet())
+      + this.renderFooter();
+    renderInto(this.root, html);
+    this.root.addEventListener('click', this.onClick, { once: false });
+  }
+
+  private onClick = (e: MouseEvent): void => {
+    const t = (e.target as HTMLElement).closest<HTMLElement>('[data-action]');
+    if (!t) return;
+    const action = t.dataset.action!;
+    const value = t.dataset.value;
+
+    switch (action) {
+      case 'back':
+        this.scene.start('GarageScene', { token: this.token });
+        return;
+      case 'save':
+        this.saveVehicle();
+        return;
+      case 'mode':
+        this.switchMode(value as Mode);
+        return;
+      case 'rename':
+        this.doRename();
+        return;
+      case 'tab':
+        this.activeTab = value as Tab;
+        this.rebuild();
+        return;
+      case 'body':
+        this.setBodyType(value!);
+        return;
+      case 'engine':
+        this.powerPlantType = value!;
+        this.markDirty();
+        return;
+      case 'suspension':
+        this.suspensionType = value!;
+        this.markDirty();
+        return;
+      case 'tires':
+        this.tireType = value!;
+        this.markDirty();
+        return;
+      case 'armor-type':
+        this.armorType = value!;
+        this.markDirty();
+        return;
+      case 'select-face':
+        this.selectedFace = value as Face;
+        this.rebuild();
+        return;
+      case 'armor-adjust': {
+        const delta = parseInt(value!, 10);
+        const face = this.selectedFace;
+        this.armor[face] = Math.max(0, Math.min(99, this.armor[face] + delta));
+        this.markDirty();
+        return;
+      }
+      case 'weapon-toggle':
+        this.toggleWeapon(value!);
+        return;
+      case 'cycle-arc':
+        this.cycleArc(value!);
+        return;
+      case 'set-mount-weapon': {
+        const [mountId, weaponIdRaw] = value!.split(':');
+        const weaponId = weaponIdRaw === 'null' ? null : weaponIdRaw;
+        this.setMountWeapon(mountId, weaponId);
+        return;
+      }
+      case 'add-mount':
+        this.addMount(value as ArcType);
+        return;
+      case 'remove-mount':
+        this.removeMount(value!);
+        return;
+    }
+  };
+
+  // ── State mutators ───────────────────────────────────────────────────────
+
+  private markDirty(): void {
+    this.rebuild();
+    this.scheduleStatsRefresh();
+  }
+
+  private switchMode(m: Mode): void {
+    if (m !== 'simple' && m !== 'datasheet') return;
+    this.mode = m;
+    localStorage.setItem(LS_MODE, m);
+    this.rebuild();
+  }
+
+  private setBodyType(id: string): void {
+    if (!BODY_TYPES.find(b => b.id === id)) return;
+    this.bodyType = id;
+    this.syncPowerPlantToBody();
+    this.markDirty();
   }
 
   private syncPowerPlantToBody(): void {
     const bodyDef = BODY_TYPES.find(b => b.id === this.bodyType);
     const isCycle = bodyDef?.isCycle ?? false;
-
-    // Show only compatible plants; hide the rest
-    this.powerBtns.forEach((btn, id) => {
-      const plantDef = POWER_PLANTS.find(p => p.id === id);
-      const compatible = (plantDef?.cycleOnly ?? false) === isCycle;
-      btn.setVisible(compatible);
-    });
-
-    // If current plant is incompatible, switch to first compatible one
-    const currentPlant = POWER_PLANTS.find(p => p.id === this.powerPlantType);
-    if ((currentPlant?.cycleOnly ?? false) !== isCycle) {
+    const current = POWER_PLANTS.find(p => p.id === this.powerPlantType);
+    if ((current?.cycleOnly ?? false) !== isCycle) {
       const first = POWER_PLANTS.find(p => p.cycleOnly === isCycle);
-      if (first) {
-        this.powerPlantType = first.id;
-        this.updateOptionBtns(this.powerBtns, () => this.powerPlantType);
-      }
+      if (first) this.powerPlantType = first.id;
     }
   }
 
-  // ─── CENTER WEAPONS PANEL (x=440..770) ───────────────────────────────────
-
-  private buildWeaponsPanel(): void {
-    const x0 = 440;
-    let y = 55;
-
-    this.add.text(x0 + 130, y, 'WEAPONS', {
-      color: HEADING_COLOR, fontSize: '14px', fontFamily: 'monospace', fontStyle: 'bold',
-    }).setOrigin(0.5);
-    y += 20;
-
-    const colWidth = 165;
-    const rowHeight = 28;
-
-    WEAPONS.forEach(({ id, label }, i) => {
-      const col = i % 2;
-      const row = Math.floor(i / 2);
-      const bx = x0 + col * colWidth;
-      const by = y + row * rowHeight;
-
-      const isActive = this.mounts.some(m => m.weaponId === id);
-
-      // Weapon label button
-      const wBtn = this.add.text(bx, by, label, {
-        ...BTN_STYLE,
-        color: isActive ? SEL_COLOR : '#555555',
-        backgroundColor: isActive ? SEL_BG : UNSEL_BG,
-      }).setInteractive();
-      wBtn.on('pointerdown', () => this.toggleWeapon(id));
-      this.weaponBtns.set(id, wBtn);
-
-      // Arc button (only meaningful when active, always shown for layout)
-      const mount = this.mounts.find(m => m.weaponId === id);
-      const arcLabel = mount ? `▸${mount.arc.charAt(0).toUpperCase()}` : '  ';
-      const arcBtn = this.add.text(bx + 82, by, arcLabel, {
-        ...BTN_STYLE,
-        color: isActive ? '#ffcc00' : '#333333',
-        backgroundColor: isActive ? '#332200' : '#1a1a2e',
-      }).setInteractive();
-      arcBtn.on('pointerdown', () => this.cycleArc(id));
-      this.arcBtns.set(id, arcBtn);
-    });
-  }
-
-  private toggleWeapon(weaponId: string): void {
-    const mountIdx = this.mounts.findIndex(m => m.weaponId === weaponId);
-    if (mountIdx >= 0) {
-      // Remove
-      this.mounts.splice(mountIdx, 1);
-      this.statusText.setText('');
+  private toggleWeapon(id: string): void {
+    const idx = this.mounts.findIndex(m => m.weaponId === id);
+    if (idx >= 0) {
+      this.mounts.splice(idx, 1);
+      this.flashStatus('', '#888');
     } else {
       if (this.mounts.length >= 3) {
-        this.statusText.setColor('#ff4444').setText('Max 3 weapons');
+        this.flashStatus('Max 3 weapons', '#ff4444');
+        this.rebuild();
         return;
       }
-      const newMount: MountConfig = {
-        id: `m${Date.now()}`,
-        arc: 'front',
-        weaponId,
-        ammo: 50,
-      };
-      this.mounts.push(newMount);
+      this.mounts.push({ id: `m${Date.now()}`, arc: 'front', weaponId: id, ammo: 50 });
     }
-    this.updateWeaponButtons();
-    this.redrawSchematic();
-    this.scheduleStatsRefresh();
+    this.markDirty();
   }
 
   private cycleArc(weaponId: string): void {
     const mount = this.mounts.find(m => m.weaponId === weaponId);
     if (!mount) return;
-    const currentIdx = ARCS.indexOf(mount.arc);
-    mount.arc = ARCS[(currentIdx + 1) % ARCS.length] as ArcType;
-    this.updateWeaponButtons();
-    this.redrawSchematic();
-    this.scheduleStatsRefresh();
+    const idx = ARCS.indexOf(mount.arc);
+    mount.arc = ARCS[(idx + 1) % ARCS.length] as ArcType;
+    this.markDirty();
   }
 
-  private updateWeaponButtons(): void {
-    WEAPONS.forEach(({ id }) => {
-      const wBtn = this.weaponBtns.get(id);
-      const arcBtn = this.arcBtns.get(id);
-      if (!wBtn || !arcBtn) return;
-
-      const mount = this.mounts.find(m => m.weaponId === id);
-      const isActive = !!mount;
-
-      wBtn.setColor(isActive ? SEL_COLOR : '#555555');
-      wBtn.setBackgroundColor(isActive ? SEL_BG : UNSEL_BG);
-
-      arcBtn.setText(isActive ? `▸${mount!.arc.charAt(0).toUpperCase()}` : '  ');
-      arcBtn.setColor(isActive ? '#ffcc00' : '#333333');
-      arcBtn.setBackgroundColor(isActive ? '#332200' : '#1a1a2e');
-    });
-  }
-
-  // ─── RIGHT PANEL (x=780..1270) ────────────────────────────────────────────
-
-  private buildRightPanel(): void {
-    const x0 = 790;
-    let y = 55;
-
-    // Stats section
-    this.add.text(x0, y, '── STATS ──', {
-      color: HEADING_COLOR, fontSize: '13px', fontFamily: 'monospace',
-    });
-    y += 22;
-
-    this.statsSpeedText  = this.add.text(x0, y, 'Max Speed:  --',  STAT_STYLE); y += 20;
-    this.statsAccelText  = this.add.text(x0, y, 'Accel:      --',  STAT_STYLE); y += 20;
-    this.statsHcText     = this.add.text(x0, y, 'HC:         --',  STAT_STYLE); y += 20;
-    this.statsWeightText = this.add.text(x0, y, 'Weight:     --',  STAT_STYLE); y += 20;
-    this.statsCostText   = this.add.text(x0, y, 'Cost:       --',  STAT_STYLE); y += 30;
-
-    // Armor section heading
-    this.add.text(x0, y, '── ARMOR ──', {
-      color: HEADING_COLOR, fontSize: '13px', fontFamily: 'monospace',
-    });
-    y += 22;
-
-    // Build the schematic (creates graphics + interactive zones + texts)
-    this.buildSchematic(y);
-  }
-
-  /**
-   * Build the top-down vehicle schematic in the right panel.
-   * All interactive zones and text labels are created here once.
-   * Visual state (colors, borders) is handled by redrawSchematic().
-   */
-  private buildSchematic(topY: number): void {
-    const cx = 985;
-    const cy = topY + 120;   // push centre down to accommodate the bigger panels
-    this.schematicCy = cy;
-
-    // Graphics layer for fills and borders (redrawn each update)
-    this.schematicGfx = this.add.graphics();
-
-    // Panel definitions (1.5× the previous schematic size for a clearer preview)
-    type FaceKey = 'front' | 'back' | 'left' | 'right';
-    const panels: Array<{ key: FaceKey; rx: number; ry: number; rw: number; rh: number; lx: number; ly: number }> = [
-      { key: 'front', rx: cx - 75, ry: cy - 130, rw: 150, rh: 35,  lx: cx,       ly: cy - 113 },
-      { key: 'back',  rx: cx - 75, ry: cy +  95, rw: 150, rh: 35,  lx: cx,       ly: cy + 113 },
-      { key: 'left',  rx: cx -115, ry: cy -  60, rw: 35,  rh: 120, lx: cx - 97,  ly: cy       },
-      { key: 'right', rx: cx + 80, ry: cy -  60, rw: 35,  rh: 120, lx: cx + 97,  ly: cy       },
-    ];
-
-    // Static FRONT / BACK / L / R labels above / below / outside each armor panel
-    this.add.text(cx, cy - 145, 'FRONT', {
-      fontSize: '11px', fontFamily: 'monospace', color: '#ffcc88', fontStyle: 'bold'
-    }).setOrigin(0.5);
-    this.add.text(cx, cy + 145, 'BACK', {
-      fontSize: '11px', fontFamily: 'monospace', color: '#ccaa66'
-    }).setOrigin(0.5);
-    this.add.text(cx - 130, cy, 'L', {
-      fontSize: '11px', fontFamily: 'monospace', color: '#bbbbbb'
-    }).setOrigin(0.5);
-    this.add.text(cx + 130, cy, 'R', {
-      fontSize: '11px', fontFamily: 'monospace', color: '#bbbbbb'
-    }).setOrigin(0.5);
-
-    // Create interactive hit zones (invisible rects) and value labels
-    panels.forEach(({ key, rx, ry, rw, rh, lx, ly }) => {
-      // Invisible hit zone
-      const zone = this.add.zone(rx, ry, rw, rh).setOrigin(0, 0).setInteractive();
-      zone.on('pointerdown', () => {
-        this.selectedArmorFace = key;
-        this.selectedFaceLabel.setText(`Selected: ${key.toUpperCase()}`);
-        this.armorEditText.setText(String(this.armor[key]));
-        this.redrawSchematic();
-      });
-      // Armor value text centered on panel
-      const txt = this.add.text(lx, ly, String(this.armor[key]), {
-        fontSize: '11px', fontFamily: 'monospace', color: '#ffffff',
-      }).setOrigin(0.5).setDepth(1);
-      this.schematicTexts.set(key, txt);
-    });
-
-    // Selected face label + ± controls below the diagram
-    const controlY = cy + 165;   // below the larger back panel + BACK label
-    this.selectedFaceLabel = this.add.text(cx, controlY, `Selected: ${this.selectedArmorFace.toUpperCase()}`, {
-      fontSize: '12px', fontFamily: 'monospace', color: LABEL_COLOR,
-    }).setOrigin(0.5);
-
-    const minusBtn = this.add.text(cx - 40, controlY + 22, '[−]', {
-      fontSize: '13px', fontFamily: 'monospace', color: '#ff6666',
-      backgroundColor: '#330011', padding: { x: 4, y: 2 },
-    }).setInteractive().setOrigin(0.5);
-    minusBtn.on('pointerdown', () => {
-      const key = this.selectedArmorFace;
-      if (this.armor[key] > 0) {
-        this.armor[key]--;
-        this.armorEditText.setText(String(this.armor[key]));
-        this.redrawSchematic();
-        this.scheduleStatsRefresh();
-      }
-    });
-
-    this.armorEditText = this.add.text(cx, controlY + 22, String(this.armor[this.selectedArmorFace]), {
-      fontSize: '13px', fontFamily: 'monospace', color: '#cccccc',
-    }).setOrigin(0.5);
-
-    const plusBtn = this.add.text(cx + 40, controlY + 22, '[+]', {
-      fontSize: '13px', fontFamily: 'monospace', color: '#66ff88',
-      backgroundColor: '#002211', padding: { x: 4, y: 2 },
-    }).setInteractive().setOrigin(0.5);
-    plusBtn.on('pointerdown', () => {
-      const key = this.selectedArmorFace;
-      if (this.armor[key] < 99) {
-        this.armor[key]++;
-        this.armorEditText.setText(String(this.armor[key]));
-        this.redrawSchematic();
-        this.scheduleStatsRefresh();
-      }
-    });
-  }
-
-  /**
-   * Redraw the schematic graphics: panel fills, selection border, car body, weapon dots.
-   */
-  private redrawSchematic(): void {
-    if (!this.schematicGfx) return;
-
-    const cx = 985;
-    const cy = this.schematicCy;
-
-    this.schematicGfx.clear();
-
-    // Clear previous sprite preview so selector changes take effect
-    this.previewBody?.destroy();
-    this.previewBody = null;
-    this.previewWeapons.forEach(img => img.destroy());
-    this.previewWeapons = [];
-
-    // Render the body sprite at the centre of the schematic, tinted with the
-    // gang primary colour. Scale so the sprite fits the 150×180 area.
-    const bKey = `body_${bodySpriteKey(this.bodyType)}`;
-    let bodyHalfW = 50;  // fallback half-width for wheel placement
-    let bodyHalfH = 80;
-    if (this.textures.exists(bKey)) {
-      const tex = this.textures.get(bKey).getSourceImage();
-      const scaleX = 150 / tex.width;
-      const scaleY = 180 / tex.height;
-      const scale = Math.min(scaleX, scaleY);
-      bodyHalfW = (tex.width  * scale) / 2;
-      bodyHalfH = (tex.height * scale) / 2;
-      this.previewBody = this.add.image(cx, cy, bKey)
-        .setOrigin(0.5)
-        .setScale(scale)
-        .setTint(this.gangPrimaryColour);
+  private setMountWeapon(mountId: string, weaponId: string | null): void {
+    const mount = this.mounts.find(m => m.id === mountId);
+    if (!mount) return;
+    mount.weaponId = weaponId;
+    if (weaponId) {
+      const wep = this.weaponCatalog.find(w => w.id === weaponId);
+      if (wep) mount.ammo = wep.shotsPerMag ?? 50;
     } else {
-      // Fallback: original dark-blue rectangle if the sprite hasn't loaded yet
-      this.schematicGfx.fillStyle(0x1a1a3a, 1);
-      this.schematicGfx.fillRect(cx - 75, cy - 90, 150, 180);
-      this.schematicGfx.lineStyle(1, 0x444466, 1);
-      this.schematicGfx.strokeRect(cx - 75, cy - 90, 150, 180);
+      mount.ammo = 0;
     }
+    this.markDirty();
+  }
 
-    // Draw wheels as separate graphics on TOP of the tinted body sprite so
-    // they stay pure black regardless of what tint is active. Four wheels
-    // protrude slightly from each side of the hull — classic top-down look.
-    // Skip for cycles (2-wheel body types) — they already look narrow enough
-    // that the body sprite itself reads correctly.
-    const isCycle = this.bodyType.includes('cycle');
-    if (!isCycle) {
-      const wheelW = 14;
-      const wheelH = 26;
-      const wheelXOut = bodyHalfW - 2;  // slight overlap with hull
-      const wheelFrontY = -bodyHalfH * 0.45;
-      const wheelRearY  =  bodyHalfH * 0.35;
-      const wheels = [
-        { x: cx - wheelXOut - wheelW * 0.5, y: cy + wheelFrontY },
-        { x: cx + wheelXOut - wheelW * 0.5, y: cy + wheelFrontY },
-        { x: cx - wheelXOut - wheelW * 0.5, y: cy + wheelRearY  },
-        { x: cx + wheelXOut - wheelW * 0.5, y: cy + wheelRearY  },
-      ];
-      this.schematicGfx.fillStyle(0x000000, 1);
-      this.schematicGfx.lineStyle(1, 0xffffff, 0.9);
-      wheels.forEach(({ x, y }) => {
-        this.schematicGfx.fillRoundedRect(x, y, wheelW, wheelH, 2);
-        this.schematicGfx.strokeRoundedRect(x, y, wheelW, wheelH, 2);
-      });
-      // Lug nut dots (white) — make the wheels unmistakably wheels
-      this.schematicGfx.fillStyle(0xffffff, 0.9);
-      wheels.forEach(({ x, y }) => {
-        this.schematicGfx.fillCircle(x + wheelW / 2, y + wheelH / 2, 1.5);
-      });
+  private addMount(arc: ArcType): void {
+    if (this.mounts.length >= 3) {
+      this.flashStatus('Max 3 mounts', '#ff4444');
+      this.rebuild();
+      return;
     }
+    this.mounts.push({ id: `m${Date.now()}`, arc, weaponId: null, ammo: 0 });
+    this.markDirty();
+  }
 
-    // Direction indicator: bright yellow chevron above the body
-    this.schematicGfx.fillStyle(0xffff88, 0.9);
-    this.schematicGfx.beginPath();
-    this.schematicGfx.moveTo(cx,     cy - 160);
-    this.schematicGfx.lineTo(cx + 8, cy - 150);
-    this.schematicGfx.lineTo(cx - 8, cy - 150);
-    this.schematicGfx.closePath();
-    this.schematicGfx.fillPath();
+  private removeMount(mountId: string): void {
+    this.mounts = this.mounts.filter(m => m.id !== mountId);
+    this.markDirty();
+  }
 
-    // Panel definitions
-    type FaceKey = 'front' | 'back' | 'left' | 'right';
-    const panels: Array<{ key: FaceKey; rx: number; ry: number; rw: number; rh: number }> = [
-      { key: 'front', rx: cx - 50, ry: cy - 90, rw: 100, rh: 30  },
-      { key: 'back',  rx: cx - 50, ry: cy + 60, rw: 100, rh: 30  },
-      { key: 'left',  rx: cx - 80, ry: cy - 40, rw: 30,  rh: 80  },
-      { key: 'right', rx: cx + 50, ry: cy - 40, rw: 30,  rh: 80  },
+  private doRename(): void {
+    const name = window.prompt('Enter vehicle name:', this.vehicleName);
+    if (name && name.trim()) {
+      this.vehicleName = name.trim().slice(0, 64);
+      this.rebuild();
+    }
+  }
+
+  private flashStatus(msg: string, colour: string): void {
+    this.statusMsg = msg;
+    this.statusColor = colour;
+  }
+
+  // ── Rendering: styles ────────────────────────────────────────────────────
+
+  private renderStyles(): string {
+    return `<style>
+      .cw-designer, .cw-designer * { box-sizing: border-box; }
+      .cw-designer h1 { margin: 0; color: #ff4444; font-size: 20px; letter-spacing: 2px; }
+      .cw-designer h3 {
+        margin: 0 0 10px 0; font-size: 11px; color: #ff4444;
+        letter-spacing: 3px; text-transform: uppercase;
+      }
+      .cw-header {
+        display: flex; justify-content: space-between; align-items: center;
+        padding: 12px 24px; background: #0f0f22; border-bottom: 1px solid #2a2a44;
+      }
+      .cw-header .meta { font-size: 11px; color: #888; display: flex; gap: 16px; }
+      .cw-header .meta b { color: #ffcc00; font-weight: normal; }
+      .cw-toggle { display: flex; gap: 2px; margin-left: 14px; }
+      .cw-toggle button {
+        padding: 6px 14px; font-family: inherit; font-size: 11px; letter-spacing: 1px;
+        background: #1a1a2e; border: 1px solid #2a2a44; color: #888; cursor: pointer;
+      }
+      .cw-toggle button.active { background: #003322; color: #00ff88; border-color: #00ff88; }
+      .cw-tabs { display: flex; gap: 2px; padding: 12px 24px 0 24px; background: #0a0a1a; }
+      .cw-tabs .tab {
+        padding: 9px 20px; background: #1a1a2e; border: 1px solid #2a2a44;
+        border-bottom: none; color: #888; font-size: 12px; cursor: pointer;
+        text-transform: uppercase; letter-spacing: 1.5px; font-family: inherit;
+      }
+      .cw-tabs .tab:hover { background: #222244; color: #aac; }
+      .cw-tabs .tab.active { background: #003322; color: #00ff88; border-color: #00ff88; }
+      .cw-tabs .tab .badge { margin-left: 6px; padding: 1px 5px; background: #332200; color: #ffcc00; font-size: 9px; }
+      .cw-body { min-height: 0; overflow: hidden; display: grid; gap: 12px; padding: 0 24px 12px 24px; background: #0a0a1a; }
+      .cw-panel { background: #11112a; border: 1px solid #2a2a44; padding: 14px; overflow-y: auto; }
+      .cw-panel h3 { border-bottom: 1px solid #2a2a44; padding-bottom: 8px; }
+      .opt-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; }
+      .opt {
+        padding: 7px 8px; background: #1a1a33; border: 1px solid transparent;
+        font-size: 11px; color: #888; cursor: pointer; text-align: center;
+        font-family: inherit;
+      }
+      .opt:hover { background: #222244; color: #aac; }
+      .opt.selected { background: #003322; color: #00ff88; border-color: #00ff88; }
+      .stage {
+        background: radial-gradient(ellipse at center, #15152a 0%, #08081a 70%);
+        border: 1px solid #2a2a44; position: relative;
+        display: flex; align-items: center; justify-content: center; overflow: hidden;
+      }
+      .stage svg { filter: drop-shadow(0 18px 24px rgba(0,0,0,0.6)); }
+      .stage-hint { position: absolute; top: 8px; left: 12px; color: #556; font-size: 10px; letter-spacing: 2px; }
+      .stats-list { display: flex; flex-direction: column; gap: 4px; font-size: 12px; }
+      .stat-row { display: flex; justify-content: space-between; padding: 5px 0; border-bottom: 1px dotted #2a2a44; }
+      .stat-row span:first-child { color: #888; }
+      .stat-row span:last-child { color: #00ff88; }
+      .armor-controls { display: flex; align-items: center; gap: 8px; margin-top: 12px; }
+      .armor-controls .value {
+        flex: 1; text-align: center; font-size: 22px; color: #00ff88;
+        padding: 6px; background: #001a11; border: 1px solid #00ff88;
+      }
+      .face-btn-row { display: flex; gap: 4px; margin-top: 8px; flex-wrap: wrap; }
+      .face-btn {
+        flex: 1 1 auto; padding: 6px; background: #1a1a33; border: 1px solid #2a2a44;
+        color: #888; font-size: 10px; cursor: pointer; font-family: inherit;
+        letter-spacing: 1px;
+      }
+      .face-btn.selected { background: #002211; color: #00ff88; border-color: #00ff88; }
+      .adj-btn {
+        width: 40px; height: 36px; font-size: 18px;
+        background: #111122; border: 1px solid #444; color: #ccc;
+        cursor: pointer; font-family: inherit;
+      }
+      .adj-btn:hover { background: #222244; }
+      .cw-footer {
+        display: flex; justify-content: space-between; padding: 12px 24px;
+        border-top: 1px solid #2a2a44; background: #0f0f22; align-items: center;
+      }
+      .btn {
+        padding: 9px 22px; font-family: inherit; font-size: 12px; letter-spacing: 1px;
+        border: 1px solid; background: transparent; cursor: pointer;
+      }
+      .btn-cancel { color: #888; border-color: #444; }
+      .btn-cancel:hover { color: #ccc; border-color: #888; }
+      .btn-save { color: #00ff88; border-color: #00ff88; background: #003322; }
+      .btn-save:hover { background: #00ff88; color: #0a0a1a; }
+
+      /* Datasheet */
+      .cw-body.datasheet { grid-template-columns: 300px 1fr 360px; }
+      .cw-body.simple   { grid-template-columns: 260px 1fr 300px; }
+      .category { background: #0f0f22; border: 1px solid #2a2a44; margin-bottom: 10px; }
+      .category > header {
+        padding: 7px 12px; font-size: 10px; color: #aac; letter-spacing: 2px;
+        background: #11112a; border-bottom: 1px solid #2a2a44;
+        display: flex; justify-content: space-between;
+      }
+      .category > header .current { color: #00ff88; }
+      .category .items { max-height: 280px; overflow-y: auto; }
+      .item {
+        display: grid; grid-template-columns: 24px 1fr 70px 80px;
+        gap: 6px; align-items: center; padding: 7px 10px;
+        border-bottom: 1px solid #1a1a33; font-size: 11px; cursor: pointer;
+      }
+      .item:hover { background: #1a1a33; }
+      .item.current { background: #001a11; }
+      .item .tag { color: #556; font-size: 10px; }
+      .item .name { color: #ccc; }
+      .item.current .name { color: #00ff88; font-weight: bold; }
+      .item .stat { text-align: right; color: #aac; font-size: 10px; }
+      .item .cost { text-align: right; color: #ffcc00; font-size: 10px; }
+      .mount-chip {
+        display: inline-flex; align-items: center; gap: 4px;
+        padding: 2px 7px; margin: 2px 4px 2px 0;
+        background: #332200; color: #ffcc00; font-size: 10px;
+        border: 1px solid #664400;
+      }
+      .mount-chip.empty { background: #1a1a2e; color: #666; border-color: #333; }
+      .mount-chip button {
+        background: none; border: none; color: #ff6666; font-family: inherit;
+        cursor: pointer; padding: 0 2px; font-size: 12px; margin-left: 2px;
+      }
+      .status-msg { font-size: 11px; text-align: center; min-height: 16px; }
+    </style>`;
+  }
+
+  // ── Header + footer (shared) ─────────────────────────────────────────────
+
+  private renderHeader(): string {
+    const title = this.editVehicleId ? `WORKSHOP — ${esc(this.vehicleName)}` : 'VEHICLE DESIGNER';
+    const cost = this.stats?.totalCost ?? 0;
+    const simpleActive = this.mode === 'simple' ? 'active' : '';
+    const dsActive = this.mode === 'datasheet' ? 'active' : '';
+    return `
+      <div class="cw-header">
+        <h1>⚙ ${title}</h1>
+        <div class="meta" style="align-items:center;">
+          <span>Treasury <b>$${this.treasury.toLocaleString()}</b></span>
+          <span>Build <b>$${cost.toLocaleString()}</b></span>
+          <div class="cw-toggle">
+            <button class="${simpleActive}" data-action="mode" data-value="simple">SIMPLE</button>
+            <button class="${dsActive}" data-action="mode" data-value="datasheet">ADVANCED</button>
+          </div>
+        </div>
+      </div>`;
+  }
+
+  private renderFooter(): string {
+    const save = this.editVehicleId ? 'SAVE CHANGES' : 'BUILD THIS CAR';
+    return `
+      <div class="cw-footer">
+        <button class="btn btn-cancel" data-action="back">[ BACK ]</button>
+        <div style="flex:1;text-align:center;">
+          <span style="color:#aac;">Name: ${esc(this.vehicleName)}</span>
+          <button class="btn btn-cancel" style="margin-left:8px;padding:4px 10px;font-size:10px;" data-action="rename">[RENAME]</button>
+          <span class="status-msg" style="display:inline-block;margin-left:14px;color:${this.statusColor};">${esc(this.statusMsg)}</span>
+        </div>
+        <button class="btn btn-save" data-action="save">[ ${save} ]</button>
+      </div>`;
+  }
+
+  // ── SIMPLE mode (A) ──────────────────────────────────────────────────────
+
+  private renderSimple(): string {
+    const tab = this.activeTab;
+    const tabs: Array<{ id: Tab; label: string; badge?: string }> = [
+      { id: 'body',       label: 'Body' },
+      { id: 'engine',     label: 'Engine' },
+      { id: 'armor',      label: 'Armor' },
+      { id: 'weapons',    label: 'Weapons', badge: `${this.mounts.length}/3` },
+      { id: 'tires',      label: 'Tires' },
+      { id: 'suspension', label: 'Suspension' },
     ];
+    const tabStrip = `
+      <div class="cw-tabs">
+        ${tabs.map(t => `
+          <button class="tab ${t.id === tab ? 'active' : ''}" data-action="tab" data-value="${t.id}">
+            ${t.label}${t.badge ? `<span class="badge">${t.badge}</span>` : ''}
+          </button>
+        `).join('')}
+      </div>`;
 
-    panels.forEach(({ key, rx, ry, rw, rh }) => {
-      const pts = this.armor[key];
-      const fillCol = armorColor(pts);
+    const optionPanel = this.renderSimpleOptionsForTab(tab);
+    const stage = `
+      <div class="stage">
+        <div class="stage-hint">▼ INSPECTION LIFT</div>
+        ${this.renderCarSvg(320)}
+      </div>`;
+    const statsPanel = this.renderSimpleStats();
 
-      // Fill
-      this.schematicGfx.fillStyle(fillCol, 0.85);
-      this.schematicGfx.fillRect(rx, ry, rw, rh);
+    return `
+      ${tabStrip}
+      <div class="cw-body simple">
+        ${optionPanel}
+        ${stage}
+        ${statsPanel}
+      </div>`;
+  }
 
-      // Normal border
-      this.schematicGfx.lineStyle(1, 0x666666, 1);
-      this.schematicGfx.strokeRect(rx, ry, rw, rh);
+  private renderSimpleOptionsForTab(tab: Tab): string {
+    if (tab === 'body')       return this.renderOptionList('BODY TYPE', BODY_TYPES, this.bodyType, 'body');
+    if (tab === 'engine')     return this.renderEnginePanel();
+    if (tab === 'suspension') return this.renderOptionList('SUSPENSION', SUSPENSIONS, this.suspensionType, 'suspension');
+    if (tab === 'tires')      return this.renderOptionList('TIRES', TIRE_TYPES, this.tireType, 'tires');
+    if (tab === 'armor')      return this.renderArmorPanel();
+    if (tab === 'weapons')    return this.renderWeaponsPanel();
+    return '';
+  }
 
-      // Selected highlight border
-      if (key === this.selectedArmorFace) {
-        this.schematicGfx.lineStyle(2, 0xffffff, 1);
-        this.schematicGfx.strokeRect(rx, ry, rw, rh);
+  private renderOptionList(heading: string, opts: readonly { id: string; label: string }[], current: string, action: string): string {
+    return `
+      <div class="cw-panel">
+        <h3>${heading}</h3>
+        <div class="opt-grid">
+          ${opts.map(o => `
+            <button class="opt ${current === o.id ? 'selected' : ''}" data-action="${action}" data-value="${o.id}">${o.label}</button>
+          `).join('')}
+        </div>
+      </div>`;
+  }
+
+  private renderEnginePanel(): string {
+    const bodyDef = BODY_TYPES.find(b => b.id === this.bodyType);
+    const isCycle = bodyDef?.isCycle ?? false;
+    const compat = POWER_PLANTS.filter(p => (p.cycleOnly ?? false) === isCycle);
+    return `
+      <div class="cw-panel">
+        <h3>POWER PLANT</h3>
+        <div class="opt-grid">
+          ${compat.map(p => `
+            <button class="opt ${this.powerPlantType === p.id ? 'selected' : ''}" data-action="engine" data-value="${p.id}">${p.label}</button>
+          `).join('')}
+        </div>
+        <div style="margin-top:14px;font-size:11px;color:#666;">
+          ${isCycle ? 'Showing cycle-compatible plants.' : 'Showing car/truck plants.'}
+        </div>
+      </div>`;
+  }
+
+  private renderArmorPanel(): string {
+    const faces: Face[] = ['front', 'back', 'left', 'right'];
+    return `
+      <div class="cw-panel">
+        <h3>ARMOR — Type</h3>
+        <div class="opt-grid">
+          ${ARMOR_TYPES.map(a => `
+            <button class="opt ${this.armorType === a.id ? 'selected' : ''}" data-action="armor-type" data-value="${a.id}">${a.label}</button>
+          `).join('')}
+        </div>
+        <h3 style="margin-top:18px;">FACE</h3>
+        <div class="face-btn-row">
+          ${faces.map(f => `
+            <button class="face-btn ${this.selectedFace === f ? 'selected' : ''}" data-action="select-face" data-value="${f}">${f.toUpperCase()}</button>
+          `).join('')}
+        </div>
+        <div class="armor-controls">
+          <button class="adj-btn" data-action="armor-adjust" data-value="-1">−</button>
+          <div class="value">${this.armor[this.selectedFace]}</div>
+          <button class="adj-btn" data-action="armor-adjust" data-value="1">+</button>
+        </div>
+        <div style="margin-top:8px;font-size:10px;color:#666;text-align:center;">
+          Selected face: ${this.selectedFace.toUpperCase()}
+        </div>
+      </div>`;
+  }
+
+  private renderWeaponsPanel(): string {
+    return `
+      <div class="cw-panel">
+        <h3>WEAPONS (${this.mounts.length}/3)</h3>
+        <div style="display:grid;grid-template-columns:1fr 50px;gap:4px;">
+          ${WEAPONS.map(({ id, label }) => {
+            const mount = this.mounts.find(m => m.weaponId === id);
+            const active = !!mount;
+            const arc = mount ? mount.arc.charAt(0).toUpperCase() : '';
+            return `
+              <button class="opt ${active ? 'selected' : ''}" data-action="weapon-toggle" data-value="${id}" style="text-align:left;padding-left:10px;">${label}</button>
+              <button class="opt" data-action="cycle-arc" data-value="${id}" style="${active ? 'color:#ffcc00;border-color:#664400;background:#332200' : 'opacity:0.3'}" ${active ? '' : 'disabled'}>▸${arc}</button>
+            `;
+          }).join('')}
+        </div>
+      </div>`;
+  }
+
+  private renderSimpleStats(): string {
+    const s = this.stats;
+    return `
+      <div class="cw-panel">
+        <h3>LIVE STATS</h3>
+        <div class="stats-list">
+          <div class="stat-row"><span>Max Speed</span><span>${s ? `${s.maxSpeed} mph` : '—'}</span></div>
+          <div class="stat-row"><span>Accel</span><span>${s ? `${s.acceleration} mph/turn` : '—'}</span></div>
+          <div class="stat-row"><span>Handling</span><span>${s ? `${s.handlingClass}` : '—'}</span></div>
+          <div class="stat-row"><span>Weight</span><span>${s ? `${s.totalWeight} lbs` : '—'}</span></div>
+          <div class="stat-row"><span>Armor total</span><span>${this.armorTotal()} pts</span></div>
+        </div>
+        <h3 style="margin-top:18px;">COST</h3>
+        <div class="stats-list">
+          <div class="stat-row"><span>Build cost</span><span style="color:#ccc;">${s ? `$${s.totalCost.toLocaleString()}` : '—'}</span></div>
+          <div class="stat-row"><span>Treasury</span><span style="color:#ffcc00;">$${this.treasury.toLocaleString()}</span></div>
+          ${s && this.editVehicleId ? `
+            <div class="stat-row"><span>After save</span><span>$${Math.max(0, this.treasury - s.totalCost).toLocaleString()}</span></div>
+          ` : ''}
+        </div>
+      </div>`;
+  }
+
+  // ── DATASHEET mode (C) ───────────────────────────────────────────────────
+
+  private renderDatasheet(): string {
+    return `
+      <div class="cw-body datasheet">
+        ${this.renderDsPreview()}
+        ${this.renderDsComponents()}
+        ${this.renderDsImpact()}
+      </div>`;
+  }
+
+  private renderDsPreview(): string {
+    const s = this.stats;
+    const mountChips = this.mounts.map(m => {
+      if (!m.weaponId) {
+        return `<span class="mount-chip empty">▸${m.arc.charAt(0).toUpperCase()} —<button data-action="remove-mount" data-value="${m.id}">×</button></span>`;
       }
+      const wep = this.weaponCatalog.find(w => w.id === m.weaponId);
+      return `<span class="mount-chip">▸${m.arc.charAt(0).toUpperCase()} ${esc(wep?.name ?? m.weaponId)}<button data-action="remove-mount" data-value="${m.id}">×</button></span>`;
+    }).join('');
 
-      // Update value label text
-      this.schematicTexts.get(key)?.setText(String(pts));
-    });
+    const weakFace = (Object.entries(this.armor) as [Face, number][])
+      .reduce((min, [face, v]) => v < min[1] ? [face, v] : min, ['front', 99] as [Face, number]);
 
-    // Weapon overlays — anchored to the body sprite's actual scaled extents so
-    // weapons sit at the hull edge (front/back/left/right) rather than inside the
-    // body. Small 4-px offset pushes them slightly outboard so the barrel
-    // clearly points away from the car.
-    const mountAnchors: Record<string, { x: number; y: number; rot: number }> = {
-      front:  { x: cx,                    y: cy - bodyHalfH - 4, rot: 0              },
-      back:   { x: cx,                    y: cy + bodyHalfH + 4, rot: Math.PI        },
-      left:   { x: cx - bodyHalfW - 4,    y: cy,                 rot: -Math.PI / 2   },
-      right:  { x: cx + bodyHalfW + 4,    y: cy,                 rot:  Math.PI / 2   },
-      turret: { x: cx,                    y: cy,                 rot: 0              },
-    };
-    // Track per-arc index so stacked mounts don't sit on top of each other
-    const arcOffset = new Map<string, number>();
-    this.mounts.forEach(mount => {
-      const anchor = mountAnchors[mount.arc as keyof typeof mountAnchors];
-      if (!anchor) return;
-      const count = arcOffset.get(mount.arc) ?? 0;
-      arcOffset.set(mount.arc, count + 1);
-      const lateralOffset = (count % 2 === 0 ? 1 : -1) * Math.floor(count / 2) * 10;
-
-      const wKey = weaponSpriteKey(mount.weaponId ?? null);
-      if (!wKey || !this.textures.exists(`weapon_${wKey}`)) return;
-
-      // Lateral offset along the perpendicular to anchor rotation
-      const perpX = Math.cos(anchor.rot + Math.PI / 2);
-      const perpY = Math.sin(anchor.rot + Math.PI / 2);
-      const img = this.add.image(
-        anchor.x + perpX * lateralOffset,
-        anchor.y + perpY * lateralOffset,
-        `weapon_${wKey}`,
-      )
-        .setOrigin(0.5)
-        .setRotation(anchor.rot)
-        .setScale(1.4);
-      this.previewWeapons.push(img);
-    });
+    return `
+      <div class="cw-panel">
+        <div style="display:flex;justify-content:center;background:#0a0a1a;border:1px solid #2a2a44;padding:12px;margin-bottom:14px;">
+          ${this.renderCarSvg(220)}
+        </div>
+        <h3>PERFORMANCE</h3>
+        <div class="stats-list">
+          <div class="stat-row"><span>Max Speed</span><span>${s ? `${s.maxSpeed} mph` : '—'}</span></div>
+          <div class="stat-row"><span>Accel</span><span>${s ? `${s.acceleration} mph/t` : '—'}</span></div>
+          <div class="stat-row"><span>Handling</span><span>${s ? s.handlingClass : '—'}</span></div>
+          <div class="stat-row"><span>Weight</span><span>${s ? `${s.totalWeight} lbs` : '—'}</span></div>
+        </div>
+        <h3 style="margin-top:14px;">PROTECTION</h3>
+        <div class="stats-list">
+          <div class="stat-row"><span>Armor total</span><span>${this.armorTotal()} pts</span></div>
+          <div class="stat-row"><span>Armor type</span><span>${esc(ARMOR_TYPES.find(a => a.id === this.armorType)?.label ?? '')}</span></div>
+          <div class="stat-row"><span>Weak face</span><span style="color:${armorFillCss(weakFace[1])};">${weakFace[0].toUpperCase()} (${weakFace[1]})</span></div>
+        </div>
+        <h3 style="margin-top:14px;">LOADOUT</h3>
+        <div style="margin:6px 0;">${mountChips || '<span style="color:#666;font-size:11px;">No mounts.</span>'}</div>
+        <div style="display:flex;gap:4px;margin-top:6px;">
+          <button class="opt" style="padding:4px 8px;font-size:10px;" data-action="add-mount" data-value="front">+ front</button>
+          <button class="opt" style="padding:4px 8px;font-size:10px;" data-action="add-mount" data-value="back">+ back</button>
+          <button class="opt" style="padding:4px 8px;font-size:10px;" data-action="add-mount" data-value="turret">+ turret</button>
+        </div>
+      </div>`;
   }
 
-  // ─── BOTTOM BUTTONS ───────────────────────────────────────────────────────
+  private renderDsComponents(): string {
+    const bodyDef = BODY_TYPES.find(b => b.id === this.bodyType);
+    const isCycle = bodyDef?.isCycle ?? false;
+    const compatPlants = POWER_PLANTS.filter(p => (p.cycleOnly ?? false) === isCycle);
 
-  private buildBottomButtons(): void {
-    // Status text (shared)
-    this.statusText = this.add.text(640, 645, '', {
-      fontSize: '13px', fontFamily: 'monospace', color: '#ff4444',
-    }).setOrigin(0.5);
+    const section = (title: string, currentLabel: string, items: string): string => `
+      <div class="category">
+        <header>${title}<span class="current">${esc(currentLabel)}</span></header>
+        <div class="items">${items}</div>
+      </div>`;
 
-    // Back button
-    const backBtn = this.add.text(30, 685, '[ BACK ]', {
-      color: '#888888', fontSize: '15px', fontFamily: 'monospace',
-      backgroundColor: '#222233', padding: { x: 10, y: 5 },
-    }).setInteractive();
-    backBtn.on('pointerdown', () => this.scene.start('GarageScene', { token: this.token }));
+    const row = (tag: string, name: string, selected: boolean, action: string, value: string, cost = '', stat = ''): string => `
+      <div class="item ${selected ? 'current' : ''}" data-action="${action}" data-value="${value}">
+        <span class="tag">${tag}</span>
+        <span class="name">${esc(name)}${selected ? ' ▸ current' : ''}</span>
+        <span class="stat">${stat}</span>
+        <span class="cost">${cost}</span>
+      </div>`;
 
-    // Vehicle name display
-    const nameDisplay = this.add.text(640, 640, `Name: ${this.vehicleName}`, {
-      color: '#cccccc', fontSize: '13px', fontFamily: 'monospace'
-    }).setOrigin(0.5);
+    const bodyItems = BODY_TYPES.map((b, i) => row(
+      `B${i + 1}`, b.label, b.id === this.bodyType, 'body', b.id, '', b.isCycle ? 'cycle' : ''
+    )).join('');
 
-    const renameBtn = this.add.text(900, 640, '[RENAME]', {
-      color: '#aaaaff', fontSize: '13px', fontFamily: 'monospace',
-      backgroundColor: '#111133', padding: { x: 6, y: 3 }
-    }).setInteractive();
-    renameBtn.on('pointerdown', () => {
-      const name = window.prompt('Enter vehicle name:', this.vehicleName);
-      if (name && name.trim()) {
-        this.vehicleName = name.trim();
-        nameDisplay.setText(`Name: ${this.vehicleName}`);
+    const engineItems = compatPlants.map((p, i) => row(
+      `E${i + 1}`, p.label, p.id === this.powerPlantType, 'engine', p.id
+    )).join('');
+
+    const suspItems = SUSPENSIONS.map((s, i) => row(
+      `S${i + 1}`, s.label, s.id === this.suspensionType, 'suspension', s.id
+    )).join('');
+
+    const tireItems = TIRE_TYPES.map((t, i) => row(
+      `T${i + 1}`, t.label, t.id === this.tireType, 'tires', t.id
+    )).join('');
+
+    const armorItems = ARMOR_TYPES.map((a, i) => row(
+      `A${i + 1}`, a.label, a.id === this.armorType, 'armor-type', a.id
+    )).join('');
+
+    const weaponItems = this.mounts.map(m => {
+      const rows = [`
+        <div style="padding:6px 10px;background:#0a0a1a;font-size:10px;color:#aac;letter-spacing:2px;">
+          ▸ MOUNT ${esc(m.id.slice(0, 6))} — ARC: ${m.arc.toUpperCase()}
+          ${m.weaponId ? `<button class="opt" style="padding:2px 6px;margin-left:8px;font-size:10px;" data-action="cycle-arc" data-value="${esc(m.weaponId)}">cycle arc</button>` : ''}
+          <button class="opt" style="padding:2px 6px;margin-left:6px;font-size:10px;color:#ff6666;" data-action="remove-mount" data-value="${m.id}">remove</button>
+        </div>
+      `];
+      rows.push(`
+        <div class="item ${!m.weaponId ? 'current' : ''}" data-action="set-mount-weapon" data-value="${m.id}:null">
+          <span class="tag">—</span>
+          <span class="name">(empty)${!m.weaponId ? ' ▸ current' : ''}</span>
+          <span class="stat">refund 50%</span>
+          <span class="cost">$0</span>
+        </div>`);
+      for (const wep of this.weaponCatalog) {
+        if (wep.category === 'dropped') continue;
+        if (wep.allowedArcs?.length && !wep.allowedArcs.includes(m.arc)) continue;
+        const isCurrent = m.weaponId === wep.id;
+        const dmg = `${wep.damageDice}d${wep.damageMod ? (wep.damageMod > 0 ? `+${wep.damageMod}` : wep.damageMod) : ''}`;
+        rows.push(`
+          <div class="item ${isCurrent ? 'current' : ''}" data-action="set-mount-weapon" data-value="${m.id}:${wep.id}">
+            <span class="tag">${esc(wep.id.toUpperCase())}</span>
+            <span class="name">${esc(wep.name)}${isCurrent ? ' ▸ current' : ''}</span>
+            <span class="stat">${dmg} tH${wep.toHit}</span>
+            <span class="cost">$${wep.cost.toLocaleString()}</span>
+          </div>`);
       }
-    });
+      return rows.join('');
+    }).join('');
 
-    // Build / Save button — label and behaviour depend on mode
-    const label = this.editVehicleId ? '[ SAVE CHANGES ]' : '[ BUILD THIS CAR ]';
-    const buildBtn = this.add.text(640, 685, label, {
-      color: SEL_COLOR, fontSize: '18px', fontFamily: 'monospace',
-      backgroundColor: SEL_BG, padding: { x: 16, y: 6 },
-    }).setOrigin(0.5).setInteractive();
-    buildBtn.on('pointerdown', () => this.saveVehicle());
+    const weaponCurrent = this.mounts.filter(m => m.weaponId).map(m => {
+      const w = this.weaponCatalog.find(w => w.id === m.weaponId);
+      return w?.name ?? m.weaponId!;
+    }).join(' · ') || 'no weapons';
+
+    return `
+      <div class="cw-panel">
+        ${section('BODY', bodyDef?.label ?? '', bodyItems)}
+        ${section('ENGINE', POWER_PLANTS.find(p => p.id === this.powerPlantType)?.label ?? '', engineItems)}
+        ${section('SUSPENSION', SUSPENSIONS.find(s => s.id === this.suspensionType)?.label ?? '', suspItems)}
+        ${section('TIRES', TIRE_TYPES.find(t => t.id === this.tireType)?.label ?? '', tireItems)}
+        ${section('ARMOR TYPE', ARMOR_TYPES.find(a => a.id === this.armorType)?.label ?? '', armorItems)}
+        ${section(`WEAPONS (${this.mounts.length}/3)`, weaponCurrent, weaponItems || '<div style="padding:10px;color:#666;font-size:11px;">No mounts — add one from the left panel.</div>')}
+      </div>`;
   }
 
-  // ─── LIFECYCLE ────────────────────────────────────────────────────────────
+  private renderDsImpact(): string {
+    const s = this.stats;
+    const faces: Face[] = ['front', 'back', 'left', 'right'];
+    const weakFace = faces.reduce((min, f) => this.armor[f] < this.armor[min] ? f : min, faces[0]);
+    const weakWarn = this.armor[weakFace] < 10
+      ? `<div style="background:#2a1111;border-left:3px solid #ff4444;padding:10px;font-size:11px;color:#ffaaaa;margin-top:10px;">
+           <b>${weakFace.toUpperCase()}</b> armor is only ${this.armor[weakFace]} pts. Consider reinforcing.
+         </div>` : '';
 
-  shutdown(): void {
-    if (this.statsDebounceTimer) {
-      clearTimeout(this.statsDebounceTimer);
-      this.statsDebounceTimer = null;
-    }
+    return `
+      <div class="cw-panel">
+        <h3>ARMOR PANEL — ${this.selectedFace.toUpperCase()}</h3>
+        <div class="face-btn-row">
+          ${faces.map(f => `<button class="face-btn ${this.selectedFace === f ? 'selected' : ''}" data-action="select-face" data-value="${f}">${f.toUpperCase()}</button>`).join('')}
+        </div>
+        <div class="armor-controls">
+          <button class="adj-btn" data-action="armor-adjust" data-value="-1">−</button>
+          <div class="value">${this.armor[this.selectedFace]}</div>
+          <button class="adj-btn" data-action="armor-adjust" data-value="1">+</button>
+        </div>
+        <h3 style="margin-top:18px;">CURRENT STATS</h3>
+        <div class="stats-list">
+          <div class="stat-row"><span>Max Speed</span><span>${s ? `${s.maxSpeed} mph` : '—'}</span></div>
+          <div class="stat-row"><span>Handling</span><span>${s ? s.handlingClass : '—'}</span></div>
+          <div class="stat-row"><span>Weight</span><span>${s ? `${s.totalWeight} lbs` : '—'}</span></div>
+          <div class="stat-row"><span>Build cost</span><span style="color:#ffcc00;">${s ? `$${s.totalCost.toLocaleString()}` : '—'}</span></div>
+          <div class="stat-row"><span>Treasury</span><span>$${this.treasury.toLocaleString()}</span></div>
+        </div>
+        ${weakWarn}
+      </div>`;
   }
 
-  // ─── DEBOUNCE ─────────────────────────────────────────────────────────────
+  // ── Car SVG preview (shared) ─────────────────────────────────────────────
+
+  private renderCarSvg(height: number): string {
+    const primary = `#${this.gangPrimaryColour.toString(16).padStart(6, '0')}`;
+    const primaryDark = `#${Math.floor(this.gangPrimaryColour * 0.35).toString(16).padStart(6, '0')}`;
+    const isCycle = BODY_TYPES.find(b => b.id === this.bodyType)?.isCycle ?? false;
+    const bodyW = isCycle ? 40 : 90;
+    const bodyH = isCycle ? 140 : 200;
+
+    const vbW = 240;
+    const vbH = 340;
+    const cx = vbW / 2;
+    const cy = vbH / 2;
+    const halfW = bodyW / 2;
+    const halfH = bodyH / 2;
+
+    const panels: Array<{ face: Face; x: number; y: number; w: number; h: number; labelY: number }> = [
+      { face: 'front', x: cx - halfW, y: cy - halfH - 20, w: bodyW, h: 18, labelY: cy - halfH - 8 },
+      { face: 'back',  x: cx - halfW, y: cy + halfH + 2,  w: bodyW, h: 18, labelY: cy + halfH + 14 },
+      { face: 'left',  x: cx - halfW - 22, y: cy - halfH, w: 18, h: bodyH, labelY: cy },
+      { face: 'right', x: cx + halfW + 4,  y: cy - halfH, w: 18, h: bodyH, labelY: cy },
+    ];
+    const armorSvg = panels.map(p => {
+      const pts = this.armor[p.face];
+      const fill = armorFillCss(pts);
+      return `
+        <rect x="${p.x}" y="${p.y}" width="${p.w}" height="${p.h}" fill="${fill}" opacity="0.85" stroke="#666" stroke-width="1"/>
+        <text x="${p.x + p.w / 2}" y="${p.labelY}" text-anchor="middle" fill="#fff" font-size="10" font-family="monospace" font-weight="bold" dominant-baseline="middle">${pts}</text>`;
+    }).join('');
+
+    const wheels = isCycle ? '' : [
+      { x: cx - halfW - 10, y: cy - halfH * 0.7 },
+      { x: cx + halfW - 4,  y: cy - halfH * 0.7 },
+      { x: cx - halfW - 10, y: cy + halfH * 0.4 },
+      { x: cx + halfW - 4,  y: cy + halfH * 0.4 },
+    ].map(w => `<rect x="${w.x}" y="${w.y}" width="14" height="30" fill="#000" stroke="#fff" stroke-width="1" rx="3"/>`).join('');
+
+    const weaponDots = this.mounts.map(m => {
+      if (!m.weaponId) return '';
+      const wep = this.weaponCatalog.find(w => w.id === m.weaponId);
+      const label = wep ? wep.id.toUpperCase().slice(0, 3) : '?';
+      const anchors: Record<ArcType, { x: number; y: number }> = {
+        front:  { x: cx, y: cy - halfH - 28 },
+        back:   { x: cx, y: cy + halfH + 28 },
+        left:   { x: cx - halfW - 30, y: cy },
+        right:  { x: cx + halfW + 30, y: cy },
+        turret: { x: cx, y: cy },
+      };
+      const a = anchors[m.arc];
+      return `
+        <circle cx="${a.x}" cy="${a.y}" r="11" fill="#332200" stroke="#ffcc00" stroke-width="1.5"/>
+        <text x="${a.x}" y="${a.y + 3}" text-anchor="middle" fill="#ffcc00" font-size="9" font-family="monospace" font-weight="bold">${esc(label)}</text>`;
+    }).join('');
+
+    const chevron = `<polygon points="${cx},${cy - halfH - 34} ${cx + 7},${cy - halfH - 24} ${cx - 7},${cy - halfH - 24}" fill="#ffff88"/>`;
+
+    const faceLabels = `
+      <text x="${cx}" y="${cy - halfH - 26}" text-anchor="middle" fill="#ffcc88" font-size="9" font-family="monospace" letter-spacing="2">FRONT</text>
+      <text x="${cx}" y="${cy + halfH + 30}" text-anchor="middle" fill="#ccaa66" font-size="9" font-family="monospace" letter-spacing="2">BACK</text>`;
+
+    return `
+      <svg width="${height * (vbW / vbH)}" height="${height}" viewBox="0 0 ${vbW} ${vbH}">
+        ${wheels}
+        <rect x="${cx - halfW}" y="${cy - halfH}" width="${bodyW}" height="${bodyH}" fill="${primary}" stroke="${primaryDark}" stroke-width="2" rx="10"/>
+        <rect x="${cx - halfW + 8}" y="${cy - halfH + 16}" width="${bodyW - 16}" height="${bodyH * 0.28}" fill="#00000033" rx="4"/>
+        <rect x="${cx - halfW + 8}" y="${cy + halfH - 16 - bodyH * 0.28}" width="${bodyW - 16}" height="${bodyH * 0.28}" fill="#00000033" rx="4"/>
+        ${chevron}
+        ${armorSvg}
+        ${weaponDots}
+        ${faceLabels}
+      </svg>`;
+  }
+
+  // ── Misc helpers ─────────────────────────────────────────────────────────
+
+  private armorTotal(): number {
+    return this.armor.front + this.armor.back + this.armor.left + this.armor.right;
+  }
+
+  // ── Live stats (debounced) ───────────────────────────────────────────────
 
   private scheduleStatsRefresh(): void {
-    if (this.statsDebounceTimer) clearTimeout(this.statsDebounceTimer);
-    this.statsDebounceTimer = setTimeout(() => {
-      this.statsDebounceTimer = null;
+    if (this.statsDebounce) clearTimeout(this.statsDebounce);
+    this.statsDebounce = setTimeout(() => {
+      this.statsDebounce = null;
       this.refreshStats();
-    }, 150);
+    }, 180);
   }
-
-  // ─── API CALLS ────────────────────────────────────────────────────────────
 
   private async refreshStats(): Promise<void> {
     const reqId = ++this.statsReqId;
-    // Don't wipe existing values — show a subtle indicator instead so stats remain readable
-    this.statusText.setColor('#555577').setText('Updating...');
-
     try {
       const host = window.location.hostname;
       const res = await fetch(`http://${host}:3001/api/vehicles/design`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${this.token}` },
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${this.token}` },
         body: JSON.stringify(this.buildDesignPayload()),
       });
-
       if (reqId !== this.statsReqId) return;
-
       if (res.ok) {
-        const data = await res.json() as {
-          maxSpeed: number;
-          acceleration: number;
-          handlingClass: number;
-          totalWeight: number;
-          totalCost: number;
+        const s = await res.json();
+        this.stats = {
+          maxSpeed: s.maxSpeed,
+          acceleration: s.acceleration,
+          handlingClass: s.handlingClass,
+          totalWeight: s.totalWeight,
+          totalCost: s.totalCost,
         };
-        if (reqId !== this.statsReqId) return;
-        this.derivedCost = data.totalCost ?? 0;
-        this.statsSpeedText.setText(`Max Speed:  ${data.maxSpeed} mph`);
-        this.statsAccelText.setText(`Accel:      ${data.acceleration} mph/turn`);
-        this.statsHcText.setText(`HC:         ${data.handlingClass}`);
-        this.statsWeightText.setText(`Weight:     ${data.totalWeight} lbs`);
-        this.statsCostText.setText(`Cost:       $${data.totalCost.toLocaleString()}`);
-        // Clear any status message on success
-        if (this.statusText.text === 'Max 3 weapons') {
-          // keep it until user takes action
-        } else {
-          this.statusText.setText('');
-        }
+        this.flashStatus('', '#888');
       } else {
-        const err = await res.json() as { error?: string };
-        const msg = err.error ?? 'Design error';
-        this.statsSpeedText.setText('--');
-        this.statsAccelText.setText('--');
-        this.statsHcText.setText('--');
-        this.statsWeightText.setText('--');
-        this.statsCostText.setText('--');
-        this.statusText.setColor('#ff4444').setText(msg);
+        const err = await res.json().catch(() => ({}));
+        this.stats = null;
+        this.flashStatus(err.error ?? 'Design error', '#ff4444');
       }
     } catch {
       if (reqId !== this.statsReqId) return;
-      this.statsSpeedText.setText('--');
-      this.statsAccelText.setText('--');
-      this.statsHcText.setText('--');
-      this.statsWeightText.setText('--');
-      this.statsCostText.setText('--');
-      this.statusText.setColor('#ff4444').setText('Network error');
+      this.flashStatus('Network error', '#ff4444');
     }
+    this.rebuild();
   }
 
   private buildDesignPayload() {
     return {
-      chassisId:     this.bodyType,
-      engineId:      this.powerPlantType,
-      suspensionId:  this.suspensionType,
+      chassisId:    this.bodyType,
+      engineId:     this.powerPlantType,
+      suspensionId: this.suspensionType,
       tires: [
         { id: 't0', blown: false }, { id: 't1', blown: false },
         { id: 't2', blown: false }, { id: 't3', blown: false },
@@ -790,47 +967,53 @@ export class VehicleDesignerScene extends Phaser.Scene {
       mounts: this.mounts,
       armor: { ...this.armor, top: 0, underbody: 0 },
       totalCost: 0,
-      bodyType:         this.bodyType,
-      powerPlantType:   this.powerPlantType,
-      suspensionType:   this.suspensionType,
-      tireType:         this.tireType,
-      armorType:        this.armorType,
+      bodyType:       this.bodyType,
+      powerPlantType: this.powerPlantType,
+      suspensionType: this.suspensionType,
+      tireType:       this.tireType,
+      armorType:      this.armorType,
     };
   }
 
+  // ── Save ─────────────────────────────────────────────────────────────────
+
   private async saveVehicle(): Promise<void> {
-    this.statusText.setColor('#aaaaaa').setText('Saving...');
+    if (!this.stats) {
+      this.flashStatus('Stats still loading — try again', '#ffaa00');
+      this.rebuild();
+      return;
+    }
+    this.flashStatus('Saving…', '#aaa');
+    this.rebuild();
     try {
       const host = window.location.hostname;
-      const loadout = { ...this.buildDesignPayload(), totalCost: this.derivedCost };
-
+      const loadout = { ...this.buildDesignPayload(), totalCost: this.stats.totalCost };
       let res: Response;
       if (this.editVehicleId) {
-        // Workshop edit: PATCH just the loadout; server handles delta pricing
         res = await fetch(`http://${host}:3001/api/vehicles/${this.editVehicleId}/loadout`, {
           method: 'PATCH',
-          headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${this.token}` },
+          headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${this.token}` },
           body: JSON.stringify(loadout),
         });
       } else {
-        // New-vehicle create path
         res = await fetch(`http://${host}:3001/api/vehicles`, {
           method: 'POST',
-          headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${this.token}` },
+          headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${this.token}` },
           body: JSON.stringify({ name: this.vehicleName, loadout }),
         });
       }
-
       if (res.ok) {
-        const successText = this.editVehicleId ? 'Changes saved!' : 'Vehicle created!';
-        this.statusText.setColor(SEL_COLOR).setText(successText);
-        this.time.delayedCall(1200, () => this.scene.start('GarageScene', { token: this.token }));
+        this.flashStatus(this.editVehicleId ? 'Changes saved!' : 'Vehicle created!', '#00ff88');
+        this.rebuild();
+        this.time.delayedCall(900, () => this.scene.start('GarageScene', { token: this.token }));
       } else {
-        const err = await res.json() as { error?: string };
-        this.statusText.setColor('#ff4444').setText(err.error ?? 'Save failed');
+        const err = await res.json().catch(() => ({}));
+        this.flashStatus(err.error ?? 'Save failed', '#ff4444');
+        this.rebuild();
       }
     } catch {
-      this.statusText.setColor('#ff4444').setText('Network error');
+      this.flashStatus('Network error', '#ff4444');
+      this.rebuild();
     }
   }
 }
