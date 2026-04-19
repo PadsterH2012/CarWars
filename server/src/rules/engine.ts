@@ -365,9 +365,15 @@ export function createTurnEngine(initialState: ZoneState, map?: ArenaMap): TurnE
           return;
         }
 
-        // Projectile weapon — fire at all enemies in arc within range
+        // Projectile weapon — fire at all enemies in arc within range.
+        // Friendly-fire guard: never engage a vehicle on the same team
+        // (same playerId). Without this, the firing loop iterates every
+        // vehicle in the arc regardless of who they belong to, so
+        // squadmates would blast each other whenever they drifted into
+        // each other's front-arc cone.
         preMoveVehicles.forEach(target => {
           if (attacker.id === target.id) return;
+          if (target.playerId === attacker.playerId) return;
           if (!isWeaponInArc(attacker, target, mount)) return;
           if (map && map.walls.length > 0 && !hasLineOfSight(attacker.position, target.position, map.walls)) {
             console.log(`[t${state.tick}] BLOCK ${attacker.id} → ${target.id} (wall blocks LoS)`);
