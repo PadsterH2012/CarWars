@@ -516,11 +516,15 @@ export class VehicleDesignerScene extends Phaser.Scene {
     // Render the body sprite at the centre of the schematic, tinted with the
     // gang primary colour. Scale so the sprite fits the 100×120 area comfortably.
     const bKey = `body_${bodySpriteKey(this.bodyType)}`;
+    let bodyHalfW = 36;  // fallback half-width for wheel placement
+    let bodyHalfH = 56;
     if (this.textures.exists(bKey)) {
       const tex = this.textures.get(bKey).getSourceImage();
       const scaleX = 100 / tex.width;
       const scaleY = 120 / tex.height;
       const scale = Math.min(scaleX, scaleY);
+      bodyHalfW = (tex.width  * scale) / 2;
+      bodyHalfH = (tex.height * scale) / 2;
       this.previewBody = this.add.image(cx, cy, bKey)
         .setOrigin(0.5)
         .setScale(scale)
@@ -533,8 +537,38 @@ export class VehicleDesignerScene extends Phaser.Scene {
       this.schematicGfx.strokeRect(cx - 50, cy - 60, 100, 120);
     }
 
-    // Direction indicators: a bright up-arrow above the body + clear F/B
-    // letters on the armor panel labels, so front/back is obvious at a glance.
+    // Draw wheels as separate graphics on TOP of the tinted body sprite so
+    // they stay pure black regardless of what tint is active. Four wheels
+    // protrude slightly from each side of the hull — classic top-down look.
+    // Skip for cycles (2-wheel body types) — they already look narrow enough
+    // that the body sprite itself reads correctly.
+    const isCycle = this.bodyType.includes('cycle');
+    if (!isCycle) {
+      const wheelW = 9;
+      const wheelH = 18;
+      const wheelXOut = bodyHalfW - 2;  // slight overlap with hull
+      const wheelFrontY = -bodyHalfH * 0.45;
+      const wheelRearY  =  bodyHalfH * 0.35;
+      const wheels = [
+        { x: cx - wheelXOut - wheelW * 0.5, y: cy + wheelFrontY },
+        { x: cx + wheelXOut - wheelW * 0.5, y: cy + wheelFrontY },
+        { x: cx - wheelXOut - wheelW * 0.5, y: cy + wheelRearY  },
+        { x: cx + wheelXOut - wheelW * 0.5, y: cy + wheelRearY  },
+      ];
+      this.schematicGfx.fillStyle(0x000000, 1);
+      this.schematicGfx.lineStyle(1, 0xffffff, 0.9);
+      wheels.forEach(({ x, y }) => {
+        this.schematicGfx.fillRoundedRect(x, y, wheelW, wheelH, 2);
+        this.schematicGfx.strokeRoundedRect(x, y, wheelW, wheelH, 2);
+      });
+      // Lug nut dots (white) — make the wheels unmistakably wheels
+      this.schematicGfx.fillStyle(0xffffff, 0.9);
+      wheels.forEach(({ x, y }) => {
+        this.schematicGfx.fillCircle(x + wheelW / 2, y + wheelH / 2, 1.5);
+      });
+    }
+
+    // Direction indicator: bright yellow chevron above the body
     this.schematicGfx.fillStyle(0xffff88, 0.9);
     this.schematicGfx.beginPath();
     this.schematicGfx.moveTo(cx,     cy - 100);
