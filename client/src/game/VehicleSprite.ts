@@ -243,6 +243,7 @@ export function teamColorForVehicle(
   myVehicleId: string,
   squadIds: string[] = [],
   gangPrimaryColour?: number,
+  rivalPrimaryColour?: number,
 ): number {
   // Player's squad uses the gang primary colour when one is configured; primary is
   // the bright version, squadmates are a darker shade for distinction.
@@ -250,6 +251,7 @@ export function teamColorForVehicle(
   if (squadIds.includes(v.id)) {
     return gangPrimaryColour !== undefined ? shiftBrightness(gangPrimaryColour, -0.3) : 0x66cc88;
   }
-  if (v.playerId === 'ai-team') return 0xff4444;  // enemies
+  // Enemies tinted in the rival's primary colour if we know the rival for this match
+  if (v.playerId === 'ai-team') return rivalPrimaryColour ?? 0xff4444;
   return 0xffaa00;                                 // other (NPC traffic etc)
 }

@@ -114,6 +114,63 @@ UPDATE drivers d SET gang_id = g.id
 FROM gangs g
 WHERE g.owner_player_id = d.player_id AND d.gang_id IS NULL;
 
+-- Rival gangs (added 2026-04-19 — Gang Management Phase 4)
+-- Authored enemy gangs that persist across matches. Each player has a per-rival
+-- grudge score in player_rival_rep; higher grudge → tougher rematches.
+CREATE TABLE IF NOT EXISTS rival_gangs (
+  id TEXT PRIMARY KEY,
+  name TEXT NOT NULL,
+  description TEXT NOT NULL DEFAULT '',
+  base_skill INTEGER NOT NULL DEFAULT 3,
+  primary_colour INTEGER NOT NULL DEFAULT 16711748,     -- 0xFF4444 (red)
+  secondary_colour INTEGER NOT NULL DEFAULT 2236962,    -- 0x222222 (dark)
+  emblem_id TEXT NOT NULL DEFAULT 'skull',
+  min_division INTEGER NOT NULL DEFAULT 5,
+  boast_lines JSONB NOT NULL DEFAULT '[]',    -- shown when rival beats the player
+  defeat_lines JSONB NOT NULL DEFAULT '[]'    -- shown when player beats the rival
+);
+
+CREATE TABLE IF NOT EXISTS player_rival_rep (
+  player_gang_id UUID NOT NULL REFERENCES gangs(id) ON DELETE CASCADE,
+  rival_id TEXT NOT NULL REFERENCES rival_gangs(id),
+  grudge INTEGER NOT NULL DEFAULT 0,    -- 0 = neutral; higher = angrier = tougher
+  encounters INTEGER NOT NULL DEFAULT 0,
+  player_wins INTEGER NOT NULL DEFAULT 0,
+  rival_wins INTEGER NOT NULL DEFAULT 0,
+  last_encounter TIMESTAMPTZ,
+  PRIMARY KEY (player_gang_id, rival_id)
+);
+CREATE INDEX IF NOT EXISTS idx_rival_rep_player_gang ON player_rival_rep(player_gang_id);
+
+-- Seed 5 rival gangs (idempotent — ON CONFLICT keeps existing rows untouched)
+INSERT INTO rival_gangs (id, name, description, base_skill, primary_colour, secondary_colour, emblem_id, min_division, boast_lines, defeat_lines) VALUES
+  ('iron_wolves', 'The Iron Wolves',
+   'Ex-military surplus crew. Heavy armour, bigger guns, little mercy.',
+   3, 14492683, 1118481, 'skull', 5,
+   $$["You ride like farmhands. Next time, bring a proper gang.", "The Wolves eat amateurs for breakfast."]$$,
+   $$["We'll remember this. The pack never forgets.", "You got lucky. Cherish it."]$$),
+  ('neon_samurai', 'Neon Samurai',
+   'Speed-cult cyclists from the strip. Precision lasers, no armour to spare.',
+   4, 1168383, 13459711, 'circle', 5,
+   $$["Too slow. Too clumsy. Too dead.", "We dance circles while you burn."]$$,
+   $$["Hmph. A worthy opponent. This time.", "The blade meets its match. Rarely."]$$),
+  ('rust_raiders', 'The Rust Raiders',
+   'Scrap-built strays. Numerous, chaotic, and weirdly dangerous on a budget.',
+   2, 16743168, 6703104, 'chevron', 5,
+   $$["Hah! We didn't even have to try.", "Scrap meets scrap. Yours is worse."]$$,
+   $$["Oi, not bad. We'll be back with more mates.", "You win this scrap. Next one's ours."]$$),
+  ('executioners', 'The Executioners',
+   'Veteran hit squad. Small numbers, max skill. One mistake and you are gone.',
+   5, 11010099, 1118481, 'cross', 4,
+   $$["Precision. You lacked it.", "Contract fulfilled. Another name crossed off."]$$,
+   $$["Professional work. We'll study your moves.", "The contract is withdrawn. For now."]$$),
+  ('highway_apostles', 'The Highway Apostles',
+   'A ramplate cult that worships the divine crash. More brick than brains.',
+   3, 16777215, 16764160, 'star', 5,
+   $$["The road has judged you. Guilty.", "Your faith was weak. Our ramplates, strong."]$$,
+   $$["The saints bled for this loss. We shall return.", "You drive well. Perhaps there is hope for you."]$$)
+ON CONFLICT (id) DO NOTHING;
+
 -- Trigger: keep gangs.treasury in sync with players.money so existing money-update
 -- paths automatically credit/debit the gang. One-way for Phase 3; later phases will
 -- retire players.money entirely and move the source of truth to gangs.treasury.

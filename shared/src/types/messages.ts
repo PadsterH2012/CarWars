@@ -1,6 +1,16 @@
 import type { ZoneState } from './world';
 import type { DamageResult } from './combat';
 
+// Rival gang info delivered to the client for in-arena and post-match display.
+export interface RivalInfo {
+  id: string;
+  name: string;
+  description: string;
+  primary_colour: number;
+  secondary_colour: number;
+  emblem_id: string;
+}
+
 // Commander-mode order for a squad vehicle (only applied to AI-driven squadmates).
 // 'attack': focus-fire a specific enemy; 'move': drive to a waypoint ignoring combat;
 // 'follow': stay in formation behind the leader; 'retreat': maximise distance from all enemies.
@@ -25,5 +35,6 @@ export type ServerMessage =
   | { type: 'damage'; result: DamageResult }
   | { type: 'error'; message: string }
   | { type: 'zone_change'; destinationZoneId: string; reason: string }
-  | { type: 'zone_end'; winnerId: string | null; reason: string; prize: number; jobPayout: number; salvage: number }
+  | { type: 'zone_end'; winnerId: string | null; reason: string; prize: number; jobPayout: number; salvage: number; rival?: RivalInfo; rivalQuote?: string }
+  | { type: 'rival_info'; rival: RivalInfo }
   | { type: 'driver_info'; vehicleId: string; skill: number; maxSteer: number };

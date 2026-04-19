@@ -1,10 +1,11 @@
 import { WebSocketServer, WebSocket } from 'ws';
 import * as http from 'http';
 import jwt from 'jsonwebtoken';
-import type { ClientMessage, ServerMessage, VehicleState, VehicleLoadout, DamageState } from '@carwars/shared';
+import type { ClientMessage, ServerMessage, VehicleState, VehicleLoadout, DamageState, RivalInfo } from '@carwars/shared';
 import { ZoneRunner } from '../world/zone-runner';
 import { getDb } from '../db/client';
 import { deriveStats } from '../rules/vehicle';
+import { pickRivalForMatch, recordRivalOutcome, rivalEffectiveSkill, type RivalGang } from '../rules/rivals';
 
 const JWT_SECRET = process.env.JWT_SECRET ?? 'dev-secret-change-in-prod';
 
@@ -259,8 +260,34 @@ async function handleMessage(ws: WebSocket, raw: string): Promise<void> {
       const zoneType = isArena ? 'arena' : isHighway ? 'highway' : 'town';
 
       const runner = new ZoneRunner(msg.zoneId, zoneType, isArena ? {
-        onEnd: async (winnerId: string | null, salvage: number) => {
-          if (!winnerId) return { prize: 0, jobPayout: 0, salvage: 0 };
+        onEnd: async (winnerId: string | null, salvage: number, ctx) => {
+          // Record rival rep + pick a quote regardless of who won (except mutual kills)
+          let rivalQuote: string | undefined;
+          if (ctx.rival && ctx.reason !== 'all_destroyed') {
+            try {
+              const db = getDb();
+              // Resolve the player's gang id from their playerId (winner or loser)
+              const myPid = winnerId
+                ?? [...clientPlayers.entries()].find(([w]) => clientZones.get(w) === msg.zoneId)?.[1]
+                ?? null;
+              if (myPid) {
+                const gRes = await db.query(`SELECT id FROM gangs WHERE owner_player_id = $1`, [myPid]);
+                const pgang = gRes.rows[0]?.id;
+                if (pgang) {
+                  const playerWon = !!winnerId;
+                  await recordRivalOutcome(db, pgang, ctx.rival.id, playerWon);
+                  // Pick a quote from the appropriate pool; fall back to a generic line
+                  const pool = playerWon
+                    ? (await db.query<{ defeat_lines: string[] }>(`SELECT defeat_lines FROM rival_gangs WHERE id = $1`, [ctx.rival.id])).rows[0]?.defeat_lines ?? []
+                    : (await db.query<{ boast_lines: string[]  }>(`SELECT boast_lines  FROM rival_gangs WHERE id = $1`, [ctx.rival.id])).rows[0]?.boast_lines  ?? [];
+                  rivalQuote = pool.length ? pool[Math.floor(Math.random() * pool.length)] : undefined;
+                }
+              }
+            } catch (e) {
+              console.error('Rival rep update failed:', e);
+            }
+          }
+          if (!winnerId) return { prize: 0, jobPayout: 0, salvage: 0, rivalQuote };
           const db = getDb();
           try {
             const pRes = await db.query(`SELECT division FROM players WHERE id = $1`, [winnerId]);
@@ -370,18 +397,16 @@ async function handleMessage(ws: WebSocket, raw: string): Promise<void> {
               }
             }
 
-            return { prize, jobPayout, salvage };
+            return { prize, jobPayout, salvage, rivalQuote };
           } catch (e) {
             console.error('Failed to credit arena prize:', e);
-            return { prize: 0, jobPayout: 0, salvage: 0 };
+            return { prize: 0, jobPayout: 0, salvage: 0, rivalQuote };
           }
         },
       } : {}, msg.mapId ?? mapIdForZone(msg.zoneId));
 
       if (isArena) {
         // Enemy count matches the player's squad size (1v1, 2v2, up to 4v4).
-        // Use the map's ai spawn points up to that count; if the map doesn't have
-        // enough, cluster additional positions around the first ai spawn.
         const squadSize = Math.max(1, Math.min(4, msg.squadVehicleIds?.length ?? 1));
         const aiSpawns = runner.getMap().spawnPoints.filter(s => s.team === 'ai');
         const names = ['ai-red', 'ai-blue', 'ai-green', 'ai-yellow'];
@@ -391,9 +416,52 @@ async function handleMessage(ws: WebSocket, raw: string): Promise<void> {
         } else if (aiSpawns.length > 0) {
           enemyPositions.push(...clusterSpawnPositions(aiSpawns[0], squadSize));
         }
+
+        // ── Persistent rival selection ──────────────────────────────────────
+        // Look up the player's gang, pick an eligible rival weighted by grudge,
+        // stash it on the runner so it flows into zone_state (for sprite tinting)
+        // and zone_end (for the post-match banner).
+        let rival: RivalGang | null = null;
+        let rivalGrudge = 0;
+        try {
+          const db = getDb();
+          if (msg.token) {
+            // Resolve the owning player's division + gang from the primary vehicle id
+            const res = await db.query<{ division: number; gang_id: string }>(
+              `SELECT p.division, g.id AS gang_id
+               FROM vehicles v
+               JOIN players p ON p.id = v.player_id
+               JOIN gangs g ON g.owner_player_id = p.id
+               WHERE v.id = $1`,
+              [msg.vehicleId]
+            );
+            if (res.rows.length) {
+              const { division, gang_id } = res.rows[0];
+              rival = await pickRivalForMatch(db, gang_id, division);
+              if (rival) {
+                const gRes = await db.query<{ grudge: number }>(
+                  `SELECT grudge FROM player_rival_rep WHERE player_gang_id = $1 AND rival_id = $2`,
+                  [gang_id, rival.id]
+                );
+                rivalGrudge = gRes.rows[0]?.grudge ?? 0;
+                runner.setRival({
+                  id: rival.id, name: rival.name, description: rival.description,
+                  primary_colour: rival.primary_colour, secondary_colour: rival.secondary_colour,
+                  emblem_id: rival.emblem_id,
+                });
+              }
+            }
+          }
+        } catch (e) {
+          console.error('Rival selection failed:', e);
+        }
+        const rivalSkill = rival ? rivalEffectiveSkill(rival, rivalGrudge) : 3;
+
         enemyPositions.forEach((sp, i) => {
           const name = names[i] ?? `ai-${i}`;
           runner.getEngine().addVehicle(makeTestVehicle(name, 'ai-team', sp.x, sp.y, sp.facing, 70));
+          // Set each enemy's AI skill to the rival's effective skill (base + grudge/20)
+          runner.setVehicleSkill(name, rivalSkill);
         });
       } else if (isHighway) {
         runner.getEngine().addVehicle(makeTestVehicle('npc-1', 'npc-traffic', -5, -60, 0));

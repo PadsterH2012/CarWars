@@ -181,12 +181,15 @@ live at http://10.202.28.192:3001.
 - [x] DB trigger syncs `players.money ↔ gangs.treasury` so all existing money endpoints (build, repair, sell, arena, salvage, job) automatically credit the gang — no per-endpoint changes needed. Source-of-truth migration to `gangs.treasury` deferred to a later phase.
 
 ### Phase 4 — Persistent Rivals
-- [ ] `rival_gangs` seed table (5–8 authored rivals: names, style, base skill, colours)
-- [ ] `rival_gang_rep` table (player_gang_id, rival_id, rep, encounters, wins, losses)
-- [ ] Rival selection at match start (by division + current rep)
-- [ ] Match outcome updates rep; low rep = harder rematches
-- [ ] Post-match UI shows rival name + contextual taunt/boast
-- [ ] Optional: jobs targeted at specific rivals ("intercept The Wolves convoy")
+- [x] `rival_gangs` seed table — 5 authored rivals: Iron Wolves, Neon Samurai, Rust Raiders, Executioners, Highway Apostles (each with distinct colours + emblems + boast/defeat lines)
+- [x] `player_rival_rep` table tracking grudge + encounters + player_wins + rival_wins per player-gang × rival
+- [x] Rival selection at match start — weighted by `(10 + grudge*2 + encounters)` so existing rivalries are preferred but new rivals still appear
+- [x] Grudge update on outcome: player win → +10 (rival angrier, harder rematch); rival win → -5 (satisfied); effective AI skill = `base_skill + floor(grudge/20)` capped at 6
+- [x] Enemy sprites tinted in rival's primary colour (replacing the fixed red)
+- [x] Post-match UI shows "vs. {Rival Name}" in the rival's colour + a random quote from boast_lines (rival won) or defeat_lines (player won)
+- [ ] Jobs targeted at specific rivals ("intercept The Wolves convoy") — deferred
+- [ ] Vehicle templates per rival (signature loadouts that scale with grudge) — deferred; enemies currently use makeTestVehicle with rival skill scaling only
+- [ ] Rival emblem shown in-arena (HUD tag + on enemy sprites) — deferred to Phase 4b
 
 ### Phase 5 — Full Economy
 - [ ] `gang_ledger` audit table

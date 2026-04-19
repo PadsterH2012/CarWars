@@ -26,6 +26,7 @@ export class ArenaScene extends Phaser.Scene {
   private squadVehicleIds: string[] = [];
   private mapId = 'truck-stop';
   private gangPrimaryColour: number | undefined;
+  private rival: import('@carwars/shared').RivalInfo | null = null;
   private token = '';
   private jobId = '';
   private lastInputSent = 0;
@@ -72,6 +73,7 @@ export class ArenaScene extends Phaser.Scene {
     this.hazardSprites.clear();
     this.wreckSprites.clear();
     this.squadOrders.clear();
+    this.rival = null;
     this.mapWalls = [];
     this.tilemapLayers = [];
     this.zoneState = null;
@@ -262,8 +264,12 @@ export class ArenaScene extends Phaser.Scene {
         }
         this.zoneState = msg.state;
         this.syncSprites(msg.state);
+      } else if (msg.type === 'rival_info') {
+        // Persist the rival for this match; enemies will render in their colours
+        // and the post-arena screen can show their banner + quote
+        this.rival = msg.rival;
       } else if (msg.type === 'zone_end') {
-        this.showZoneEnd(msg.winnerId, msg.reason, msg.prize ?? 0, msg.jobPayout ?? 0, msg.salvage ?? 0);
+        this.showZoneEnd(msg.winnerId, msg.reason, msg.prize ?? 0, msg.jobPayout ?? 0, msg.salvage ?? 0, msg.rival, msg.rivalQuote);
       }
     });
   }
@@ -274,7 +280,7 @@ export class ArenaScene extends Phaser.Scene {
     state.vehicles.forEach(v => {
       seen.add(v.id);
       let container = this.vehicleSprites.get(v.id);
-      const teamColor = teamColorForVehicle(v, this.myVehicleId, this.squadVehicleIds, this.gangPrimaryColour);
+      const teamColor = teamColorForVehicle(v, this.myVehicleId, this.squadVehicleIds, this.gangPrimaryColour, this.rival?.primary_colour);
       // Orders only apply to squadmates other than the player-driven primary
       const isSquadmate = this.squadVehicleIds.includes(v.id) && v.id !== this.myVehicleId;
       const order = isSquadmate ? this.squadOrders.get(v.id) : undefined;
@@ -470,7 +476,7 @@ export class ArenaScene extends Phaser.Scene {
     });
   }
 
-  private showZoneEnd(winnerId: string | null, reason: string, prize: number, jobPayout: number, salvage: number): void {
+  private showZoneEnd(winnerId: string | null, reason: string, prize: number, jobPayout: number, salvage: number, rival?: import('@carwars/shared').RivalInfo, rivalQuote?: string): void {
     if (this.zoneEnded) return;
     this.zoneEnded = true;
 
@@ -513,8 +519,26 @@ export class ArenaScene extends Phaser.Scene {
       fontSize: '42px', color: titleColor, fontFamily: 'monospace', fontStyle: 'bold'
     }).setOrigin(0.5).setScrollFactor(0).setDepth(11);
 
+    let y = 253;
+
+    // Rival banner: name + quote (if the server sent us one)
+    if (rival) {
+      const bannerColor = '#' + rival.primary_colour.toString(16).padStart(6, '0');
+      this.add.text(640, y, `vs. ${rival.name}`, {
+        fontSize: '16px', color: bannerColor, fontFamily: 'monospace', fontStyle: 'italic'
+      }).setOrigin(0.5).setScrollFactor(0).setDepth(11);
+      y += 22;
+      if (rivalQuote) {
+        this.add.text(640, y, `"${rivalQuote}"`, {
+          fontSize: '12px', color: '#bbb', fontFamily: 'monospace',
+          wordWrap: { width: 620 }, align: 'center',
+        }).setOrigin(0.5, 0).setScrollFactor(0).setDepth(11);
+        y += 40;
+      }
+    }
+    if (y < 275) y = 275;
+
     // Financial summary (only meaningful for winner)
-    let y = 275;
     if (isWinner) {
       if (prize > 0) {
         this.add.text(640, y, `Arena prize:  $${prize.toLocaleString()}`, {

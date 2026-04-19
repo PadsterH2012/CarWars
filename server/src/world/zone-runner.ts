@@ -1,5 +1,5 @@
 import { WebSocket } from 'ws';
-import type { ServerMessage, ArenaMap, SquadOrder } from '@carwars/shared';
+import type { ServerMessage, ArenaMap, SquadOrder, RivalInfo } from '@carwars/shared';
 import { createTurnEngine, TurnEngine } from '../rules/engine';
 import { computeAiInput } from '../ai/driver';
 import { getMap } from '../rules/maps';
@@ -8,7 +8,7 @@ import { totalSalvageFor } from '../rules/salvage';
 const TICK_MS = 100;
 
 export interface ZoneRunnerOptions {
-  onEnd?: (winnerId: string | null, salvage: number) => Promise<{ prize: number; jobPayout: number; salvage: number }>;
+  onEnd?: (winnerId: string | null, salvage: number, ctx: { reason: string; rival: RivalInfo | null }) => Promise<{ prize: number; jobPayout: number; salvage: number; rivalQuote?: string }>;
 }
 
 export class ZoneRunner {
@@ -24,11 +24,12 @@ export class ZoneRunner {
   private vehicleSkills = new Map<string, number>(); // vehicleId → driver skill
   private squadOrders = new Map<string, SquadOrder>(); // vehicleId → current order (commander mode)
   private pausedBy: WebSocket | null = null;   // the client that initiated the pause; only they can unpause
+  private rival: RivalInfo | null = null;      // rival gang for this match, if set by handler
   private map: ArenaMap;
 
   hasEnded(): boolean { return this.ended; }
   readonly zoneId: string;
-  private onEnd?: (winnerId: string | null, salvage: number) => Promise<{ prize: number; jobPayout: number; salvage: number }>;
+  private onEnd?: (winnerId: string | null, salvage: number, ctx: { reason: string; rival: RivalInfo | null }) => Promise<{ prize: number; jobPayout: number; salvage: number; rivalQuote?: string }>;
 
   constructor(
     zoneId: string,
@@ -60,6 +61,10 @@ export class ZoneRunner {
     const msg: ServerMessage = { type: 'zone_state', state: initialState };
     if (ws.readyState === WebSocket.OPEN) {
       ws.send(JSON.stringify(msg));
+      if (this.rival) {
+        const r: ServerMessage = { type: 'rival_info', rival: this.rival };
+        ws.send(JSON.stringify(r));
+      }
     }
   }
 
@@ -118,6 +123,13 @@ export class ZoneRunner {
     else this.squadOrders.set(vehicleId, order);
   }
 
+  setRival(rival: RivalInfo | null): void {
+    this.rival = rival;
+  }
+  getRival(): RivalInfo | null {
+    return this.rival;
+  }
+
   getSquadOrder(vehicleId: string): SquadOrder | undefined {
     return this.squadOrders.get(vehicleId);
   }
@@ -171,21 +183,24 @@ export class ZoneRunner {
     // so it reflects every AI car the player destroyed during the match.
     const grossSalvage = totalSalvageFor(state.wreckage ?? [], humanWinnerId);
 
-    // Call onEnd — it credits the prize + salvage and returns the final amounts
-    const { prize, jobPayout, salvage } =
-      (await this.onEnd?.(humanWinnerId, grossSalvage)) ?? { prize: 0, jobPayout: 0, salvage: 0 };
+    // Call onEnd — it credits the prize + salvage and returns the final amounts.
+    // onEnd may also include a rivalQuote (from the rival's boast_lines or
+    // defeat_lines depending on outcome) so the client can render flavour text.
+    const reason = winnerPlayerId === null ? 'all_destroyed'
+                  : winnerPlayerId === 'ai-team' ? 'ai_victory'
+                  : 'last_standing';
+    const outcome = (await this.onEnd?.(humanWinnerId, grossSalvage, { reason, rival: this.rival }))
+      ?? { prize: 0, jobPayout: 0, salvage: 0 };
 
     const endMsg: ServerMessage = {
       type: 'zone_end',
       winnerId: humanWinnerId,
-      reason: winnerPlayerId === null
-        ? 'all_destroyed'
-        : winnerPlayerId === 'ai-team'
-        ? 'ai_victory'
-        : 'last_standing',
-      prize,
-      jobPayout,
-      salvage,
+      reason,
+      prize: outcome.prize,
+      jobPayout: outcome.jobPayout,
+      salvage: outcome.salvage,
+      rival: this.rival ?? undefined,
+      rivalQuote: outcome.rivalQuote,
     };
     const data = JSON.stringify(endMsg);
     this.clients.forEach(ws => {
