@@ -98,11 +98,22 @@ export function hasLineOfSight(
   );
 }
 
+// Driver-skill modifier to the to-hit target number (Compendium-inspired).
+// Higher skill → lower target number (easier to hit). Skill 3 is the neutral
+// baseline; the AI's default skill is 3 so pre-existing tests stay balanced.
+//   skill 1 (rookie):  +2 (harder)       skill 4 (expert):  -1
+//   skill 2 (app.):    +1                skill 5 (ace):     -2
+//   skill 3 (pro):      0  (baseline)    skill 6 (master):  -3
+export function skillToHitModifier(skill: number): number {
+  return 3 - Math.max(1, Math.min(6, skill));
+}
+
 export function resolveToHit(
   attacker: VehicleState,
   target: VehicleState,
   weapon: WeaponDef,
-  distance: number
+  distance: number,
+  attackerSkill: number = 3,
 ): ToHitResult {
   // Dropped weapons are not aimed — they are never resolved through this function
   if (weapon.category === 'dropped') {
@@ -137,6 +148,9 @@ export function resolveToHit(
   // standard-sized bodies (compact, mid_sized, sedan, luxury, station_wagon): no size modifier
 
   if (attacker.stats.damageState.driverWounded) targetNumber += 2;
+
+  // Driver skill modifier — applied last so it shows up clearly in the modifier field
+  targetNumber += skillToHitModifier(attackerSkill);
 
   const roll = roll2d6();
   const hit = roll >= targetNumber;

@@ -42,7 +42,10 @@ export class ZoneRunner {
     this.map = getMap(mapId);
     this.engine = createTurnEngine(
       { id: zoneId, type: zoneType, tick: 0, vehicles: [], hazardObjects: [] },
-      this.map
+      this.map,
+      // Give the engine read-access to our per-vehicle driver skill so the
+      // to-hit resolution picks it up without plumbing through every call.
+      { getDriverSkill: (vehicleId: string) => this.vehicleSkills.get(vehicleId) },
     );
   }
 

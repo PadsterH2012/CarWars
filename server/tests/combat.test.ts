@@ -314,3 +314,36 @@ describe('vehicular fire on armor breach', () => {
     expect(explosionCount).toBeGreaterThan(0);
   });
 });
+
+describe('driver skill → to-hit modifier', () => {
+  it('skillToHitModifier maps skill 3 to 0 (baseline)', async () => {
+    const { skillToHitModifier } = await import('../src/rules/combat');
+    expect(skillToHitModifier(3)).toBe(0);
+  });
+
+  it('rookies (skill 1) suffer +2 penalty; aces (skill 5) gain -2 bonus', async () => {
+    const { skillToHitModifier } = await import('../src/rules/combat');
+    expect(skillToHitModifier(1)).toBe(2);
+    expect(skillToHitModifier(2)).toBe(1);
+    expect(skillToHitModifier(4)).toBe(-1);
+    expect(skillToHitModifier(5)).toBe(-2);
+    expect(skillToHitModifier(6)).toBe(-3);
+  });
+
+  it('skill is clamped to the 1–6 range', async () => {
+    const { skillToHitModifier } = await import('../src/rules/combat');
+    expect(skillToHitModifier(0)).toBe(2);   // clamps to 1
+    expect(skillToHitModifier(99)).toBe(-3); // clamps to 6
+  });
+
+  it('higher-skill attacker lands more hits against the same target', () => {
+    const mg = WEAPONS.find(w => w.id === 'mg')!;
+    // Run many attempts at each skill; skill 6 should clearly outhit skill 1
+    let rookieHits = 0, aceHits = 0;
+    for (let i = 0; i < 500; i++) {
+      if (resolveToHit(attacker, target, mg, 4, 1).hit) rookieHits++;
+      if (resolveToHit(attacker, target, mg, 4, 6).hit) aceHits++;
+    }
+    expect(aceHits).toBeGreaterThan(rookieHits + 50); // generous margin
+  });
+});

@@ -71,7 +71,14 @@ export interface TurnEngine {
 
 const TICKS_PER_TURN = 10; // 100ms ticks × 10 = 1 second = 1 Compendium turn
 
-export function createTurnEngine(initialState: ZoneState, map?: ArenaMap): TurnEngine {
+export interface TurnEngineOptions {
+  // Optional resolver: given a vehicleId, return the driver's skill (1–6).
+  // Engine uses this to apply skill-based to-hit modifiers. If omitted or it
+  // returns undefined, skill defaults to 3 (neutral).
+  getDriverSkill?: (vehicleId: string) => number | undefined;
+}
+
+export function createTurnEngine(initialState: ZoneState, map?: ArenaMap, opts: TurnEngineOptions = {}): TurnEngine {
   let state: ZoneState = {
     ...initialState,
     vehicles: [...initialState.vehicles],
@@ -393,7 +400,8 @@ export function createTurnEngine(initialState: ZoneState, map?: ArenaMap): TurnE
           const distance = Math.sqrt(dx * dx + dy * dy);
           if (distance > weapon.longRange) return;
 
-          const toHit = resolveToHit(attacker, target, weapon, distance);
+          const attackerSkill = opts.getDriverSkill?.(attacker.id) ?? 3;
+          const toHit = resolveToHit(attacker, target, weapon, distance, attackerSkill);
           const distStr = distance.toFixed(1);
           if (!toHit.hit) {
             console.log(`[t${state.tick}] MISS  ${attacker.id} → ${target.id} (${weapon.id}, dist=${distStr})`);
