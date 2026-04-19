@@ -215,37 +215,131 @@ function cycleBody(ctx: SKRSContext2D, w: number, h: number) {
   ctx.fillRect(1, h - 3, w - 2, 2);
 }
 
+// Trike — sporty wedge (Imp / Sportster): pointed nose, flared rear, small
+// cockpit dome with windshield, visible fender lines to the rear wheels.
 function trikeBody(ctx: SKRSContext2D, w: number, h: number) {
-  // Wedge narrowing toward front
+  // Wedge body: narrow front, full width at the back
   ctx.fillStyle = '#c8c8c8';
   ctx.beginPath();
   ctx.moveTo(w / 2, 1);
+  ctx.lineTo(w - 3, Math.round(h * 0.35));
   ctx.lineTo(w - 2, h - 3);
   ctx.lineTo(w - 2, h - 1);
   ctx.lineTo(2, h - 1);
   ctx.lineTo(2, h - 3);
+  ctx.lineTo(3, Math.round(h * 0.35));
   ctx.closePath();
   ctx.fill();
-  ctx.strokeStyle = '#2b2b2b';
+  ctx.strokeStyle = '#1a1a1a';
   ctx.lineWidth = 1;
   ctx.stroke();
-  // Rider/seat silhouette so it reads as a trike not an arrow
-  ctx.fillStyle = '#4a4a4a';
-  ctx.fillRect(Math.floor(w / 2) - 2, Math.floor(h * 0.35), 4, 8);
-  // Wheels — 3 total: 1 up front, 2 on rear axle. Larger than before so they
-  // actually read at sprite scale. White outline to stand out against any tint.
+
+  // Front headlight strip + chevron
+  ctx.fillStyle = '#ffffcc';
+  ctx.fillRect(w / 2 - 2, 3, 4, 1);
+  ctx.fillStyle = '#ffffff';
+  ctx.beginPath();
+  ctx.moveTo(w / 2, 2);
+  ctx.lineTo(w / 2 + 2, 6);
+  ctx.lineTo(w / 2 - 2, 6);
+  ctx.closePath();
+  ctx.fill();
+
+  // Cockpit dome + windshield — cockpit is a dark ellipse in the middle
+  ctx.fillStyle = '#506080';
+  roundedRect(ctx, Math.round(w * 0.28), Math.round(h * 0.32), Math.round(w * 0.44), Math.round(h * 0.16), 2);
+  ctx.fill();
+  ctx.fillStyle = '#2a2a2a';
+  roundedRect(ctx, Math.round(w * 0.28), Math.round(h * 0.48), Math.round(w * 0.44), Math.round(h * 0.22), 2);
+  ctx.fill();
+
+  // Rear fender shoulder lines — thin dark lines suggesting wheel housings
+  ctx.strokeStyle = '#3a3a3a';
+  ctx.beginPath();
+  ctx.moveTo(3, Math.round(h * 0.70));
+  ctx.lineTo(3, h - 3);
+  ctx.moveTo(w - 3, Math.round(h * 0.70));
+  ctx.lineTo(w - 3, h - 3);
+  ctx.stroke();
+
+  // Tail lights
+  ctx.fillStyle = '#aa2222';
+  ctx.fillRect(4, h - 4, 4, 2);
+  ctx.fillRect(w - 8, h - 4, 4, 2);
+
+  // Wheels — 1 front (centered) + 2 rear (protruding). Bigger than before.
   ctx.fillStyle = '#000000';
   ctx.strokeStyle = '#ffffff';
   ctx.lineWidth = 0.5;
-  const wheelW = 4, wheelH = 7;
-  // Front (centered)
-  ctx.fillRect(Math.floor(w / 2) - wheelW / 2, 1, wheelW, wheelH);
-  ctx.strokeRect(Math.floor(w / 2) - wheelW / 2, 1, wheelW, wheelH);
-  // Rear left / right (protrude from hull)
-  ctx.fillRect(-1, h - wheelH - 1, wheelW + 1, wheelH);
-  ctx.strokeRect(-1, h - wheelH - 1, wheelW + 1, wheelH);
-  ctx.fillRect(w - wheelW, h - wheelH - 1, wheelW + 1, wheelH);
-  ctx.strokeRect(w - wheelW, h - wheelH - 1, wheelW + 1, wheelH);
+  const fw = 4, fh = 7;
+  ctx.fillRect(Math.floor(w / 2) - fw / 2, 1, fw, fh);
+  ctx.strokeRect(Math.floor(w / 2) - fw / 2, 1, fw, fh);
+  const rw = 5, rh = 8;
+  ctx.fillRect(-1, h - rh - 1, rw + 1, rh);
+  ctx.strokeRect(-1, h - rh - 1, rw + 1, rh);
+  ctx.fillRect(w - rw, h - rh - 1, rw + 1, rh);
+  ctx.strokeRect(w - rw, h - rh - 1, rw + 1, rh);
+}
+
+// Bus — 40' passenger coach (Busnought reference): long boxy hull with
+// window bands running down both sides, cab windshield at the front, and
+// two roof cupolas matching the front/back turret mounts in the book art.
+function busBody(ctx: SKRSContext2D, w: number, h: number) {
+  // Hull
+  ctx.fillStyle = '#c8c8c8';
+  roundedRect(ctx, 2, 2, w - 4, h - 4, 3);
+  ctx.fill();
+  ctx.strokeStyle = '#1a1a1a';
+  ctx.lineWidth = 1;
+  roundedRect(ctx, 2, 2, w - 4, h - 4, 3);
+  ctx.stroke();
+
+  drawHeadlightsAndChevron(ctx, w);
+  // Cab windshield (runs full width — single big pane)
+  ctx.fillStyle = '#506080';
+  ctx.fillRect(3, Math.round(h * 0.08), w - 6, Math.round(h * 0.08));
+
+  // Passenger window bands on both sides — repeating rectangles so it reads
+  // clearly as a bus from above.
+  const winY0 = Math.round(h * 0.20);
+  const winY1 = Math.round(h * 0.86);
+  const winCount = 8;
+  const winH = Math.floor((winY1 - winY0) / winCount) - 1;
+  ctx.fillStyle = '#3e4a60';
+  for (let i = 0; i < winCount; i++) {
+    const y = winY0 + i * (winH + 1);
+    ctx.fillRect(3, y, 3, winH);
+    ctx.fillRect(w - 6, y, 3, winH);
+  }
+
+  // Roof spine + cupola turret rings (front + back)
+  ctx.strokeStyle = '#6a6a6a';
+  ctx.beginPath();
+  ctx.moveTo(w / 2, Math.round(h * 0.18));
+  ctx.lineTo(w / 2, Math.round(h * 0.82));
+  ctx.stroke();
+  const cupolaYs = [h * 0.3, h * 0.7];
+  ctx.fillStyle = '#3a3a3a';
+  ctx.strokeStyle = '#1a1a1a';
+  for (const cy of cupolaYs) {
+    ctx.beginPath();
+    ctx.arc(w / 2, cy, 3, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.stroke();
+    ctx.fillStyle = '#6a6a6a';
+    ctx.beginPath();
+    ctx.arc(w / 2, cy, 1.5, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.fillStyle = '#3a3a3a';
+  }
+
+  // Rear door outline (passenger exit)
+  ctx.strokeStyle = '#3a3a3a';
+  ctx.strokeRect(Math.round(w * 0.34), h - 8, Math.round(w * 0.32), 5);
+
+  drawTailLights(ctx, w, h);
+  // Five axles (10 wheels) spread down the length — Busnought has 10 tires
+  drawAxles(ctx, w, h, [0.12, 0.32, 0.52, 0.72, 0.88], 5, 6);
 }
 
 // Small helper — draws the side wheels at a given set of row fractions, clean
@@ -489,6 +583,7 @@ const BODIES: BodySpec[] = [
   { id: 'camper',       w: 24, h: 44, draw: camperBody },
   { id: 'truck',        w: 26, h: 52, draw: bigTruckBody },
   { id: 'trailer',      w: 26, h: 54, draw: trailerBody },
+  { id: 'bus',          w: 26, h: 60, draw: busBody },
 ];
 
 // ── Weapon attachment sprites ────────────────────────────────────────────────

@@ -1022,9 +1022,10 @@ export class VehicleDesignerScene extends Phaser.Scene {
     const isTrike = this.bodyType === 'trike';
     const isTruck = this.bodyType === 'truck';
     const isTrailer = this.bodyType === 'trailer';
+    const isBus = this.bodyType === 'bus';
     // Body dimensions in SVG units — matches the visual proportions of each sprite
     const bodyW = isCycle && !isTrike ? 40 : isTrike ? 70 : 90;
-    const bodyH = isCycle ? 140 : (isTruck || isTrailer) ? 240 : 200;
+    const bodyH = isCycle ? 140 : isBus ? 280 : (isTruck || isTrailer) ? 240 : 200;
 
     const vbW = 240;
     const vbH = Math.max(340, bodyH + 100);
@@ -1076,6 +1077,12 @@ export class VehicleDesignerScene extends Phaser.Scene {
     } else if (isTrailer) {
       // Tandem rear axles only — trailers have no front wheels
       [0.25, 0.55].forEach(yFrac => {
+        wheelList.push({ x: cx - halfW - 10, y: cy + halfH * yFrac, ...bigWheel });
+        wheelList.push({ x: cx + halfW - 3,  y: cy + halfH * yFrac, ...bigWheel });
+      });
+    } else if (isBus) {
+      // 5 axles evenly spaced down the length (10 wheels total)
+      [-0.7, -0.35, 0, 0.35, 0.7].forEach(yFrac => {
         wheelList.push({ x: cx - halfW - 10, y: cy + halfH * yFrac, ...bigWheel });
         wheelList.push({ x: cx + halfW - 3,  y: cy + halfH * yFrac, ...bigWheel });
       });

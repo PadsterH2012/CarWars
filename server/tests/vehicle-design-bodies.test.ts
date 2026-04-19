@@ -2,8 +2,8 @@ import { describe, it, expect } from 'vitest';
 import { BODIES } from '../src/rules/data/bodies';
 
 describe('bodies catalog', () => {
-  it('has 9 car body types, 3 cycle frames, trike, truck, and trailer', () => {
-    expect(BODIES.length).toBe(15);
+  it('has 9 car body types, 3 cycle frames, trike, truck, trailer, and bus', () => {
+    expect(BODIES.length).toBe(16);
   });
 
   it('mid_sized has correct spaces and max load', () => {

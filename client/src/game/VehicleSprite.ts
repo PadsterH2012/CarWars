@@ -4,7 +4,7 @@ import type { VehicleState, WeaponMount } from '@carwars/shared';
 export const BODY_SPRITE_KEYS = [
   'cycle_light', 'cycle_med', 'cycle_heavy', 'trike',
   'subcompact', 'compact', 'mid_sized', 'sedan', 'station_wagon', 'luxury',
-  'pickup', 'van', 'camper', 'truck', 'trailer',
+  'pickup', 'van', 'camper', 'truck', 'trailer', 'bus',
 ] as const;
 
 export const WEAPON_SPRITE_KEYS = [

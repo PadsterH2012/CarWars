@@ -44,8 +44,8 @@ describe('shared type additions', () => {
 });
 
 describe('bodies catalog', () => {
-  it('has 9 car body types plus 3 cycle frames plus trike, truck, trailer', () => {
-    expect(BODIES.length).toBe(15);
+  it('has 9 car body types plus 3 cycle frames plus trike, truck, trailer, bus', () => {
+    expect(BODIES.length).toBe(16);
   });
 
   it('mid_sized has correct spaces and max load', () => {

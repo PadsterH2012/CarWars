@@ -36,7 +36,7 @@ export type BodyType =
   | 'subcompact' | 'compact' | 'mid_sized' | 'sedan' | 'luxury'
   | 'station_wagon' | 'pickup' | 'camper' | 'van'
   | 'light_cycle' | 'med_cycle' | 'hvy_cycle'
-  | 'trike' | 'truck' | 'trailer';
+  | 'trike' | 'truck' | 'trailer' | 'bus';
 
 export type ChassisType = 'light' | 'standard' | 'heavy' | 'extra_heavy';
 

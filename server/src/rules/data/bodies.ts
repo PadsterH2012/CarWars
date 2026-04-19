@@ -49,4 +49,7 @@ export const BODIES: BodyDef[] = [
   // Heavy vehicles
   { id: 'truck',         name: 'Truck',         price: 1500, baseWeight: 3000, maxLoad: 8000,  spaces: 10, armorCostPerPt: 35, armorWtPerPt: 16, baseHC: 1, isCycle: false, maxTurretSize: 'heavy',    surfaces: CAR_SURFACES },
   { id: 'trailer',       name: 'Trailer',       price: 500,  baseWeight: 1500, maxLoad: 14000, spaces: 30, armorCostPerPt: 25, armorWtPerPt: 12, baseHC: 1, isCycle: false, maxTurretSize: 'heavy',    surfaces: TRAILER_SURFACES },
+  // Bus — 40' passenger coach (Busnought reference): 10 tires, heavy turrets,
+  // tonnes of space and load for passengers + gunners.
+  { id: 'bus',           name: 'Bus',           price: 3000, baseWeight: 5000, maxLoad: 18000, spaces: 25, armorCostPerPt: 35, armorWtPerPt: 18, baseHC: 1, isCycle: false, tireCount: 10, maxTurretSize: 'heavy', surfaces: CAR_SURFACES },
 ];

@@ -26,6 +26,7 @@ export const BODY_TYPES = [
   { id: 'trike',         label: 'Trike',      isCycle: true  },
   { id: 'truck',         label: 'Truck',      isCycle: false },
   { id: 'trailer',       label: 'Trailer',    isCycle: false },
+  { id: 'bus',           label: 'Bus',        isCycle: false },
 ] as const;
 
 export const POWER_PLANTS = [
