@@ -175,8 +175,8 @@ async function handleMessage(ws: WebSocket, raw: string): Promise<void> {
       const zoneType = isArena ? 'arena' : isHighway ? 'highway' : 'town';
 
       const runner = new ZoneRunner(msg.zoneId, zoneType, isArena ? {
-        onEnd: async (winnerId: string | null) => {
-          if (!winnerId) return { prize: 0, jobPayout: 0 };
+        onEnd: async (winnerId: string | null, salvage: number) => {
+          if (!winnerId) return { prize: 0, jobPayout: 0, salvage: 0 };
           const db = getDb();
           try {
             const pRes = await db.query(`SELECT division FROM players WHERE id = $1`, [winnerId]);
@@ -216,7 +216,7 @@ async function handleMessage(ws: WebSocket, raw: string): Promise<void> {
               break;
             }
 
-            const total = prize + jobPayout;
+            const total = prize + jobPayout + salvage;
             const client = await db.connect();
             try {
               await client.query('BEGIN');
@@ -233,6 +233,13 @@ async function handleMessage(ws: WebSocket, raw: string): Promise<void> {
                   `INSERT INTO event_history (player_id, event_type, result, money_delta) VALUES ($1,$2,$3,$4)`,
                   [winnerId, completedJobType,
                    JSON.stringify({ jobId: completedJobId, zoneId: completedZoneId }), jobPayout]
+                );
+              }
+              if (salvage > 0) {
+                await client.query(
+                  `INSERT INTO event_history (player_id, event_type, result, money_delta) VALUES ($1,$2,$3,$4)`,
+                  [winnerId, 'salvage',
+                   JSON.stringify({ zoneId: msg.zoneId, salvage }), salvage]
                 );
               }
               await client.query('COMMIT');
@@ -271,10 +278,10 @@ async function handleMessage(ws: WebSocket, raw: string): Promise<void> {
               }
             }
 
-            return { prize, jobPayout };
+            return { prize, jobPayout, salvage };
           } catch (e) {
             console.error('Failed to credit arena prize:', e);
-            return { prize: 0, jobPayout: 0 };
+            return { prize: 0, jobPayout: 0, salvage: 0 };
           }
         },
       } : {}, mapIdForZone(msg.zoneId));

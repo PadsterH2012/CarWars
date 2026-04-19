@@ -3,11 +3,12 @@ import type { ServerMessage, ArenaMap } from '@carwars/shared';
 import { createTurnEngine, TurnEngine } from '../rules/engine';
 import { computeAiInput } from '../ai/driver';
 import { getMap } from '../rules/maps';
+import { totalSalvageFor } from '../rules/salvage';
 
 const TICK_MS = 100;
 
 export interface ZoneRunnerOptions {
-  onEnd?: (winnerId: string | null) => Promise<{ prize: number; jobPayout: number }>;
+  onEnd?: (winnerId: string | null, salvage: number) => Promise<{ prize: number; jobPayout: number; salvage: number }>;
 }
 
 export class ZoneRunner {
@@ -25,7 +26,7 @@ export class ZoneRunner {
 
   hasEnded(): boolean { return this.ended; }
   readonly zoneId: string;
-  private onEnd?: (winnerId: string | null) => Promise<{ prize: number; jobPayout: number }>;
+  private onEnd?: (winnerId: string | null, salvage: number) => Promise<{ prize: number; jobPayout: number; salvage: number }>;
 
   constructor(
     zoneId: string,
@@ -136,8 +137,14 @@ export class ZoneRunner {
     // AI win counts as null (no human prize)
     const humanWinnerId = winnerPlayerId === 'ai-team' ? null : winnerPlayerId;
 
-    // Call onEnd — it credits the prize and returns the amounts
-    const { prize, jobPayout } = (await this.onEnd?.(humanWinnerId)) ?? { prize: 0, jobPayout: 0 };
+    // Salvage: winner recovers a fraction of each losing-team wreck's build cost
+    // scaled by intactness, state, and damage cause. Computed from state.wreckage
+    // so it reflects every AI car the player destroyed during the match.
+    const grossSalvage = totalSalvageFor(state.wreckage ?? [], humanWinnerId);
+
+    // Call onEnd — it credits the prize + salvage and returns the final amounts
+    const { prize, jobPayout, salvage } =
+      (await this.onEnd?.(humanWinnerId, grossSalvage)) ?? { prize: 0, jobPayout: 0, salvage: 0 };
 
     const endMsg: ServerMessage = {
       type: 'zone_end',
@@ -149,6 +156,7 @@ export class ZoneRunner {
         : 'last_standing',
       prize,
       jobPayout,
+      salvage,
     };
     const data = JSON.stringify(endMsg);
     this.clients.forEach(ws => {

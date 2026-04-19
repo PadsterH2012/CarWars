@@ -227,7 +227,7 @@ export class ArenaScene extends Phaser.Scene {
         this.zoneState = msg.state;
         this.syncSprites(msg.state);
       } else if (msg.type === 'zone_end') {
-        this.showZoneEnd(msg.winnerId, msg.reason, msg.prize ?? 0, msg.jobPayout ?? 0);
+        this.showZoneEnd(msg.winnerId, msg.reason, msg.prize ?? 0, msg.jobPayout ?? 0, msg.salvage ?? 0);
       }
     });
   }
@@ -430,7 +430,7 @@ export class ArenaScene extends Phaser.Scene {
     });
   }
 
-  private showZoneEnd(winnerId: string | null, reason: string, prize: number, jobPayout: number): void {
+  private showZoneEnd(winnerId: string | null, reason: string, prize: number, jobPayout: number, salvage: number): void {
     if (this.zoneEnded) return;
     this.zoneEnded = true;
 
@@ -488,7 +488,13 @@ export class ArenaScene extends Phaser.Scene {
         }).setOrigin(0.5).setScrollFactor(0).setDepth(11);
         y += 30;
       }
-      const total = prize + jobPayout;
+      if (salvage > 0) {
+        this.add.text(640, y, `Salvage:      $${salvage.toLocaleString()}`, {
+          fontSize: '18px', color: '#aa88ff', fontFamily: 'monospace'
+        }).setOrigin(0.5).setScrollFactor(0).setDepth(11);
+        y += 30;
+      }
+      const total = prize + jobPayout + salvage;
       if (total > 0) {
         this.add.text(640, y, `Total earned: $${total.toLocaleString()}`, {
           fontSize: '20px', color: '#ffffff', fontFamily: 'monospace', fontStyle: 'bold'

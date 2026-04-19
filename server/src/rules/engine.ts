@@ -551,15 +551,19 @@ export function createTurnEngine(initialState: ZoneState, map?: ArenaMap): TurnE
         const cause = determineCause(v);
         const carriedAmmo = carriedAmmoOf(v);
         const mass = wreckMass(v.stats.loadout?.bodyType);
+        const maxDP = wreckDP(mass);
         const wreck: WreckageObject = {
           id: `wreck-${v.id}-${newTick}`,
           sourceVehicleId: v.id,
+          playerId: v.playerId,
           position: { ...v.position },
           facing: v.facing,
           bodyType: v.stats.loadout?.bodyType,
           state: initialWreckState(cause, carriedAmmo),
           stateStartedAt: newTick,
-          remainingDP: wreckDP(mass),
+          remainingDP: maxDP,
+          maxDP,
+          originalValue: v.stats.loadout?.totalCost ?? 0,
           mass,
           pushable: mass === 'light',
           carriedAmmo,

@@ -76,15 +76,18 @@ export type WreckageCause = 'fire' | 'explosion' | 'kinetic' | 'energy' | 'colli
 export interface WreckageObject {
   id: string;
   sourceVehicleId: string;
+  playerId: string;          // team identifier for salvage eligibility (winner doesn't salvage own wrecks)
   position: Position;
   facing: number;
   bodyType?: BodyType;
   state: WreckageState;
-  stateStartedAt: number;   // tick at which the current state began
-  remainingDP: number;      // damage wreck can absorb before disintegrating to debris
+  stateStartedAt: number;    // tick at which the current state began
+  remainingDP: number;       // damage wreck can absorb before disintegrating to debris
+  maxDP: number;             // starting DP, for salvage-intactness ratio
+  originalValue: number;     // loadout.totalCost at moment of destruction
   mass: 'light' | 'medium' | 'heavy';
-  pushable: boolean;        // true if a ramplate vehicle can shove it aside
-  carriedAmmo: number;      // ammo remaining across all mounts at moment of destruction
+  pushable: boolean;         // true if a ramplate vehicle can shove it aside
+  carriedAmmo: number;       // ammo remaining across all mounts at moment of destruction
   causedBy: WreckageCause;
 }
 
