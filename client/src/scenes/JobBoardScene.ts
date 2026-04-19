@@ -1,9 +1,21 @@
 import Phaser from 'phaser';
+import { bindFullscreenToggle, onLayout } from '../ui/responsive';
 
 interface Job { id: string; job_type: string; description: string; payout: number; }
 
 export class JobBoardScene extends Phaser.Scene {
   private token = '';
+  private header!: Phaser.GameObjects.Text;
+  private activeBanner?: Phaser.GameObjects.Text;
+  private emptyText?: Phaser.GameObjects.Text;
+  private jobRows: Array<{
+    descText: Phaser.GameObjects.Text;
+    payoutText: Phaser.GameObjects.Text;
+    takeBtn: Phaser.GameObjects.Text;
+  }> = [];
+  private backBtn!: Phaser.GameObjects.Text;
+  private errorText?: Phaser.GameObjects.Text;
+
   constructor() { super({ key: 'JobBoardScene' }); }
   init(data: { token: string }): void { this.token = data.token; }
 
@@ -14,33 +26,31 @@ export class JobBoardScene extends Phaser.Scene {
     });
     const jobs: Job[] = await res.json();
 
-    this.add.text(640, 30, 'JOB BOARD — Midville', {
+    this.header = this.add.text(0, 0, 'JOB BOARD — Midville', {
       color: '#ff4444', fontSize: '24px', fontFamily: 'monospace', fontStyle: 'bold'
     }).setOrigin(0.5);
 
     const activeJobId = localStorage.getItem('cw_active_job');
     if (activeJobId) {
-      this.add.text(640, 65, 'Active job in progress — complete it in the arena', {
+      this.activeBanner = this.add.text(0, 0, 'Active job in progress — complete it in the arena', {
         color: '#ffcc00', fontSize: '13px', fontFamily: 'monospace'
       }).setOrigin(0.5);
     }
 
     if (!jobs.length) {
-      this.add.text(640, 360, 'No jobs available.', {
+      this.emptyText = this.add.text(0, 0, 'No jobs available.', {
         color: '#888888', fontSize: '18px', fontFamily: 'monospace'
       }).setOrigin(0.5);
     } else {
-      jobs.forEach((job, i) => {
-        const y = 110 + i * 90;
-        this.add.text(100, y, `[${job.job_type.toUpperCase()}] ${job.description}`, {
+      jobs.forEach(job => {
+        const descText = this.add.text(0, 0, `[${job.job_type.toUpperCase()}] ${job.description}`, {
           color: '#cccccc', fontSize: '14px', fontFamily: 'monospace', wordWrap: { width: 700 }
         });
-        this.add.text(100, y + 24, `Payout: $${job.payout.toLocaleString()}`, {
+        const payoutText = this.add.text(0, 0, `Payout: $${job.payout.toLocaleString()}`, {
           color: '#ffcc00', fontSize: '14px', fontFamily: 'monospace'
         });
-
         const alreadyActive = activeJobId === job.id;
-        const takeBtn = this.add.text(900, y + 10, alreadyActive ? '[ACTIVE]' : '[TAKE]', {
+        const takeBtn = this.add.text(0, 0, alreadyActive ? '[ACTIVE]' : '[TAKE]', {
           color: alreadyActive ? '#ffcc00' : '#00ff88',
           fontSize: '14px', fontFamily: 'monospace',
           backgroundColor: alreadyActive ? '#332200' : '#003322',
@@ -51,13 +61,38 @@ export class JobBoardScene extends Phaser.Scene {
           takeBtn.setInteractive();
           takeBtn.on('pointerdown', () => this.takeJob(job));
         }
+        this.jobRows.push({ descText, payoutText, takeBtn });
       });
     }
 
-    const backBtn = this.add.text(100, 680, '[BACK TO GARAGE]', {
+    this.backBtn = this.add.text(0, 0, '[BACK TO GARAGE]', {
       color: '#888888', fontSize: '16px', fontFamily: 'monospace'
     }).setInteractive();
-    backBtn.on('pointerdown', () => this.scene.start('GarageScene', { token: this.token }));
+    this.backBtn.on('pointerdown', () => this.scene.start('GarageScene', { token: this.token }));
+
+    bindFullscreenToggle(this);
+    onLayout(this, () => this.layout());
+  }
+
+  private layout(): void {
+    const { width, height } = this.scale;
+    const cx = width / 2;
+    this.header.setPosition(cx, 30);
+    this.activeBanner?.setPosition(cx, 65);
+    this.emptyText?.setPosition(cx, height / 2);
+
+    const leftX = Math.max(60, width * 0.08);
+    const rightX = Math.min(width - 60, width * 0.92);
+    this.jobRows.forEach((row, i) => {
+      const y = 110 + i * 90;
+      row.descText.setPosition(leftX, y);
+      row.descText.setStyle({ wordWrap: { width: rightX - leftX - 120 } });
+      row.payoutText.setPosition(leftX, y + 24);
+      row.takeBtn.setPosition(rightX, y + 10);
+    });
+
+    this.backBtn.setPosition(leftX, height - 40);
+    this.errorText?.setPosition(cx, height - 70);
   }
 
   private async takeJob(job: Job): Promise<void> {
@@ -73,9 +108,10 @@ export class JobBoardScene extends Phaser.Scene {
       this.scene.start('GarageScene', { token: this.token });
     } else {
       const body = await res.json();
-      this.add.text(640, 650, body.error ?? 'Failed to take job', {
+      this.errorText = this.add.text(0, 0, body.error ?? 'Failed to take job', {
         color: '#ff4444', fontSize: '14px', fontFamily: 'monospace'
       }).setOrigin(0.5);
+      this.layout();
     }
   }
 }

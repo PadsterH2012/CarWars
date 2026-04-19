@@ -1,6 +1,11 @@
 import Phaser from 'phaser';
+import { bindFullscreenToggle, onLayout } from '../ui/responsive';
 
 export class LoginScene extends Phaser.Scene {
+  private titleText!: Phaser.GameObjects.Text;
+  private subtitleText!: Phaser.GameObjects.Text;
+  private formElement!: Phaser.GameObjects.DOMElement;
+
   constructor() { super({ key: 'LoginScene' }); }
 
   create(): void {
@@ -10,16 +15,15 @@ export class LoginScene extends Phaser.Scene {
       return;
     }
 
-    this.add.text(640, 100, 'CAR WARS', {
+    this.titleText = this.add.text(0, 0, 'CAR WARS', {
       color: '#ff4444', fontSize: '48px', fontFamily: 'monospace', fontStyle: 'bold'
     }).setOrigin(0.5);
 
-    this.add.text(640, 160, 'Armed Vehicular Combat', {
+    this.subtitleText = this.add.text(0, 0, 'Armed Vehicular Combat', {
       color: '#888888', fontSize: '18px', fontFamily: 'monospace'
     }).setOrigin(0.5);
 
-    // Username + password using Phaser DOM elements
-    const formElement = this.add.dom(640, 360).createFromHTML(`
+    this.formElement = this.add.dom(0, 0).createFromHTML(`
       <div style="text-align:center;font-family:monospace">
         <input id="username" type="text" placeholder="Username"
                style="background:#111;color:#fff;border:1px solid #444;padding:8px;margin:8px;font-size:16px;width:200px"><br>
@@ -31,12 +35,23 @@ export class LoginScene extends Phaser.Scene {
       </div>
     `);
 
-    formElement.addListener('click');
-    formElement.on('click', (event: MouseEvent) => {
+    this.formElement.addListener('click');
+    this.formElement.on('click', (event: MouseEvent) => {
       const target = event.target as HTMLElement;
       if (target.id === 'loginBtn') this.doAuth('login');
       if (target.id === 'registerBtn') this.doAuth('register');
     });
+
+    bindFullscreenToggle(this);
+    onLayout(this, () => this.layout());
+  }
+
+  private layout(): void {
+    const { width, height } = this.scale;
+    const cx = width / 2;
+    this.titleText.setPosition(cx, Math.max(100, height * 0.18));
+    this.subtitleText.setPosition(cx, Math.max(160, height * 0.26));
+    this.formElement.setPosition(cx, height * 0.55);
   }
 
   private async doAuth(action: 'login' | 'register'): Promise<void> {

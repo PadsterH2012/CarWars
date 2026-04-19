@@ -4,6 +4,10 @@ import {
   type MountConfig, type ArcType,
 } from '../ui/DesignerUI';
 import { preloadVehicleSprites, bodySpriteKey, weaponSpriteKey } from '../game/VehicleSprite';
+import { bindFullscreenToggle, onLayout } from '../ui/responsive';
+
+const DESIGN_W = 1280;
+const DESIGN_H = 720;
 
 const SEL_COLOR   = '#00ff88';
 const SEL_BG      = '#003322';
@@ -163,6 +167,17 @@ export class VehicleDesignerScene extends Phaser.Scene {
 
     // Draw initial schematic after objects are created
     this.redrawSchematic();
+
+    // Responsive: zoom + center the 1280×720 design to fit whatever viewport we
+    // have. Keeps all existing hardcoded positions working.
+    bindFullscreenToggle(this);
+    onLayout(this, () => {
+      const { width, height } = this.scale;
+      const zoom = Math.min(1, width / DESIGN_W, height / DESIGN_H);
+      const cam = this.cameras.main;
+      cam.setZoom(zoom);
+      cam.centerOn(DESIGN_W / 2, DESIGN_H / 2);
+    });
   }
 
   // ─── LEFT PANEL (x=10..430) ──────────────────────────────────────────────

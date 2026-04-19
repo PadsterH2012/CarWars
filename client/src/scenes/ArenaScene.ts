@@ -3,6 +3,7 @@ import { Connection } from '../game/Connection';
 import type { ZoneState, CombatEvent } from '@carwars/shared';
 import arenaMapData from '../tilemaps/arena-1.json';
 import { preloadVehicleSprites, buildVehicleSprite, updateVehicleSprite, teamColorForVehicle } from '../game/VehicleSprite';
+import { bindFullscreenToggle, onLayout } from '../ui/responsive';
 
 const PIXELS_PER_INCH = 32;
 const WORLD_CENTER_X = 640;
@@ -48,6 +49,12 @@ export class ArenaScene extends Phaser.Scene {
   private mapGraphics!: Phaser.GameObjects.Graphics;
   private tilemapLayers: Phaser.Tilemaps.TilemapLayer[] = [];
   private bgGraphics!: Phaser.GameObjects.Graphics;
+
+  // HUD elements that anchor to viewport corners/edges — repositioned on resize
+  private hudTitle!: Phaser.GameObjects.Text;
+  private hudHelp!: Phaser.GameObjects.Text;
+  private minimapLabel!: Phaser.GameObjects.Text;
+  private combatLogHeading!: Phaser.GameObjects.Text;
 
   constructor() {
     super({ key: 'ArenaScene' });
@@ -166,13 +173,13 @@ export class ArenaScene extends Phaser.Scene {
     this.tilemapLayers = [groundLayer, wallLayer].filter((l): l is Phaser.Tilemaps.TilemapLayer => l !== null);
     this.bgGraphics = this.add.graphics().setDepth(0);
 
-    this.add.text(16, 16, 'CAR WARS', {
+    this.hudTitle = this.add.text(16, 16, 'CAR WARS', {
       color: '#ff4444',
       fontSize: '24px',
       fontStyle: 'bold',
       fontFamily: 'monospace'
     }).setScrollFactor(0);
-    this.add.text(16, 48, 'Arrows/WASD: drive | Space: fire | 1-5: weapon | P: pilot | T: tactical', {
+    this.hudHelp = this.add.text(16, 48, 'Arrows/WASD: drive | Space: fire | 1-5: weapon | P: pilot | T: tactical | F: fullscreen', {
       color: '#888888',
       fontSize: '12px',
       fontFamily: 'monospace'
@@ -210,15 +217,15 @@ export class ArenaScene extends Phaser.Scene {
     this.mapGraphics = this.add.graphics().setDepth(1);  // above ground, below vehicles
 
     // Combat log panel — bottom-left, shows the last 6 events
-    this.add.text(16, 580, 'COMBAT', {
+    this.combatLogHeading = this.add.text(16, 580, 'COMBAT', {
       fontSize: '11px', color: '#888', fontFamily: 'monospace', fontStyle: 'bold'
     }).setScrollFactor(0).setDepth(20);
     this.combatLogText = this.add.text(16, 598, '', {
       fontSize: '11px', color: '#cccccc', fontFamily: 'monospace',
       backgroundColor: '#000000aa', padding: { x: 6, y: 4 }, lineSpacing: 2,
     }).setScrollFactor(0).setDepth(20);
-    // Minimap label
-    this.add.text(1144, 4, 'MAP', {
+    // Minimap label (right-edge)
+    this.minimapLabel = this.add.text(1144, 4, 'MAP', {
       fontSize: '9px', color: '#666666', fontFamily: 'monospace'
     }).setScrollFactor(0).setDepth(20);
 
@@ -228,6 +235,9 @@ export class ArenaScene extends Phaser.Scene {
     this.cameras.main.setLerp(0.08, 0.08);
     this.cameras.main.scrollX = 0;
     this.cameras.main.scrollY = 0;
+
+    bindFullscreenToggle(this);
+    onLayout(this, () => this.layoutHud());
 
     const wsHost = window.location.hostname;
     this.connection = new Connection(`ws://${wsHost}:3001`);
@@ -417,7 +427,9 @@ export class ArenaScene extends Phaser.Scene {
   }
 
   private drawMinimap(state: ZoneState): void {
-    const MM_X = 1144, MM_Y = 16, MM_SIZE = 120, MM_SCALE = 3;
+    const MM_SIZE = 120, MM_SCALE = 3;
+    const MM_X = this.scale.width - MM_SIZE - 16;
+    const MM_Y = 16;
     const gfx = this.minimapGfx;
     gfx.clear();
 
@@ -556,9 +568,11 @@ export class ArenaScene extends Phaser.Scene {
     }
 
     // Sidebar-style panel on the right so the battlefield remains visible
-    const PX = 1080;     // panel centre x
+    const { width: screenW, height: screenH } = this.scale;
     const PW = 360;      // panel width
-    this.add.rectangle(PX, 360, PW, 700, 0x000000, 0.92).setScrollFactor(0).setDepth(10)
+    const PX = screenW - PW / 2 - 20;     // panel centre x — anchored to the right edge
+    const PH = Math.min(700, screenH - 20);
+    this.add.rectangle(PX, screenH / 2, PW, PH, 0x000000, 0.92).setScrollFactor(0).setDepth(10)
       .setStrokeStyle(2, 0x4466aa);
 
     // Title: VICTORY if we survived as the winner; DEFEATED if our car was destroyed
@@ -578,11 +592,12 @@ export class ArenaScene extends Phaser.Scene {
       titleText = 'BATTLE OVER';
       titleColor = '#ffaa00';
     }
-    this.add.text(PX, 80, titleText, {
+    const panelTopY = Math.max(20, screenH / 2 - PH / 2);
+    this.add.text(PX, panelTopY + 40, titleText, {
       fontSize: '32px', color: titleColor, fontFamily: 'monospace', fontStyle: 'bold'
     }).setOrigin(0.5).setScrollFactor(0).setDepth(11);
 
-    let y = 120;
+    let y = panelTopY + 80;
 
     // Rival banner: name + quote (if the server sent us one)
     if (rival) {
@@ -699,7 +714,7 @@ export class ArenaScene extends Phaser.Scene {
     }
 
     // Return to garage button — always near bottom of the sidebar
-    y = Math.max(y + 10, 620);
+    y = Math.max(y + 10, panelTopY + PH - 60);
     const garageBtn = this.add.text(PX, y, '[RETURN TO GARAGE]', {
       fontSize: '14px', color: '#aaaaff', fontFamily: 'monospace',
       backgroundColor: '#111133', padding: { x: 10, y: 5 }
@@ -750,6 +765,19 @@ export class ArenaScene extends Phaser.Scene {
       const color = pct >= 0.75 ? '#00ff88' : pct >= 0.25 ? '#ffaa00' : '#ff3333';
       text.setColor(color).setText(`${labelMap[face]}: ${cur}`);
     });
+  }
+
+  private layoutHud(): void {
+    const { width, height } = this.scale;
+    // HUD that lives in the top-left stays put — just make sure the minimap label
+    // and combat log track the right and bottom edges respectively.
+    const MM_SIZE = 120;
+    this.minimapLabel?.setPosition(width - MM_SIZE - 16, 4);
+    this.combatLogHeading?.setPosition(16, height - 140);
+    this.combatLogText?.setPosition(16, height - 122);
+    // Resize the main camera viewport to match the new canvas size so world
+    // rendering uses the full window.
+    this.cameras.main.setSize(width, height);
   }
 
   update(time: number): void {

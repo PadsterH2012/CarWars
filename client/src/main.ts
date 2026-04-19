@@ -9,11 +9,16 @@ import { TacticalOverlay } from './scenes/TacticalOverlay';
 
 const config: Phaser.Types.Core.GameConfig = {
   type: Phaser.AUTO,
-  width: 1280,
-  height: 720,
   parent: 'game',
   backgroundColor: '#0a0a1a',
   dom: { createContainer: true },
+  scale: {
+    mode: Phaser.Scale.RESIZE,
+    autoCenter: Phaser.Scale.CENTER_BOTH,
+    width: window.innerWidth,
+    height: window.innerHeight,
+    min: { width: 1024, height: 600 },
+  },
   scene: [LoginScene, GarageScene, TownScene, JobBoardScene, VehicleDesignerScene, ArenaScene, TacticalOverlay]
 };
 

@@ -31,9 +31,11 @@ export class TacticalOverlay extends Phaser.Scene {
   }
 
   create(): void {
-    const cx = 640, cy = 360;
+    const { width, height } = this.scale;
+    const cx = width / 2;
+    const cy = height / 2;
 
-    const overlay = this.add.rectangle(cx, cy, 1280, 720, 0x000000, 0.85).setInteractive();
+    const overlay = this.add.rectangle(cx, cy, width, height, 0x000000, 0.85).setInteractive();
     const panel   = this.add.rectangle(cx, cy, PANEL_W, PANEL_H, 0x111122, 0.98).setStrokeStyle(2, 0x4466aa);
     const title   = this.add.text(cx, cy - PANEL_H / 2 + 20, 'TACTICAL — COMMANDER MODE', {
       color: '#ffcc00', fontSize: '18px', fontFamily: 'monospace', fontStyle: 'bold'
@@ -47,13 +49,11 @@ export class TacticalOverlay extends Phaser.Scene {
 
     this.drawTactical();
 
-    // Close keys — capture disabled so leaving doesn't block DOM inputs later
     const K = Phaser.Input.Keyboard.KeyCodes;
     const close = () => this.closeOverlay();
     this.input.keyboard!.addKey(K.ESC, false).on('down', close);
     this.input.keyboard!.addKey(K.T, false).on('down', close);
 
-    // Order keys — apply to selected squadmate
     this.input.keyboard!.addKey(K.F, false).on('down', () => {
       if (this.selectedSquadmate) {
         this.cmdData.sendOrder(this.selectedSquadmate, { type: 'follow', leaderId: this.cmdData.myVehicleId });
@@ -81,7 +81,9 @@ export class TacticalOverlay extends Phaser.Scene {
   }
 
   private flashFeedback(text: string): void {
-    const t = this.add.text(640, 660, text, {
+    const cx = this.scale.width / 2;
+    const y = this.scale.height / 2 + PANEL_H / 2 - 20;
+    const t = this.add.text(cx, y, text, {
       color: '#00ff88', fontSize: '13px', fontFamily: 'monospace',
       backgroundColor: '#001a11', padding: { x: 8, y: 4 },
     }).setOrigin(0.5);
@@ -91,8 +93,9 @@ export class TacticalOverlay extends Phaser.Scene {
   private drawTactical(): void {
     const state = this.cmdData.zoneState;
     if (!state) return;
-    const cx = 640, cy = 360;
-    // Draw map walls
+    const cx = this.scale.width / 2;
+    const cy = this.scale.height / 2;
+
     const wallGfx = this.add.graphics();
     wallGfx.fillStyle(0x334466, 1);
     (state.walls ?? []).forEach(w => {
@@ -102,7 +105,6 @@ export class TacticalOverlay extends Phaser.Scene {
     });
     this.cleanup.push(wallGfx);
 
-    // Draw wrecks (grey)
     (state.wreckage ?? []).forEach(w => {
       const px = cx + w.position.x * MAP_SCALE;
       const py = cy + w.position.y * MAP_SCALE;
@@ -110,7 +112,6 @@ export class TacticalOverlay extends Phaser.Scene {
       this.cleanup.push(this.add.circle(px, py, 4, color, 0.8));
     });
 
-    // Draw enemies (red circles, clickable when a squadmate is selected)
     state.vehicles.forEach(v => {
       const isEnemy = v.playerId === 'ai-team';
       const isSquad = this.cmdData.squadVehicleIds.includes(v.id);
@@ -134,15 +135,13 @@ export class TacticalOverlay extends Phaser.Scene {
             this.flashFeedback(`${this.selectedSquadmate.slice(0, 8)}: ATTACK ${v.id.slice(0, 6)}`);
           }
         } else if (isSquad && !isMe) {
-          // Select this squadmate
           this.selectedSquadmate = v.id;
           this.flashFeedback(`Selected: ${v.id.slice(0, 8)} — click target or press F/R/C`);
         }
       });
     });
 
-    // Click on empty map area = move order (when a squadmate is selected)
-    const clickCatcher = this.add.rectangle(cx, cy, 1260, 700, 0x000000, 0.01).setInteractive();
+    const clickCatcher = this.add.rectangle(cx, cy, this.scale.width, this.scale.height, 0x000000, 0.01).setInteractive();
     clickCatcher.on('pointerdown', (p: Phaser.Input.Pointer) => {
       if (!this.selectedSquadmate) return;
       const worldX = (p.x - cx) / MAP_SCALE;
@@ -150,6 +149,6 @@ export class TacticalOverlay extends Phaser.Scene {
       this.cmdData.sendOrder(this.selectedSquadmate, { type: 'move', x: worldX, y: worldY });
       this.flashFeedback(`${this.selectedSquadmate.slice(0, 8)}: MOVE to (${worldX.toFixed(0)}, ${worldY.toFixed(0)})`);
     });
-    this.cleanup.unshift(clickCatcher); // put behind the dots so dot clicks take precedence
+    this.cleanup.unshift(clickCatcher);
   }
 }

@@ -1,5 +1,6 @@
 import Phaser from 'phaser';
 import { paintEmblem, EMBLEM_IDS, type EmblemId } from '../game/CoatOfArms';
+import { bindFullscreenToggle, onLayout } from '../ui/responsive';
 
 interface Vehicle { id: string; name: string; value: number; damage_state: any; loadout: any; in_arena?: boolean; }
 interface Driver { id: string; name: string; skill: number; xp: number; assigned_vehicle_id: string | null; alive: boolean; }
@@ -11,7 +12,11 @@ export class GarageScene extends Phaser.Scene {
   private drivers: Driver[] = [];
   private gang: Gang | null = null;
   private money = 0;
+  private division = 0;
   private lastResult: { prize: number; jobPayout: number } | null = null;
+
+  // Container for everything the main garage screen paints — we wipe + repaint on resize
+  private mainLayer!: Phaser.GameObjects.Container;
 
   constructor() { super({ key: 'GarageScene' }); }
 
@@ -23,7 +28,6 @@ export class GarageScene extends Phaser.Scene {
   async create(): Promise<void> {
     const host = window.location.hostname;
 
-    // Load player data
     const [meRes, vRes, dRes, gRes] = await Promise.all([
       fetch(`http://${host}:3001/api/me`, { headers: { Authorization: `Bearer ${this.token}` } }),
       fetch(`http://${host}:3001/api/vehicles`, { headers: { Authorization: `Bearer ${this.token}` } }),
@@ -32,76 +36,92 @@ export class GarageScene extends Phaser.Scene {
     ]);
     const me = await meRes.json();
     this.money = me.money ?? 0;
+    this.division = me.division ?? 0;
     this.vehicles = await vRes.json();
     this.drivers = await dRes.json();
     if (gRes.ok) this.gang = await gRes.json();
 
-    this.add.text(640, 30, 'GARAGE', {
-      color: '#ff4444', fontSize: '28px', fontFamily: 'monospace', fontStyle: 'bold'
-    }).setOrigin(0.5);
+    this.mainLayer = this.add.container(0, 0);
 
-    // Gang header — emblem + name + treasury/rep/division line
+    bindFullscreenToggle(this);
+    onLayout(this, () => this.renderGarage());
+  }
+
+  private renderGarage(): void {
+    this.mainLayer.removeAll(true);
+    const { width, height } = this.scale;
+    const cx = width / 2;
+    const leftX = Math.max(60, width * 0.07);
+    const rightX = Math.min(width - 60, width * 0.93);
+    const add = (obj: Phaser.GameObjects.GameObject) => { this.mainLayer.add(obj); return obj; };
+
+    add(this.add.text(cx, 30, 'GARAGE', {
+      color: '#ff4444', fontSize: '28px', fontFamily: 'monospace', fontStyle: 'bold'
+    }).setOrigin(0.5));
+
     if (this.gang) {
       const key = `gang-emblem-header`;
       this.renderEmblemTexture(key, this.gang.emblem_id, this.gang.primary_colour, this.gang.secondary_colour, 32);
-      this.add.image(100, 70, key).setOrigin(0, 0.5).setDisplaySize(32, 32);
-      const nameBtn = this.add.text(140, 70, this.gang.name, {
+      add(this.add.image(leftX, 70, key).setOrigin(0, 0.5).setDisplaySize(32, 32));
+      const nameBtn = this.add.text(leftX + 40, 70, this.gang.name, {
         color: '#ffffff', fontSize: '18px', fontFamily: 'monospace', fontStyle: 'bold'
       }).setOrigin(0, 0.5).setInteractive();
       nameBtn.on('pointerdown', () => this.showGangSettings());
-      this.add.text(100, 100, `Treasury: $${this.gang.treasury.toLocaleString()} | Rep: ${this.gang.reputation} | Division: ${me.division}`, {
+      add(nameBtn);
+      add(this.add.text(leftX, 100, `Treasury: $${this.gang.treasury.toLocaleString()} | Rep: ${this.gang.reputation} | Division: ${this.division}`, {
         color: '#ffcc00', fontSize: '14px', fontFamily: 'monospace'
-      });
+      }));
     } else {
-      this.add.text(100, 70, `Money: $${this.money.toLocaleString()} | Division: ${me.division}`, {
+      add(this.add.text(leftX, 70, `Money: $${this.money.toLocaleString()} | Division: ${this.division}`, {
         color: '#ffcc00', fontSize: '16px', fontFamily: 'monospace'
-      });
+      }));
     }
 
     if (this.lastResult) {
       const total = this.lastResult.prize + this.lastResult.jobPayout;
-      this.add.text(640, 55, `Last fight: +$${total.toLocaleString()} earned`, {
+      add(this.add.text(cx, 55, `Last fight: +$${total.toLocaleString()} earned`, {
         color: '#00ff88', fontSize: '14px', fontFamily: 'monospace'
-      }).setOrigin(0.5);
+      }).setOrigin(0.5));
     }
 
     const activeJobId = localStorage.getItem('cw_active_job');
     const activeJobDesc = localStorage.getItem('cw_active_job_desc');
     const activeJobPayout = localStorage.getItem('cw_active_job_payout');
     if (activeJobId && activeJobDesc) {
-      this.add.text(100, 92, `Active job: ${activeJobDesc} — $${Number(activeJobPayout).toLocaleString()} on win`, {
+      add(this.add.text(leftX, 128, `Active job: ${activeJobDesc} — $${Number(activeJobPayout).toLocaleString()} on win`, {
         color: '#ffcc00', fontSize: '13px', fontFamily: 'monospace'
-      });
+      }));
     }
 
+    // Split into two columns: vehicle list on the left, crew panel on the right
+    const crewX = Math.min(width - 340, rightX - 280);
+    const vehicleListMaxX = crewX - 40;
+
     if (this.vehicles.length === 0) {
-      this.add.text(640, 300, 'No vehicles. Build one!', {
+      add(this.add.text(cx, height * 0.45, 'No vehicles. Build one!', {
         color: '#888888', fontSize: '18px', fontFamily: 'monospace'
-      }).setOrigin(0.5);
+      }).setOrigin(0.5));
     } else {
-      // Build driver-by-vehicle-id lookup for displaying assignments
       const driverByVid = new Map<string, Driver>();
       for (const d of this.drivers) {
         if (d.alive && d.assigned_vehicle_id) driverByVid.set(d.assigned_vehicle_id, d);
       }
 
       this.vehicles.forEach((v, i) => {
-        const y = 140 + i * 80;
+        const y = 160 + i * 80;
         const ds = v.damage_state ?? {};
         const isDestroyed = ds.destroyed;
         const nameColor = isDestroyed ? '#ff4444' : '#00ff88';
 
-        // Line 1: name + value
-        this.add.text(100, y, `${v.name}`, { color: nameColor, fontSize: '16px', fontFamily: 'monospace' });
-        this.add.text(370, y, `$${v.value.toLocaleString()}`, { color: '#888888', fontSize: '14px', fontFamily: 'monospace' });
+        add(this.add.text(leftX, y, `${v.name}`, { color: nameColor, fontSize: '16px', fontFamily: 'monospace' }));
+        add(this.add.text(leftX + 270, y, `$${v.value.toLocaleString()}`, { color: '#888888', fontSize: '14px', fontFamily: 'monospace' }));
 
-        // Line 2: driver + ammo + status flags
         const driver = driverByVid.get(v.id);
         const driverStr = driver ? `Driver: ${driver.name} (sk${driver.skill})` : '\u26A0 NO DRIVER';
         const driverColor = driver ? '#88ccff' : '#ffaa44';
-        this.add.text(100, y + 20, driverStr, {
+        add(this.add.text(leftX, y + 20, driverStr, {
           color: driverColor, fontSize: '11px', fontFamily: 'monospace'
-        });
+        }));
         const mounts: any[] = v.loadout?.mounts ?? [];
         const ammoStr = mounts.length
           ? mounts.map((m: any) => `${m.weaponId ?? '?'}:${m.ammo}`).join(' ')
@@ -109,32 +129,38 @@ export class GarageScene extends Phaser.Scene {
         const tiresBlow = ds.tiresBlown?.length ?? 0;
         const tireStr = tiresBlow > 0 ? `  [${tiresBlow} TIRE${tiresBlow > 1 ? 'S' : ''} BLOWN]` : '';
         const engineStr = ds.engineDamaged ? '  [ENGINE]' : '';
-        this.add.text(100, y + 38, `${ammoStr}${tireStr}${engineStr}`, {
+        add(this.add.text(leftX, y + 38, `${ammoStr}${tireStr}${engineStr}`, {
           color: '#666666', fontSize: '10px', fontFamily: 'monospace'
-        });
+        }));
 
-        // [REPAIR]
-        const repairBtn = this.add.text(540, y, '[REPAIR]', {
+        // Action buttons: REPAIR / WORKSHOP / FIGHT / SELL — right-aligned in the vehicle column
+        const btnTop = y;
+        const btnSpan = Math.min(360, vehicleListMaxX - (leftX + 380));
+        const btn0 = leftX + 380;
+        const btn1 = btn0 + btnSpan * 0.22;
+        const btn2 = btn0 + btnSpan * 0.52;
+        const btn3 = btn0 + btnSpan * 0.84;
+
+        const repairBtn = this.add.text(btn0, btnTop, '[REPAIR]', {
           color: '#ffcc00', fontSize: '12px', fontFamily: 'monospace',
           backgroundColor: '#332200', padding: { x: 4, y: 2 }
         }).setInteractive();
         repairBtn.on('pointerdown', () => this.repairVehicle(v.id));
+        add(repairBtn);
 
-        // [WORKSHOP] — modify loadout
-        const workBtn = this.add.text(620, y, '[WORKSHOP]', {
+        const workBtn = this.add.text(btn1, btnTop, '[WORKSHOP]', {
           color: '#aaccff', fontSize: '12px', fontFamily: 'monospace',
           backgroundColor: '#112244', padding: { x: 4, y: 2 }
         });
         if (!isDestroyed) {
           workBtn.setInteractive();
-          // Workshop = the full vehicle designer in edit mode for this vehicle
           workBtn.on('pointerdown', () =>
             this.scene.start('VehicleDesignerScene', { token: this.token, vehicleId: v.id })
           );
         }
+        add(workBtn);
 
-        // [FIGHT] or [DESTROYED]
-        const fightBtn = this.add.text(730, y, isDestroyed ? '[DESTROYED]' : '[FIGHT]', {
+        const fightBtn = this.add.text(btn2, btnTop, isDestroyed ? '[DESTROYED]' : '[FIGHT]', {
           color: isDestroyed ? '#444444' : '#00ff88',
           fontSize: '12px', fontFamily: 'monospace',
           backgroundColor: isDestroyed ? '#221111' : '#003322',
@@ -144,53 +170,54 @@ export class GarageScene extends Phaser.Scene {
           fightBtn.setInteractive();
           fightBtn.on('pointerdown', () => this.showSquadModal(v.id));
         }
+        add(fightBtn);
 
-        // [SELL] button
-        const sellBtn = this.add.text(820, y, '[SELL]', {
+        const sellBtn = this.add.text(btn3, btnTop, '[SELL]', {
           color: '#ff8844', fontSize: '12px', fontFamily: 'monospace',
           backgroundColor: '#221100', padding: { x: 4, y: 2 }
         }).setInteractive();
         sellBtn.on('pointerdown', () => this.sellVehicle(v.id, v.name));
+        add(sellBtn);
       });
     }
 
     // ── CREW panel ────────────────────────────────────────────────────────
-    // Shows all living drivers + their assignment. Hire button at the top.
-    this.add.text(960, 120, 'CREW', {
+    add(this.add.text(crewX, 130, 'CREW', {
       color: '#aaa', fontSize: '13px', fontFamily: 'monospace', fontStyle: 'bold'
-    });
-    const hireBtn = this.add.text(1060, 120, '[HIRE DRIVER $500]', {
+    }));
+    const hireBtn = this.add.text(crewX + 80, 130, '[HIRE DRIVER $500]', {
       color: '#88ff88', fontSize: '12px', fontFamily: 'monospace',
       backgroundColor: '#002211', padding: { x: 6, y: 3 },
     }).setInteractive();
     hireBtn.on('pointerdown', () => this.hireDriver());
+    add(hireBtn);
 
     const livingDrivers = this.drivers.filter(d => d.alive);
     if (livingDrivers.length === 0) {
-      this.add.text(960, 150, 'No drivers hired.\nHire at least one to\nfield a vehicle in arena.', {
+      add(this.add.text(crewX, 160, 'No drivers hired.\nHire at least one to\nfield a vehicle in arena.', {
         color: '#777', fontSize: '11px', fontFamily: 'monospace'
-      });
+      }));
     } else {
       livingDrivers.forEach((d, i) => {
-        const y = 150 + i * 44;
+        const y = 160 + i * 44;
         const assignedVehicle = this.vehicles.find(v => v.id === d.assigned_vehicle_id);
-        this.add.text(960, y, d.name, {
+        add(this.add.text(crewX, y, d.name, {
           color: '#ffffff', fontSize: '13px', fontFamily: 'monospace'
-        });
-        this.add.text(960, y + 16, `skill ${d.skill} | ${d.xp} XP`, {
+        }));
+        add(this.add.text(crewX, y + 16, `skill ${d.skill} | ${d.xp} XP`, {
           color: '#888', fontSize: '10px', fontFamily: 'monospace'
-        });
+        }));
         const assignStr = assignedVehicle ? `▶ ${assignedVehicle.name}` : 'unassigned';
-        const assignBtn = this.add.text(1060, y + 8, assignStr, {
+        const assignBtn = this.add.text(crewX + 100, y + 8, assignStr, {
           color: assignedVehicle ? '#88ccff' : '#ffaa44', fontSize: '11px', fontFamily: 'monospace',
           backgroundColor: '#111122', padding: { x: 4, y: 2 }
         }).setInteractive();
         assignBtn.on('pointerdown', () => this.showAssignDriverMenu(d));
+        add(assignBtn);
       });
     }
 
-    // Map picker — always visible on the main garage so solo fights and squads
-    // both pick a map. Selection persists via localStorage.
+    // Arena picker + nav buttons — bottom of the screen
     const MAPS = [
       { id: 'truck-stop',  label: 'Truck Stop' },
       { id: 'town-square', label: 'Town Square' },
@@ -199,9 +226,10 @@ export class GarageScene extends Phaser.Scene {
     let selectedMap = localStorage.getItem('cw_selected_map') ?? 'truck-stop';
     if (!MAPS.find(m => m.id === selectedMap)) selectedMap = 'truck-stop';
 
-    this.add.text(100, 540, 'ARENA:', {
+    const arenaY = height - 180;
+    add(this.add.text(leftX, arenaY, 'ARENA:', {
       color: '#aaa', fontSize: '13px', fontFamily: 'monospace', fontStyle: 'bold'
-    });
+    }));
     const mapButtons: Phaser.GameObjects.Text[] = [];
     const refreshMapButtons = () => {
       mapButtons.forEach((btn, i) => {
@@ -211,7 +239,7 @@ export class GarageScene extends Phaser.Scene {
       });
     };
     MAPS.forEach((m, i) => {
-      const btn = this.add.text(180 + i * 130, 538, m.label, {
+      const btn = this.add.text(leftX + 80 + i * 130, arenaY - 2, m.label, {
         fontSize: '13px', fontFamily: 'monospace',
         padding: { x: 6, y: 4 },
       }).setInteractive();
@@ -221,21 +249,28 @@ export class GarageScene extends Phaser.Scene {
         refreshMapButtons();
       });
       mapButtons.push(btn);
+      add(btn);
     });
     refreshMapButtons();
 
-    // Nav buttons
-    const buildBtn = this.add.text(100, 600, '[BUILD NEW CAR]', {
+    const navY = height - 100;
+    const buildBtn = this.add.text(leftX, navY, '[BUILD NEW CAR]', {
       color: '#aaaaff', fontSize: '16px', fontFamily: 'monospace',
       backgroundColor: '#111133', padding: { x: 8, y: 4 }
     }).setInteractive();
     buildBtn.on('pointerdown', () => this.scene.start('VehicleDesignerScene', { token: this.token }));
+    add(buildBtn);
 
-    const jobsBtn = this.add.text(400, 600, '[JOB BOARD]', {
+    const jobsBtn = this.add.text(leftX + 300, navY, '[JOB BOARD]', {
       color: '#ffaaaa', fontSize: '16px', fontFamily: 'monospace',
       backgroundColor: '#331111', padding: { x: 8, y: 4 }
     }).setInteractive();
     jobsBtn.on('pointerdown', () => this.scene.start('JobBoardScene', { token: this.token }));
+    add(jobsBtn);
+
+    add(this.add.text(rightX - 140, height - 30, '[F] Fullscreen', {
+      color: '#555', fontSize: '11px', fontFamily: 'monospace'
+    }).setOrigin(0, 0.5));
   }
 
   private async repairVehicle(vehicleId: string): Promise<void> {
@@ -249,15 +284,13 @@ export class GarageScene extends Phaser.Scene {
     if (res.ok) {
       this.scene.restart({ token: this.token });
     } else {
-      // Show error
-      this.add.text(640, 650, body.error ?? 'Repair failed', {
+      this.add.text(this.scale.width / 2, this.scale.height - 40, body.error ?? 'Repair failed', {
         color: '#ff4444', fontSize: '14px', fontFamily: 'monospace'
       }).setOrigin(0.5);
     }
   }
 
   private showSquadModal(primaryId: string): void {
-    // Eligible = not destroyed AND has an assigned alive driver AND not already in another arena
     const driverByVehicleId = new Map<string, Driver>();
     for (const d of this.drivers) {
       if (d.alive && d.assigned_vehicle_id) driverByVehicleId.set(d.assigned_vehicle_id, d);
@@ -266,7 +299,6 @@ export class GarageScene extends Phaser.Scene {
       !v.damage_state?.destroyed && !v.in_arena && driverByVehicleId.has(v.id)
     );
     if (!eligible.find(v => v.id === primaryId)) {
-      // Primary has no driver or is otherwise ineligible — launch solo as fallback
       const lastMap = localStorage.getItem('cw_selected_map') ?? 'truck-stop';
       this.launchArena([primaryId], lastMap);
       return;
@@ -274,33 +306,33 @@ export class GarageScene extends Phaser.Scene {
 
     const selected = new Set<string>([primaryId]);
     const MAX_SQUAD = 4;
+    const { width, height } = this.scale;
+    const cx = width / 2, cy = height / 2;
 
-    // Dim overlay + modal bg
-    const overlay = this.add.rectangle(640, 360, 1280, 720, 0x000000, 0.75).setDepth(30).setInteractive();
-    const panel   = this.add.rectangle(640, 360, 640, 460, 0x111122, 0.98).setDepth(31).setStrokeStyle(2, 0x4466aa);
-    const title   = this.add.text(640, 160, 'BUILD SQUAD', {
+    const overlay = this.add.rectangle(cx, cy, width, height, 0x000000, 0.75).setDepth(30).setInteractive();
+    const panel   = this.add.rectangle(cx, cy, 640, 460, 0x111122, 0.98).setDepth(31).setStrokeStyle(2, 0x4466aa);
+    const title   = this.add.text(cx, cy - 200, 'BUILD SQUAD', {
       color: '#ffcc00', fontSize: '22px', fontFamily: 'monospace', fontStyle: 'bold'
     }).setOrigin(0.5).setDepth(32);
-    const hint    = this.add.text(640, 192, `Select up to ${MAX_SQUAD} — primary auto-highlighted`, {
+    const hint    = this.add.text(cx, cy - 168, `Select up to ${MAX_SQUAD} — primary auto-highlighted`, {
       color: '#888', fontSize: '12px', fontFamily: 'monospace'
     }).setOrigin(0.5).setDepth(32);
 
     const created: Phaser.GameObjects.GameObject[] = [overlay, panel, title, hint];
 
-    // Row per eligible vehicle
     eligible.slice(0, 8).forEach((v, i) => {
-      const y = 230 + i * 36;
+      const y = cy - 130 + i * 36;
       const driver = driverByVehicleId.get(v.id)!;
       const isPrimary = v.id === primaryId;
 
-      const rowBg = this.add.rectangle(640, y, 580, 30, 0x222233, 1).setDepth(32).setInteractive();
-      const marker = this.add.text(370, y, '[X]', {
+      const rowBg = this.add.rectangle(cx, y, 580, 30, 0x222233, 1).setDepth(32).setInteractive();
+      const marker = this.add.text(cx - 270, y, '[X]', {
         color: '#00ff88', fontSize: '14px', fontFamily: 'monospace'
       }).setOrigin(0, 0.5).setDepth(33);
-      const label = this.add.text(410, y, `${v.name}${isPrimary ? '  (PRIMARY)' : ''}`, {
+      const label = this.add.text(cx - 230, y, `${v.name}${isPrimary ? '  (PRIMARY)' : ''}`, {
         color: isPrimary ? '#00ff88' : '#cccccc', fontSize: '13px', fontFamily: 'monospace'
       }).setOrigin(0, 0.5).setDepth(33);
-      const driverLabel = this.add.text(820, y, `Driver: ${driver.name} (skill ${driver.skill})`, {
+      const driverLabel = this.add.text(cx + 180, y, `Driver: ${driver.name} (skill ${driver.skill})`, {
         color: '#888', fontSize: '11px', fontFamily: 'monospace'
       }).setOrigin(1, 0.5).setDepth(33);
 
@@ -313,30 +345,25 @@ export class GarageScene extends Phaser.Scene {
       refreshVisual();
 
       rowBg.on('pointerdown', () => {
-        if (isPrimary) return;  // primary can't be deselected
-        if (selected.has(v.id)) {
-          selected.delete(v.id);
-        } else if (selected.size < MAX_SQUAD) {
-          selected.add(v.id);
-        }
+        if (isPrimary) return;
+        if (selected.has(v.id)) selected.delete(v.id);
+        else if (selected.size < MAX_SQUAD) selected.add(v.id);
         refreshVisual();
       });
       created.push(rowBg, marker, label, driverLabel);
     });
 
-    // Show the current arena choice as a reminder (picker lives on main garage)
     const currentMap = localStorage.getItem('cw_selected_map') ?? 'truck-stop';
-    const mapNote = this.add.text(640, 510, `Arena: ${currentMap}   (change on garage screen)`, {
+    const mapNote = this.add.text(cx, cy + 150, `Arena: ${currentMap}   (change on garage screen)`, {
       color: '#888', fontSize: '11px', fontFamily: 'monospace'
     }).setOrigin(0.5).setDepth(33);
     created.push(mapNote);
 
-    // Fight + Cancel buttons
-    const fightBtn = this.add.text(540, 555, '[FIGHT WITH SQUAD]', {
+    const fightBtn = this.add.text(cx - 100, cy + 195, '[FIGHT WITH SQUAD]', {
       color: '#00ff88', fontSize: '14px', fontFamily: 'monospace',
       backgroundColor: '#003322', padding: { x: 8, y: 4 }
     }).setOrigin(0.5).setDepth(33).setInteractive();
-    const cancelBtn = this.add.text(760, 555, '[CANCEL]', {
+    const cancelBtn = this.add.text(cx + 120, cy + 195, '[CANCEL]', {
       color: '#888', fontSize: '14px', fontFamily: 'monospace',
       backgroundColor: '#221122', padding: { x: 8, y: 4 }
     }).setOrigin(0.5).setDepth(33).setInteractive();
@@ -365,9 +392,6 @@ export class GarageScene extends Phaser.Scene {
     });
   }
 
-  // Render an emblem to an offscreen canvas and register it as a Phaser texture
-  // under the given key. Idempotent — existing texture is removed first so live
-  // previews in the settings modal can update instantly.
   private renderEmblemTexture(key: string, emblem: EmblemId, primary: number, secondary: number, size: number): void {
     if (this.textures.exists(key)) this.textures.remove(key);
     const canvas = document.createElement('canvas');
@@ -388,25 +412,24 @@ export class GarageScene extends Phaser.Scene {
       { value: 0x333333, name: 'Black'  },
     ];
 
+    const { width, height } = this.scale;
+    const cx = width / 2, cy = height / 2;
+
     const created: Phaser.GameObjects.GameObject[] = [];
-    const overlay = this.add.rectangle(640, 360, 1280, 720, 0x000000, 0.75).setDepth(30).setInteractive();
-    const panel   = this.add.rectangle(640, 360, 640, 540, 0x111122, 0.98).setDepth(31).setStrokeStyle(2, 0x4466aa);
-    const title   = this.add.text(640, 120, 'GANG SETTINGS', {
+    const overlay = this.add.rectangle(cx, cy, width, height, 0x000000, 0.75).setDepth(30).setInteractive();
+    const panel   = this.add.rectangle(cx, cy, 640, 540, 0x111122, 0.98).setDepth(31).setStrokeStyle(2, 0x4466aa);
+    const title   = this.add.text(cx, cy - 240, 'GANG SETTINGS', {
       color: '#ffcc00', fontSize: '20px', fontFamily: 'monospace', fontStyle: 'bold'
     }).setOrigin(0.5).setDepth(32);
     created.push(overlay, panel, title);
 
-    // Track live preview state so changes reflect before save
     let chosenPrimary = this.gang.primary_colour;
     let chosenSecondary = this.gang.secondary_colour;
     let chosenEmblem: EmblemId = this.gang.emblem_id ?? 'stripes';
 
-    // Live preview emblem — top-centre of the modal, refreshes on any change.
-    // refreshAllEmblems also regenerates every thumbnail in the emblem picker so
-    // they preview in the currently-selected palette.
     const previewKey = 'gang-emblem-preview';
     this.renderEmblemTexture(previewKey, chosenEmblem, chosenPrimary, chosenSecondary, 96);
-    const preview = this.add.image(640, 175, previewKey).setOrigin(0.5).setDepth(32).setDisplaySize(72, 72);
+    const preview = this.add.image(cx, cy - 185, previewKey).setOrigin(0.5).setDepth(32).setDisplaySize(72, 72);
     created.push(preview);
     const emblemTiles: Phaser.GameObjects.Image[] = [];
     const emblemBorders: Phaser.GameObjects.Rectangle[] = [];
@@ -421,11 +444,13 @@ export class GarageScene extends Phaser.Scene {
       });
     };
 
-    // Gang name — a DOM input absolutely positioned over the canvas
-    const nameLabel = this.add.text(380, 250, 'Name:', { color: '#ccc', fontSize: '13px', fontFamily: 'monospace' }).setDepth(32);
+    const nameLabel = this.add.text(cx - 260, cy - 110, 'Name:', { color: '#ccc', fontSize: '13px', fontFamily: 'monospace' }).setDepth(32);
     const nameInput = document.createElement('input');
+    const canvasRect = this.game.canvas.getBoundingClientRect();
     Object.assign(nameInput.style, {
-      position: 'absolute', left: '450px', top: '240px',
+      position: 'absolute',
+      left: `${canvasRect.left + cx - 190}px`,
+      top: `${canvasRect.top + cy - 120}px`,
       width: '400px', height: '28px', background: '#222',
       color: '#fff', border: '1px solid #4466aa', padding: '2px 6px',
       fontFamily: 'monospace', fontSize: '14px',
@@ -435,14 +460,12 @@ export class GarageScene extends Phaser.Scene {
     document.body.appendChild(nameInput);
     created.push(nameLabel);
 
-    // Colour rows: swatches with thick outline on the selected one; picking updates
-    // chosen* and re-renders the live preview.
     const makeColourRow = (label: string, y: number, getCurrent: () => number, onPick: (v: number) => void) => {
-      const lab = this.add.text(380, y, label, { color: '#ccc', fontSize: '13px', fontFamily: 'monospace' }).setDepth(32);
+      const lab = this.add.text(cx - 260, y, label, { color: '#ccc', fontSize: '13px', fontFamily: 'monospace' }).setDepth(32);
       created.push(lab);
       const swatches: Phaser.GameObjects.Rectangle[] = [];
       COLOURS.forEach((c, i) => {
-        const sw = this.add.rectangle(450 + i * 42, y + 8, 32, 18, c.value).setDepth(32).setStrokeStyle(
+        const sw = this.add.rectangle(cx - 190 + i * 42, y + 8, 32, 18, c.value).setDepth(32).setStrokeStyle(
           c.value === getCurrent() ? 3 : 1, 0xffffff
         ).setInteractive();
         sw.on('pointerdown', () => {
@@ -454,17 +477,15 @@ export class GarageScene extends Phaser.Scene {
         created.push(sw);
       });
     };
-    makeColourRow('Primary:',   300, () => chosenPrimary,   v => { chosenPrimary = v; });
-    makeColourRow('Secondary:', 340, () => chosenSecondary, v => { chosenSecondary = v; });
+    makeColourRow('Primary:',   cy - 60, () => chosenPrimary,   v => { chosenPrimary = v; });
+    makeColourRow('Secondary:', cy - 20, () => chosenSecondary, v => { chosenSecondary = v; });
 
-    // Emblem picker — thumbnails in a horizontal row, each rendered from the current
-    // primary + secondary so you can see them in your gang's palette.
-    const emblemLabel = this.add.text(380, 395, 'Emblem:', { color: '#ccc', fontSize: '13px', fontFamily: 'monospace' }).setDepth(32);
+    const emblemLabel = this.add.text(cx - 260, cy + 35, 'Emblem:', { color: '#ccc', fontSize: '13px', fontFamily: 'monospace' }).setDepth(32);
     created.push(emblemLabel);
     EMBLEM_IDS.forEach((id, i) => {
       const tileKey = `gang-emblem-picker-${id}`;
       this.renderEmblemTexture(tileKey, id, chosenPrimary, chosenSecondary, 40);
-      const tile = this.add.image(462 + i * 46, 420, tileKey).setOrigin(0.5).setDepth(32).setDisplaySize(36, 36).setInteractive();
+      const tile = this.add.image(cx - 178 + i * 46, cy + 60, tileKey).setOrigin(0.5).setDepth(32).setDisplaySize(36, 36).setInteractive();
       const border = this.add.rectangle(tile.x, tile.y, 42, 42, 0, 0).setStrokeStyle(
         id === chosenEmblem ? 3 : 1, id === chosenEmblem ? 0x00ff88 : 0x666666
       ).setDepth(31);
@@ -477,11 +498,11 @@ export class GarageScene extends Phaser.Scene {
       created.push(tile, border);
     });
 
-    const saveBtn = this.add.text(540, 580, '[SAVE]', {
+    const saveBtn = this.add.text(cx - 100, cy + 220, '[SAVE]', {
       color: '#00ff88', fontSize: '14px', fontFamily: 'monospace',
       backgroundColor: '#003322', padding: { x: 8, y: 4 }
     }).setOrigin(0.5).setDepth(32).setInteractive();
-    const cancelBtn = this.add.text(740, 580, '[CANCEL]', {
+    const cancelBtn = this.add.text(cx + 100, cy + 220, '[CANCEL]', {
       color: '#888', fontSize: '14px', fontFamily: 'monospace',
       backgroundColor: '#221122', padding: { x: 8, y: 4 }
     }).setOrigin(0.5).setDepth(32).setInteractive();
@@ -506,101 +527,6 @@ export class GarageScene extends Phaser.Scene {
     created.push(saveBtn, cancelBtn);
   }
 
-  private async showWorkshop(vehicleId: string): Promise<void> {
-    const host = window.location.hostname;
-    // Fetch weapon catalog + fresh vehicle state in parallel
-    const [wRes, vRes] = await Promise.all([
-      fetch(`http://${host}:3001/api/weapons`),
-      fetch(`http://${host}:3001/api/vehicles/${vehicleId}`, { headers: { Authorization: `Bearer ${this.token}` } }),
-    ]);
-    const weapons: any[] = await wRes.json();
-    const vehicle: any = await vRes.json();
-    const mounts: any[] = vehicle.loadout?.mounts ?? [];
-    if (!mounts.length) { alert('This vehicle has no weapon mounts.'); return; }
-
-    const created: Phaser.GameObjects.GameObject[] = [];
-    const overlay = this.add.rectangle(640, 360, 1280, 720, 0x000000, 0.85).setDepth(30).setInteractive();
-    const panel   = this.add.rectangle(640, 360, 880, 560, 0x111122, 0.98).setDepth(31).setStrokeStyle(2, 0x4466aa);
-    const title   = this.add.text(640, 100, `WORKSHOP — ${vehicle.name}`, {
-      color: '#aaccff', fontSize: '20px', fontFamily: 'monospace', fontStyle: 'bold'
-    }).setOrigin(0.5).setDepth(32);
-    const hint    = this.add.text(640, 128, 'Click a mount, then a weapon to install. Removing refunds 50%.', {
-      color: '#888', fontSize: '12px', fontFamily: 'monospace'
-    }).setOrigin(0.5).setDepth(32);
-    const funds   = this.add.text(640, 150, `Funds: $${this.gang?.treasury.toLocaleString() ?? '?'}`, {
-      color: '#ffcc00', fontSize: '13px', fontFamily: 'monospace'
-    }).setOrigin(0.5).setDepth(32);
-    created.push(overlay, panel, title, hint, funds);
-
-    const destroy = () => created.forEach(o => o.destroy());
-
-    // Left column: current mounts. Click to select a mount.
-    let selectedMountId: string | null = mounts[0]?.id ?? null;
-    const mountRows: Phaser.GameObjects.Text[] = [];
-    const refreshMountRows = () => {
-      mountRows.forEach((row, i) => {
-        const sel = mounts[i].id === selectedMountId;
-        row.setColor(sel ? '#00ff88' : '#cccccc');
-        row.setBackgroundColor(sel ? '#003322' : '#222233');
-      });
-    };
-    mounts.forEach((m, i) => {
-      const y = 200 + i * 40;
-      const weaponName = weapons.find(w => w.id === m.weaponId)?.name ?? '— empty —';
-      const row = this.add.text(320, y, `[${m.arc.toUpperCase().padEnd(6)}]  ${weaponName}  (ammo ${m.ammo})`, {
-        fontSize: '13px', fontFamily: 'monospace', color: '#cccccc',
-        backgroundColor: '#222233', padding: { x: 8, y: 5 },
-      }).setOrigin(0.5, 0).setDepth(32).setInteractive();
-      row.on('pointerdown', () => { selectedMountId = m.id; refreshMountRows(); });
-      mountRows.push(row);
-      created.push(row);
-    });
-    refreshMountRows();
-
-    // Right column: weapon catalog list. Clicking installs on the selected mount.
-    this.add.text(760, 180, 'AVAILABLE WEAPONS', {
-      fontSize: '12px', color: '#888', fontFamily: 'monospace', fontStyle: 'bold'
-    }).setOrigin(0.5).setDepth(32);
-    // Show projectile + laser + flamer weapons only (dropped weapons have their own flow)
-    const shopList = weapons.filter(w => w.category !== 'dropped').sort((a, b) => a.cost - b.cost);
-    shopList.slice(0, 12).forEach((w, i) => {
-      const y = 210 + i * 24;
-      const label = `${w.name.padEnd(22)}  \$${w.cost.toLocaleString().padStart(5)}  tH${w.toHit} dmg ${w.damageDice}d${w.damageMod ? (w.damageMod > 0 ? `+${w.damageMod}` : w.damageMod) : ''}`;
-      const row = this.add.text(760, y, label, {
-        fontSize: '11px', fontFamily: 'monospace', color: '#ccc',
-        backgroundColor: '#1a1a2a', padding: { x: 6, y: 2 },
-      }).setOrigin(0.5, 0).setDepth(32).setInteractive();
-      row.on('pointerdown', () => this.applyWorkshopSwap(vehicleId, selectedMountId!, w.id, destroy));
-      created.push(row);
-    });
-
-    // Remove button: removes whichever weapon is on the selected mount
-    const removeBtn = this.add.text(320, 540, '[REMOVE SELECTED]', {
-      color: '#ff8844', fontSize: '13px', fontFamily: 'monospace',
-      backgroundColor: '#221100', padding: { x: 6, y: 3 },
-    }).setOrigin(0.5).setDepth(32).setInteractive();
-    removeBtn.on('pointerdown', () => this.applyWorkshopSwap(vehicleId, selectedMountId!, null, destroy));
-    const cancel = this.add.text(640, 600, '[CLOSE]', {
-      color: '#888', fontSize: '13px', fontFamily: 'monospace',
-      backgroundColor: '#221122', padding: { x: 6, y: 3 },
-    }).setOrigin(0.5).setDepth(32).setInteractive();
-    cancel.on('pointerdown', destroy);
-    created.push(removeBtn, cancel);
-  }
-
-  private async applyWorkshopSwap(vehicleId: string, mountId: string, weaponId: string | null, destroyModal: () => void): Promise<void> {
-    const host = window.location.hostname;
-    const res = await fetch(`http://${host}:3001/api/vehicles/${vehicleId}/weapon`, {
-      method: 'PATCH',
-      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${this.token}` },
-      body: JSON.stringify({ mountId, weaponId }),
-    });
-    const body = await res.json().catch(() => ({}));
-    if (!res.ok) { alert(body.error ?? 'Workshop change failed'); return; }
-    destroyModal();
-    this.scene.restart({ token: this.token });
-  }
-
   private async hireDriver(): Promise<void> {
     const name = prompt('Driver name?');
     if (!name) return;
@@ -619,31 +545,32 @@ export class GarageScene extends Phaser.Scene {
   }
 
   private showAssignDriverMenu(driver: Driver): void {
-    // Overlay modal: list vehicles, click one to assign this driver to it.
+    const { width, height } = this.scale;
+    const cx = width / 2, cy = height / 2;
+
     const created: Phaser.GameObjects.GameObject[] = [];
-    const overlay = this.add.rectangle(640, 360, 1280, 720, 0x000000, 0.8).setDepth(30).setInteractive();
-    const panel   = this.add.rectangle(640, 360, 500, 400, 0x111122, 0.98).setDepth(31).setStrokeStyle(2, 0x4466aa);
-    const title   = this.add.text(640, 180, `ASSIGN ${driver.name.toUpperCase()}`, {
+    const overlay = this.add.rectangle(cx, cy, width, height, 0x000000, 0.8).setDepth(30).setInteractive();
+    const panel   = this.add.rectangle(cx, cy, 500, 400, 0x111122, 0.98).setDepth(31).setStrokeStyle(2, 0x4466aa);
+    const title   = this.add.text(cx, cy - 180, `ASSIGN ${driver.name.toUpperCase()}`, {
       color: '#ffcc00', fontSize: '16px', fontFamily: 'monospace', fontStyle: 'bold'
     }).setOrigin(0.5).setDepth(32);
     created.push(overlay, panel, title);
 
     const destroy = () => created.forEach(o => o.destroy());
 
-    // List vehicles, each clickable to assign
     const alive = this.vehicles.filter(v => !v.damage_state?.destroyed);
     if (alive.length === 0) {
-      const none = this.add.text(640, 260, 'No vehicles to assign — build one first.', {
+      const none = this.add.text(cx, cy - 100, 'No vehicles to assign — build one first.', {
         color: '#888', fontSize: '12px', fontFamily: 'monospace'
       }).setOrigin(0.5).setDepth(32);
       created.push(none);
     } else {
       alive.forEach((v, i) => {
-        const y = 230 + i * 32;
+        const y = cy - 130 + i * 32;
         const currentDriver = this.drivers.find(d => d.assigned_vehicle_id === v.id);
         const conflict = currentDriver && currentDriver.id !== driver.id;
         const label = `${v.name}${conflict ? `  (replaces ${currentDriver.name})` : currentDriver?.id === driver.id ? '  (current)' : ''}`;
-        const row = this.add.text(640, y, label, {
+        const row = this.add.text(cx, y, label, {
           color: conflict ? '#ffaa44' : '#cccccc', fontSize: '13px', fontFamily: 'monospace',
           backgroundColor: '#222233', padding: { x: 8, y: 4 },
         }).setOrigin(0.5).setDepth(32).setInteractive();
@@ -661,7 +588,7 @@ export class GarageScene extends Phaser.Scene {
       });
     }
 
-    const cancel = this.add.text(640, 500, '[CANCEL]', {
+    const cancel = this.add.text(cx, cy + 140, '[CANCEL]', {
       color: '#888', fontSize: '13px', fontFamily: 'monospace',
       backgroundColor: '#221122', padding: { x: 8, y: 4 },
     }).setOrigin(0.5).setDepth(32).setInteractive();
@@ -680,7 +607,7 @@ export class GarageScene extends Phaser.Scene {
     if (res.ok) {
       this.scene.restart({ token: this.token });
     } else {
-      this.add.text(640, 650, body.error ?? 'Sell failed', {
+      this.add.text(this.scale.width / 2, this.scale.height - 40, body.error ?? 'Sell failed', {
         color: '#ff4444', fontSize: '14px', fontFamily: 'monospace'
       }).setOrigin(0.5);
     }
