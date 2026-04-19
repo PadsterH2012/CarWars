@@ -36,6 +36,19 @@ interface DesignerStats {
   capacity: CapacityReport | null;
 }
 
+interface BodyDef  { id: string; name: string; isCycle: boolean; spaces: number; maxLoad: number; baseWeight: number; armorWtPerPt: number; tireCount: number; }
+interface PlantDef { id: string; name: string; cycleOnly: boolean; spaces: number; weight: number; }
+interface TireDef  { id: string; name: string; weightPerTire: number; hcModifier: number; }
+type ArmorMuls = Record<string, { costMul: number; wtMul: number }>;
+
+interface DesignCatalog {
+  bodies: BodyDef[];
+  plants: PlantDef[];
+  tires: TireDef[];
+  armors: ArmorMuls;
+  weapons: WeaponDef[];
+}
+
 const LS_MODE = 'cw_designer_mode';
 
 function armorFillCss(pts: number): string {
@@ -81,6 +94,7 @@ export class VehicleDesignerScene extends Phaser.Scene {
   private activeTab: Tab = 'body';
   private selectedFace: Face = 'front';
   private weaponCatalog: WeaponDef[] = [];
+  private catalog: DesignCatalog | null = null;
   private stats: DesignerStats | null = null;
   private statusMsg = '';
   private statusColor = '#888';
@@ -117,7 +131,7 @@ export class VehicleDesignerScene extends Phaser.Scene {
     const savedMode = localStorage.getItem(LS_MODE) as Mode | null;
     this.mode = savedMode === 'datasheet' ? 'datasheet' : 'simple';
 
-    await Promise.all([this.loadGang(), this.loadWeaponCatalog(), this.loadVehicleIfEditing()]);
+    await Promise.all([this.loadGang(), this.loadCatalog(), this.loadVehicleIfEditing()]);
 
     this.root = document.createElement('div');
     this.root.className = 'cw-designer';
@@ -157,11 +171,13 @@ export class VehicleDesignerScene extends Phaser.Scene {
     } catch { /* defaults */ }
   }
 
-  private async loadWeaponCatalog(): Promise<void> {
+  private async loadCatalog(): Promise<void> {
     try {
       const host = window.location.hostname;
-      const res = await fetch(`http://${host}:3001/api/weapons`);
-      if (res.ok) this.weaponCatalog = await res.json();
+      const res = await fetch(`http://${host}:3001/api/catalog`);
+      if (!res.ok) return;
+      this.catalog = await res.json();
+      this.weaponCatalog = this.catalog?.weapons ?? [];
     } catch { /* empty */ }
   }
 
@@ -562,38 +578,65 @@ export class VehicleDesignerScene extends Phaser.Scene {
     if (tab === 'body')       return this.renderOptionList('BODY TYPE', BODY_TYPES, this.bodyType, 'body');
     if (tab === 'engine')     return this.renderEnginePanel();
     if (tab === 'suspension') return this.renderOptionList('SUSPENSION', SUSPENSIONS, this.suspensionType, 'suspension');
-    if (tab === 'tires')      return this.renderOptionList('TIRES', TIRE_TYPES, this.tireType, 'tires');
+    if (tab === 'tires')      return this.renderOptionList('TIRES', TIRE_TYPES, this.tireType, 'tires', id => this.canFitTire(id));
     if (tab === 'armor')      return this.renderArmorPanel();
     if (tab === 'weapons')    return this.renderWeaponsPanel();
     return '';
   }
 
-  private renderOptionList(heading: string, opts: readonly { id: string; label: string }[], current: string, action: string): string {
+  private renderOptionList(
+    heading: string,
+    opts: readonly { id: string; label: string }[],
+    current: string,
+    action: string,
+    getDisabled?: (id: string) => { fits: boolean; reason: string },
+  ): string {
     return `
       <div class="cw-panel">
         <h3>${heading}</h3>
         <div class="opt-grid">
-          ${opts.map(o => `
-            <button class="opt ${current === o.id ? 'selected' : ''}" data-action="${action}" data-value="${o.id}">${o.label}</button>
-          `).join('')}
+          ${opts.map(o => {
+            const d = getDisabled?.(o.id);
+            const disabled = !!d && !d.fits && current !== o.id;
+            const disabledStyle = disabled ? 'opacity:0.35;cursor:not-allowed;pointer-events:none;' : '';
+            return `
+              <button class="opt ${current === o.id ? 'selected' : ''}"
+                      data-action="${action}" data-value="${o.id}"
+                      style="${disabledStyle}"
+                      title="${esc(d?.reason ?? '')}">
+                ${o.label}${disabled ? ' ✕' : ''}
+              </button>
+            `;
+          }).join('')}
         </div>
+        ${getDisabled ? '<div style="margin-top:10px;font-size:10px;color:#666;">Greyed options exceed this body\u2019s spaces or weight budget.</div>' : ''}
       </div>`;
   }
 
   private renderEnginePanel(): string {
-    const bodyDef = BODY_TYPES.find(b => b.id === this.bodyType);
-    const isCycle = bodyDef?.isCycle ?? false;
-    const compat = POWER_PLANTS.filter(p => (p.cycleOnly ?? false) === isCycle);
+    // Show every plant so players see what's out there; grey out the ones that
+    // don't fit this body (wrong cycle-compat) or would bust the current
+    // spaces/weight budget.
     return `
       <div class="cw-panel">
         <h3>POWER PLANT</h3>
         <div class="opt-grid">
-          ${compat.map(p => `
-            <button class="opt ${this.powerPlantType === p.id ? 'selected' : ''}" data-action="engine" data-value="${p.id}">${p.label}</button>
-          `).join('')}
+          ${POWER_PLANTS.map(p => {
+            const d = this.canFitEngine(p.id);
+            const disabled = !d.fits && this.powerPlantType !== p.id;
+            const disabledStyle = disabled ? 'opacity:0.35;cursor:not-allowed;pointer-events:none;' : '';
+            return `
+              <button class="opt ${this.powerPlantType === p.id ? 'selected' : ''}"
+                      data-action="engine" data-value="${p.id}"
+                      style="${disabledStyle}"
+                      title="${esc(d.reason)}">
+                ${p.label}${disabled ? ' ✕' : ''}
+              </button>
+            `;
+          }).join('')}
         </div>
-        <div style="margin-top:14px;font-size:11px;color:#666;">
-          ${isCycle ? 'Showing cycle-compatible plants.' : 'Showing car/truck plants.'}
+        <div style="margin-top:10px;font-size:10px;color:#666;">
+          Greyed plants don't fit this chassis or exceed the weight budget.
         </div>
       </div>`;
   }
@@ -604,9 +647,18 @@ export class VehicleDesignerScene extends Phaser.Scene {
       <div class="cw-panel">
         <h3>ARMOR — Type</h3>
         <div class="opt-grid">
-          ${ARMOR_TYPES.map(a => `
-            <button class="opt ${this.armorType === a.id ? 'selected' : ''}" data-action="armor-type" data-value="${a.id}">${a.label}</button>
-          `).join('')}
+          ${ARMOR_TYPES.map(a => {
+            const d = this.canFitArmorType(a.id);
+            const disabled = !d.fits && this.armorType !== a.id;
+            const disabledStyle = disabled ? 'opacity:0.35;cursor:not-allowed;pointer-events:none;' : '';
+            return `
+              <button class="opt ${this.armorType === a.id ? 'selected' : ''}"
+                      data-action="armor-type" data-value="${a.id}"
+                      style="${disabledStyle}"
+                      title="${esc(d.reason)}">
+                ${a.label}${disabled ? ' ✕' : ''}
+              </button>`;
+          }).join('')}
         </div>
         <h3 style="margin-top:18px;">FACE</h3>
         <div class="face-btn-row">
@@ -759,8 +811,6 @@ export class VehicleDesignerScene extends Phaser.Scene {
 
   private renderDsComponents(): string {
     const bodyDef = BODY_TYPES.find(b => b.id === this.bodyType);
-    const isCycle = bodyDef?.isCycle ?? false;
-    const compatPlants = POWER_PLANTS.filter(p => (p.cycleOnly ?? false) === isCycle);
 
     const section = (title: string, currentLabel: string, items: string): string => `
       <div class="category">
@@ -768,20 +818,34 @@ export class VehicleDesignerScene extends Phaser.Scene {
         <div class="items">${items}</div>
       </div>`;
 
-    const row = (tag: string, name: string, selected: boolean, action: string, value: string, cost = '', stat = ''): string => `
-      <div class="item ${selected ? 'current' : ''}" data-action="${action}" data-value="${value}">
-        <span class="tag">${tag}</span>
-        <span class="name">${esc(name)}${selected ? ' ▸ current' : ''}</span>
-        <span class="stat">${stat}</span>
-        <span class="cost">${cost}</span>
-      </div>`;
+    const row = (
+      tag: string, name: string, selected: boolean, action: string, value: string,
+      cost = '', stat = '', disabled?: { fits: boolean; reason: string },
+    ): string => {
+      const isDisabled = !!disabled && !disabled.fits && !selected;
+      const style = isDisabled ? 'opacity:0.35;cursor:not-allowed;pointer-events:none;' : '';
+      const suffix = selected ? ' ▸ current' : isDisabled ? ` ✕ ${esc(disabled!.reason)}` : '';
+      return `
+        <div class="item ${selected ? 'current' : ''}"
+             data-action="${action}" data-value="${value}"
+             style="${style}"
+             title="${esc(disabled?.reason ?? '')}">
+          <span class="tag">${tag}</span>
+          <span class="name">${esc(name)}${suffix}</span>
+          <span class="stat">${stat}</span>
+          <span class="cost">${cost}</span>
+        </div>`;
+    };
 
     const bodyItems = BODY_TYPES.map((b, i) => row(
       `B${i + 1}`, b.label, b.id === this.bodyType, 'body', b.id, '', b.isCycle ? 'cycle' : ''
     )).join('');
 
-    const engineItems = compatPlants.map((p, i) => row(
-      `E${i + 1}`, p.label, p.id === this.powerPlantType, 'engine', p.id
+    // Engines: show every plant, grey out non-fitting ones so you can see
+    // the whole range and understand why a big engine is off-limits.
+    const engineItems = POWER_PLANTS.map((p, i) => row(
+      `E${i + 1}`, p.label, p.id === this.powerPlantType, 'engine', p.id,
+      '', '', this.canFitEngine(p.id),
     )).join('');
 
     const suspItems = SUSPENSIONS.map((s, i) => row(
@@ -789,11 +853,13 @@ export class VehicleDesignerScene extends Phaser.Scene {
     )).join('');
 
     const tireItems = TIRE_TYPES.map((t, i) => row(
-      `T${i + 1}`, t.label, t.id === this.tireType, 'tires', t.id
+      `T${i + 1}`, t.label, t.id === this.tireType, 'tires', t.id,
+      '', '', this.canFitTire(t.id),
     )).join('');
 
     const armorItems = ARMOR_TYPES.map((a, i) => row(
-      `A${i + 1}`, a.label, a.id === this.armorType, 'armor-type', a.id
+      `A${i + 1}`, a.label, a.id === this.armorType, 'armor-type', a.id,
+      '', '', this.canFitArmorType(a.id),
     )).join('');
 
     const weaponItems = this.mounts.map(m => {
@@ -1031,6 +1097,55 @@ export class VehicleDesignerScene extends Phaser.Scene {
     const wep = this.weaponCatalog.find(w => w.id === weaponId);
     if (!wep || !wep.allowedArcs || wep.allowedArcs.length === 0) return true;
     return wep.allowedArcs.includes(arc);
+  }
+
+  // Would swapping to `plantId` fit? Checks cycle compatibility + spaces/weight delta.
+  private canFitEngine(plantId: string): { fits: boolean; reason: string } {
+    if (!this.catalog || !this.stats?.capacity) return { fits: true, reason: '' };
+    const body = this.catalog.bodies.find(b => b.id === this.bodyType);
+    const plant = this.catalog.plants.find(p => p.id === plantId);
+    const current = this.catalog.plants.find(p => p.id === this.powerPlantType);
+    if (!plant || !body) return { fits: true, reason: '' };
+    if (plant.cycleOnly && !body.isCycle) return { fits: false, reason: 'cycle-only engine' };
+    if (!plant.cycleOnly && body.isCycle) return { fits: false, reason: 'car engine — too big for a cycle' };
+    const c = this.stats.capacity;
+    const spacesAfter = c.spacesUsed - (current?.spaces ?? 0) + plant.spaces;
+    const loadAfter   = c.loadWeight - (current?.weight ?? 0) + plant.weight;
+    if (spacesAfter > c.spacesMax) return { fits: false, reason: `needs ${plant.spaces} spc — over budget` };
+    if (loadAfter > c.loadMax)    return { fits: false, reason: `over weight by ${Math.round(loadAfter - c.loadMax)} lbs` };
+    return { fits: true, reason: '' };
+  }
+
+  // Would swapping to `tireId` fit? Weight-only check (tires don't consume spaces).
+  private canFitTire(tireId: string): { fits: boolean; reason: string } {
+    if (!this.catalog || !this.stats?.capacity) return { fits: true, reason: '' };
+    const body = this.catalog.bodies.find(b => b.id === this.bodyType);
+    const next = this.catalog.tires.find(t => t.id === tireId);
+    const cur  = this.catalog.tires.find(t => t.id === this.tireType);
+    if (!body || !next) return { fits: true, reason: '' };
+    const count = body.tireCount;
+    const delta = (next.weightPerTire - (cur?.weightPerTire ?? 0)) * count;
+    const loadAfter = this.stats.capacity.loadWeight + delta;
+    if (loadAfter > this.stats.capacity.loadMax) {
+      return { fits: false, reason: `over weight by ${Math.round(loadAfter - this.stats.capacity.loadMax)} lbs` };
+    }
+    return { fits: true, reason: '' };
+  }
+
+  // Would swapping to `armorTypeId` fit? Armor type multiplies armor-point weight.
+  private canFitArmorType(armorTypeId: string): { fits: boolean; reason: string } {
+    if (!this.catalog || !this.stats?.capacity) return { fits: true, reason: '' };
+    const body = this.catalog.bodies.find(b => b.id === this.bodyType);
+    const nextMul = this.catalog.armors[armorTypeId]?.wtMul ?? 1;
+    const curMul  = this.catalog.armors[this.armorType]?.wtMul ?? 1;
+    if (!body) return { fits: true, reason: '' };
+    const armorPts = this.armorTotal();
+    const delta = armorPts * body.armorWtPerPt * (nextMul - curMul);
+    const loadAfter = this.stats.capacity.loadWeight + delta;
+    if (loadAfter > this.stats.capacity.loadMax) {
+      return { fits: false, reason: `over weight by ${Math.round(loadAfter - this.stats.capacity.loadMax)} lbs` };
+    }
+    return { fits: true, reason: '' };
   }
 
   // ── Misc helpers ─────────────────────────────────────────────────────────
