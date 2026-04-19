@@ -111,12 +111,15 @@ export class ZoneRunner {
     if (this.ended) return;
     if (state.type !== 'arena') return;
 
-    const allVehicles = state.vehicles;
-    const alive = allVehicles.filter(v => !v.stats.damageState.destroyed);
+    // After Phase 2 wreckage refactor, destroyed vehicles move from state.vehicles
+    // to state.wreckage — so the total-ever-present count is the sum of both.
+    const alive = state.vehicles;
+    const wreckCount = state.wreckage?.length ?? 0;
+    const everPresent = alive.length + wreckCount;
 
-    // Need at least 2 vehicles to have been added and at least one destroyed
-    if (allVehicles.length < 2) return;
-    if (alive.length === allVehicles.length) return;
+    // Need at least 2 vehicles to have been spawned AND at least one destroyed
+    if (everPresent < 2) return;
+    if (wreckCount === 0) return;
 
     // Group surviving vehicles by playerId
     const survivorsByPlayer = new Map<string, string[]>();

@@ -414,7 +414,12 @@ export class ArenaScene extends Phaser.Scene {
     if (this.zoneEnded) return;
     this.zoneEnded = true;
 
+    // Player vehicle may be alive (in state.vehicles) or destroyed (now a wreck).
+    // If alive, we can read its playerId for the winner check; if wrecked, the player
+    // can't have won — whoever's left is.
     const myVehicle = this.zoneState?.vehicles.find(v => v.id === this.myVehicleId);
+    const myWreck = this.zoneState?.wreckage?.find(w => w.sourceVehicleId === this.myVehicleId);
+    const wasDestroyed = !myVehicle && !!myWreck;
     const isWinner = !!myVehicle && !!winnerId && myVehicle.playerId === winnerId;
 
     // Clear active job from localStorage if we won (job was auto-completed server-side)
@@ -427,9 +432,23 @@ export class ArenaScene extends Phaser.Scene {
     // Dim overlay
     this.add.rectangle(640, 360, 700, 380, 0x000000, 0.85).setScrollFactor(0).setDepth(10);
 
-    // Title
-    const titleText = isWinner ? 'VICTORY' : reason === 'ai_victory' ? 'DEFEATED' : 'BATTLE OVER';
-    const titleColor = isWinner ? '#00ff88' : '#ff4444';
+    // Title: VICTORY if we survived as the winner; DEFEATED if our car was destroyed
+    // or the AI was the last team standing; DRAW if everyone died simultaneously.
+    let titleText: string;
+    let titleColor: string;
+    if (isWinner) {
+      titleText = 'VICTORY';
+      titleColor = '#00ff88';
+    } else if (wasDestroyed || reason === 'ai_victory') {
+      titleText = 'DEFEATED';
+      titleColor = '#ff4444';
+    } else if (reason === 'all_destroyed') {
+      titleText = 'DRAW — ALL DESTROYED';
+      titleColor = '#ffaa00';
+    } else {
+      titleText = 'BATTLE OVER';
+      titleColor = '#ffaa00';
+    }
     this.add.text(640, 215, titleText, {
       fontSize: '42px', color: titleColor, fontFamily: 'monospace', fontStyle: 'bold'
     }).setOrigin(0.5).setScrollFactor(0).setDepth(11);
@@ -475,6 +494,11 @@ export class ArenaScene extends Phaser.Scene {
       const dmgColor = armorLost > 0 ? '#ff8888' : '#88ff88';
       this.add.text(640, y, `Damage: ${armorLost} armor pts lost${flags ? `  [${flags}]` : ''}`, {
         fontSize: '14px', color: dmgColor, fontFamily: 'monospace'
+      }).setOrigin(0.5).setScrollFactor(0).setDepth(11);
+      y += 24;
+    } else if (wasDestroyed) {
+      this.add.text(640, y, `Vehicle: TOTAL LOSS  [${myWreck!.state.toUpperCase()}]`, {
+        fontSize: '14px', color: '#ff5555', fontFamily: 'monospace'
       }).setOrigin(0.5).setScrollFactor(0).setDepth(11);
       y += 24;
     }
