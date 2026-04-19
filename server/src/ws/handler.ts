@@ -247,6 +247,18 @@ async function handleMessage(ws: WebSocket, raw: string): Promise<void> {
       send(ws, { type: 'error', message: 'Invalid zoneId' });
       return;
     }
+    // ── Per-player zone isolation ────────────────────────────────────────
+    // For arena zones, scope the zoneId by the player's UUID so different
+    // players don't share an instance (which would let their vehicles
+    // interact and created the earlier "who's on my team?" confusion).
+    // Non-arena zones (town, highway) stay shared — appropriate for
+    // future multiplayer open world.
+    if (msg.zoneId.startsWith('arena') && msg.token) {
+      try {
+        const payload = jwt.verify(msg.token, JWT_SECRET) as { playerId: string };
+        msg.zoneId = `${msg.zoneId}:${payload.playerId}`;
+      } catch { /* token invalid — fall through, will get rejected below */ }
+    }
     // If the zone exists but has already ended, tear it down so a fresh one is created
     const staleRunner = zones.get(msg.zoneId);
     if (staleRunner?.hasEnded()) {

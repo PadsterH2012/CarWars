@@ -225,7 +225,20 @@ export class ZoneRunner {
       const hasAutopilot = this.autopilotVehicles.has(vehicle.id);
       const needsAi = !isHuman || hasAutopilot;
       if (needsAi && !this.humanInputThisTick.has(vehicle.id)) {
-        const enemies = state.vehicles.filter(v => v.playerId !== vehicle.playerId);
+        // Belt-and-braces friendly-fire guard: exclude both same-playerId vehicles
+        // AND destroyed ones. The AI driver also re-filters, but excluding up front
+        // means we catch any accidental leakage at the zone level.
+        const enemies = state.vehicles.filter(v =>
+          v.playerId !== vehicle.playerId && !v.stats.damageState.destroyed
+        );
+        // One-time diagnostic: if any "enemy" shares this vehicle's playerId, log
+        // it loudly so we can catch state corruption.
+        const sameTeam = state.vehicles.filter(v =>
+          v.id !== vehicle.id && v.playerId === vehicle.playerId
+        );
+        if (sameTeam.length && Math.random() < 0.02) {
+          console.log(`[friendly-check] ${vehicle.id}(p=${vehicle.playerId}) sees squadmates [${sameTeam.map(v => v.id).join(',')}]`);
+        }
         const skill = this.vehicleSkills.get(vehicle.id) ?? 3;
         const order = this.squadOrders.get(vehicle.id);
         const aiInput = computeAiInput(vehicle, enemies, skill, this.map, order, state.vehicles);
