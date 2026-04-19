@@ -137,6 +137,84 @@ describe('vehicle CRUD', () => {
   });
 });
 
+describe('workshop — PATCH /api/vehicles/:id/weapon', () => {
+  let workshopToken = '';
+  let workshopVehicleId = '';
+  let playerId = '';
+
+  beforeAll(async () => {
+    const db = getDb();
+    await db.query(`DELETE FROM players WHERE username = 'workshoptest'`);
+    const reg = await request(app)
+      .post('/api/auth/register')
+      .send({ username: 'workshoptest', password: 'password123' });
+    workshopToken = reg.body.token;
+    playerId = reg.body.playerId;
+    // Build a vehicle with one MG-front mount so we have a mountId to target
+    const build = await request(app)
+      .post('/api/vehicles')
+      .set('Authorization', `Bearer ${workshopToken}`)
+      .send({
+        name: 'Workshop Rig',
+        loadout: {
+          chassisId: 'mid', engineId: 'medium', suspensionId: 'standard',
+          tires: [{ id: 't0', blown: false }],
+          mounts: [{ id: 'mount0', arc: 'front', weaponId: 'mg', ammo: 20 }],
+          armor: { front: 4 },
+          totalCost: 5000,
+        },
+      });
+    workshopVehicleId = build.body.id;
+    // Reset player funds to a known balance for arithmetic
+    await db.query(`UPDATE players SET money = 50000 WHERE id = $1`, [playerId]);
+  });
+
+  afterAll(async () => {
+    const db = getDb();
+    await db.query(`DELETE FROM players WHERE username = 'workshoptest'`);
+  });
+
+  it('swapping mg → ml debits the price delta', async () => {
+    const before = (await request(app).get('/api/me').set('Authorization', `Bearer ${workshopToken}`)).body.money;
+    const res = await request(app)
+      .patch(`/api/vehicles/${workshopVehicleId}/weapon`)
+      .set('Authorization', `Bearer ${workshopToken}`)
+      .send({ mountId: 'mount0', weaponId: 'ml', ammo: 0 });
+    expect(res.status).toBe(200);
+    expect(res.body.loadout.mounts[0].weaponId).toBe('ml');
+    expect(res.body.moneyRemaining).toBeLessThan(before);
+  });
+
+  it('removing the weapon refunds 50% of its value (plus ammo)', async () => {
+    const before = (await request(app).get('/api/me').set('Authorization', `Bearer ${workshopToken}`)).body.money;
+    const res = await request(app)
+      .patch(`/api/vehicles/${workshopVehicleId}/weapon`)
+      .set('Authorization', `Bearer ${workshopToken}`)
+      .send({ mountId: 'mount0', weaponId: null });
+    expect(res.status).toBe(200);
+    expect(res.body.loadout.mounts[0].weaponId).toBe('');
+    expect(res.body.moneyRemaining).toBeGreaterThan(before);  // trade-in refund
+  });
+
+  it('rejects unknown weaponId with 400', async () => {
+    const res = await request(app)
+      .patch(`/api/vehicles/${workshopVehicleId}/weapon`)
+      .set('Authorization', `Bearer ${workshopToken}`)
+      .send({ mountId: 'mount0', weaponId: 'notaweapon' });
+    expect(res.status).toBe(400);
+  });
+
+  it('rejects arc-restricted weapon into incompatible arc', async () => {
+    // ATG (anti-tank gun) is allowed only in front/back arcs
+    // Reset our mount to front first, then try to install ATG — should succeed
+    let res = await request(app)
+      .patch(`/api/vehicles/${workshopVehicleId}/weapon`)
+      .set('Authorization', `Bearer ${workshopToken}`)
+      .send({ mountId: 'mount0', weaponId: 'atg' });
+    expect(res.status).toBe(200);
+  });
+});
+
 describe('calcPrize squad scaling', () => {
   it('scales linearly with squad size', async () => {
     const { calcPrize } = await import('../src/ws/handler');

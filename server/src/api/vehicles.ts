@@ -2,7 +2,10 @@ import { Router } from 'express';
 import { getDb } from '../db/client';
 import { requireAuth, AuthRequest } from './middleware';
 import { deriveStats } from '../rules/vehicle';
-import type { VehicleLoadout } from '@carwars/shared';
+import { WEAPONS } from '../rules/data/weapons';
+import type { VehicleLoadout, WeaponMount } from '@carwars/shared';
+
+const WORKSHOP_TRADE_IN = 0.5;   // percentage refunded when a weapon/ammo is removed
 
 export const vehiclesRouter = Router();
 vehiclesRouter.use(requireAuth);
@@ -116,4 +119,117 @@ vehiclesRouter.delete('/:id', async (req: AuthRequest, res) => {
   }
 
   return res.json({ salePrice });
+});
+
+// ── Workshop: swap a weapon mount on an existing vehicle ────────────────────
+// PATCH /api/vehicles/:id/weapon   body: { mountId, weaponId|null, ammo? }
+//
+// Pricing: cost of the NEW weapon (if any) + ammo × weapon.ammoCost
+//          minus 50% trade-in of the OLD weapon + its remaining ammo.
+// Atomic: either the money debit succeeds and loadout updates, or both roll back.
+// Forbidden while the vehicle is in an arena.
+vehiclesRouter.patch('/:id/weapon', async (req: AuthRequest, res) => {
+  const { mountId, weaponId, ammo } = req.body ?? {};
+  if (typeof mountId !== 'string') return res.status(400).json({ error: 'mountId required' });
+  if (weaponId !== null && typeof weaponId !== 'string') return res.status(400).json({ error: 'weaponId must be string or null' });
+  if (ammo !== undefined && (typeof ammo !== 'number' || ammo < 0)) return res.status(400).json({ error: 'ammo must be non-negative' });
+
+  const db = getDb();
+  const vRes = await db.query(
+    `SELECT id, loadout, value, in_arena FROM vehicles WHERE id = $1 AND player_id = $2`,
+    [req.params.id, req.playerId]
+  );
+  if (!vRes.rows.length) return res.status(403).json({ error: 'Vehicle not found' });
+  const row = vRes.rows[0];
+  if (row.in_arena) return res.status(409).json({ error: 'Cannot modify a vehicle in an arena' });
+
+  const loadout = row.loadout as VehicleLoadout;
+  const mountIndex = loadout.mounts.findIndex(m => m.id === mountId);
+  if (mountIndex < 0) return res.status(400).json({ error: 'mountId not found on vehicle' });
+
+  const oldMount: WeaponMount = loadout.mounts[mountIndex];
+  const oldWeapon = oldMount.weaponId ? WEAPONS.find(w => w.id === oldMount.weaponId) : undefined;
+  const newWeapon = weaponId ? WEAPONS.find(w => w.id === weaponId) : undefined;
+  if (weaponId && !newWeapon) return res.status(400).json({ error: `Unknown weapon: ${weaponId}` });
+
+  // Arc compatibility check: if the weapon restricts arcs, the mount's arc must be in the list
+  if (newWeapon && newWeapon.allowedArcs.length > 0 && !newWeapon.allowedArcs.includes(oldMount.arc as any)) {
+    return res.status(400).json({
+      error: `${newWeapon.name} can only mount in arcs: ${newWeapon.allowedArcs.join(', ')}`
+    });
+  }
+
+  const newAmmo = typeof ammo === 'number' ? ammo : (newWeapon ? newWeapon.shotsPerMag : 0);
+  if (newWeapon && newAmmo > newWeapon.shotsPerMag) {
+    return res.status(400).json({ error: `ammo exceeds mag capacity ${newWeapon.shotsPerMag}` });
+  }
+
+  // Costs
+  const newCost = newWeapon ? newWeapon.cost + newWeapon.ammoCost * newAmmo : 0;
+  const oldRefund = oldWeapon
+    ? Math.floor((oldWeapon.cost + oldWeapon.ammoCost * oldMount.ammo) * WORKSHOP_TRADE_IN)
+    : 0;
+  const delta = newCost - oldRefund;  // positive = charge, negative = refund
+
+  // Build updated loadout + new vehicle value
+  const updatedMount: WeaponMount = {
+    ...oldMount,
+    weaponId: weaponId ?? '',
+    ammo: newAmmo,
+  };
+  const updatedLoadout: VehicleLoadout = {
+    ...loadout,
+    mounts: [
+      ...loadout.mounts.slice(0, mountIndex),
+      updatedMount,
+      ...loadout.mounts.slice(mountIndex + 1),
+    ],
+    totalCost: (loadout.totalCost ?? 0) + delta,
+  };
+
+  const client = await db.connect();
+  try {
+    await client.query('BEGIN');
+    if (delta > 0) {
+      const debit = await client.query(
+        `UPDATE players SET money = money - $1 WHERE id = $2 AND money >= $1 RETURNING money`,
+        [delta, req.playerId]
+      );
+      if (!debit.rows.length) {
+        await client.query('ROLLBACK');
+        return res.status(400).json({ error: 'Insufficient funds' });
+      }
+    } else if (delta < 0) {
+      await client.query(`UPDATE players SET money = money + $1 WHERE id = $2`,
+        [Math.abs(delta), req.playerId]);
+    }
+    const newValue = Math.max(0, row.value + delta);
+    await client.query(
+      `UPDATE vehicles SET loadout = $1, value = $2 WHERE id = $3`,
+      [JSON.stringify(updatedLoadout), newValue, row.id]
+    );
+    // Log both sides to gang_ledger via the linked gang (if any)
+    const label = newWeapon
+      ? `Workshop: install ${newWeapon.name}${oldWeapon ? ` (replacing ${oldWeapon.name})` : ''}`
+      : `Workshop: remove ${oldWeapon?.name ?? 'weapon'}`;
+    await client.query(
+      `INSERT INTO gang_ledger (gang_id, event_type, amount, description, result)
+       VALUES ((SELECT id FROM gangs WHERE owner_player_id = $1), 'workshop', $2, $3, $4)`,
+      [req.playerId, -delta, label, JSON.stringify({ vehicleId: row.id, mountId, weaponId, ammo: newAmmo })]
+    );
+    await client.query('COMMIT');
+  } catch (e) {
+    await client.query('ROLLBACK');
+    throw e;
+  } finally {
+    client.release();
+  }
+
+  const me = await db.query(`SELECT money FROM players WHERE id = $1`, [req.playerId]);
+  return res.json({
+    ok: true,
+    cost: delta,
+    loadout: updatedLoadout,
+    moneyRemaining: me.rows[0]?.money ?? 0,
+  });
 });

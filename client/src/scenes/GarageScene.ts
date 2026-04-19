@@ -113,19 +113,29 @@ export class GarageScene extends Phaser.Scene {
           color: '#666666', fontSize: '10px', fontFamily: 'monospace'
         });
 
-        // [REPAIR] button
-        const repairBtn = this.add.text(600, y, '[REPAIR]', {
-          color: '#ffcc00', fontSize: '13px', fontFamily: 'monospace',
-          backgroundColor: '#332200', padding: { x: 5, y: 2 }
+        // [REPAIR]
+        const repairBtn = this.add.text(540, y, '[REPAIR]', {
+          color: '#ffcc00', fontSize: '12px', fontFamily: 'monospace',
+          backgroundColor: '#332200', padding: { x: 4, y: 2 }
         }).setInteractive();
         repairBtn.on('pointerdown', () => this.repairVehicle(v.id));
 
+        // [WORKSHOP] — modify loadout
+        const workBtn = this.add.text(620, y, '[WORKSHOP]', {
+          color: '#aaccff', fontSize: '12px', fontFamily: 'monospace',
+          backgroundColor: '#112244', padding: { x: 4, y: 2 }
+        });
+        if (!isDestroyed) {
+          workBtn.setInteractive();
+          workBtn.on('pointerdown', () => this.showWorkshop(v.id));
+        }
+
         // [FIGHT] or [DESTROYED]
-        const fightBtn = this.add.text(690, y, isDestroyed ? '[DESTROYED]' : '[FIGHT]', {
+        const fightBtn = this.add.text(730, y, isDestroyed ? '[DESTROYED]' : '[FIGHT]', {
           color: isDestroyed ? '#444444' : '#00ff88',
-          fontSize: '13px', fontFamily: 'monospace',
+          fontSize: '12px', fontFamily: 'monospace',
           backgroundColor: isDestroyed ? '#221111' : '#003322',
-          padding: { x: 5, y: 2 }
+          padding: { x: 4, y: 2 }
         });
         if (!isDestroyed) {
           fightBtn.setInteractive();
@@ -133,9 +143,9 @@ export class GarageScene extends Phaser.Scene {
         }
 
         // [SELL] button
-        const sellBtn = this.add.text(830, y, '[SELL]', {
-          color: '#ff8844', fontSize: '13px', fontFamily: 'monospace',
-          backgroundColor: '#221100', padding: { x: 5, y: 2 }
+        const sellBtn = this.add.text(820, y, '[SELL]', {
+          color: '#ff8844', fontSize: '12px', fontFamily: 'monospace',
+          backgroundColor: '#221100', padding: { x: 4, y: 2 }
         }).setInteractive();
         sellBtn.on('pointerdown', () => this.sellVehicle(v.id, v.name));
       });
@@ -491,6 +501,101 @@ export class GarageScene extends Phaser.Scene {
       this.scene.restart({ token: this.token });
     });
     created.push(saveBtn, cancelBtn);
+  }
+
+  private async showWorkshop(vehicleId: string): Promise<void> {
+    const host = window.location.hostname;
+    // Fetch weapon catalog + fresh vehicle state in parallel
+    const [wRes, vRes] = await Promise.all([
+      fetch(`http://${host}:3001/api/weapons`),
+      fetch(`http://${host}:3001/api/vehicles/${vehicleId}`, { headers: { Authorization: `Bearer ${this.token}` } }),
+    ]);
+    const weapons: any[] = await wRes.json();
+    const vehicle: any = await vRes.json();
+    const mounts: any[] = vehicle.loadout?.mounts ?? [];
+    if (!mounts.length) { alert('This vehicle has no weapon mounts.'); return; }
+
+    const created: Phaser.GameObjects.GameObject[] = [];
+    const overlay = this.add.rectangle(640, 360, 1280, 720, 0x000000, 0.85).setDepth(30).setInteractive();
+    const panel   = this.add.rectangle(640, 360, 880, 560, 0x111122, 0.98).setDepth(31).setStrokeStyle(2, 0x4466aa);
+    const title   = this.add.text(640, 100, `WORKSHOP — ${vehicle.name}`, {
+      color: '#aaccff', fontSize: '20px', fontFamily: 'monospace', fontStyle: 'bold'
+    }).setOrigin(0.5).setDepth(32);
+    const hint    = this.add.text(640, 128, 'Click a mount, then a weapon to install. Removing refunds 50%.', {
+      color: '#888', fontSize: '12px', fontFamily: 'monospace'
+    }).setOrigin(0.5).setDepth(32);
+    const funds   = this.add.text(640, 150, `Funds: $${this.gang?.treasury.toLocaleString() ?? '?'}`, {
+      color: '#ffcc00', fontSize: '13px', fontFamily: 'monospace'
+    }).setOrigin(0.5).setDepth(32);
+    created.push(overlay, panel, title, hint, funds);
+
+    const destroy = () => created.forEach(o => o.destroy());
+
+    // Left column: current mounts. Click to select a mount.
+    let selectedMountId: string | null = mounts[0]?.id ?? null;
+    const mountRows: Phaser.GameObjects.Text[] = [];
+    const refreshMountRows = () => {
+      mountRows.forEach((row, i) => {
+        const sel = mounts[i].id === selectedMountId;
+        row.setColor(sel ? '#00ff88' : '#cccccc');
+        row.setBackgroundColor(sel ? '#003322' : '#222233');
+      });
+    };
+    mounts.forEach((m, i) => {
+      const y = 200 + i * 40;
+      const weaponName = weapons.find(w => w.id === m.weaponId)?.name ?? '— empty —';
+      const row = this.add.text(320, y, `[${m.arc.toUpperCase().padEnd(6)}]  ${weaponName}  (ammo ${m.ammo})`, {
+        fontSize: '13px', fontFamily: 'monospace', color: '#cccccc',
+        backgroundColor: '#222233', padding: { x: 8, y: 5 },
+      }).setOrigin(0.5, 0).setDepth(32).setInteractive();
+      row.on('pointerdown', () => { selectedMountId = m.id; refreshMountRows(); });
+      mountRows.push(row);
+      created.push(row);
+    });
+    refreshMountRows();
+
+    // Right column: weapon catalog list. Clicking installs on the selected mount.
+    this.add.text(760, 180, 'AVAILABLE WEAPONS', {
+      fontSize: '12px', color: '#888', fontFamily: 'monospace', fontStyle: 'bold'
+    }).setOrigin(0.5).setDepth(32);
+    // Show projectile + laser + flamer weapons only (dropped weapons have their own flow)
+    const shopList = weapons.filter(w => w.category !== 'dropped').sort((a, b) => a.cost - b.cost);
+    shopList.slice(0, 12).forEach((w, i) => {
+      const y = 210 + i * 24;
+      const label = `${w.name.padEnd(22)}  \$${w.cost.toLocaleString().padStart(5)}  tH${w.toHit} dmg ${w.damageDice}d${w.damageMod ? (w.damageMod > 0 ? `+${w.damageMod}` : w.damageMod) : ''}`;
+      const row = this.add.text(760, y, label, {
+        fontSize: '11px', fontFamily: 'monospace', color: '#ccc',
+        backgroundColor: '#1a1a2a', padding: { x: 6, y: 2 },
+      }).setOrigin(0.5, 0).setDepth(32).setInteractive();
+      row.on('pointerdown', () => this.applyWorkshopSwap(vehicleId, selectedMountId!, w.id, destroy));
+      created.push(row);
+    });
+
+    // Remove button: removes whichever weapon is on the selected mount
+    const removeBtn = this.add.text(320, 540, '[REMOVE SELECTED]', {
+      color: '#ff8844', fontSize: '13px', fontFamily: 'monospace',
+      backgroundColor: '#221100', padding: { x: 6, y: 3 },
+    }).setOrigin(0.5).setDepth(32).setInteractive();
+    removeBtn.on('pointerdown', () => this.applyWorkshopSwap(vehicleId, selectedMountId!, null, destroy));
+    const cancel = this.add.text(640, 600, '[CLOSE]', {
+      color: '#888', fontSize: '13px', fontFamily: 'monospace',
+      backgroundColor: '#221122', padding: { x: 6, y: 3 },
+    }).setOrigin(0.5).setDepth(32).setInteractive();
+    cancel.on('pointerdown', destroy);
+    created.push(removeBtn, cancel);
+  }
+
+  private async applyWorkshopSwap(vehicleId: string, mountId: string, weaponId: string | null, destroyModal: () => void): Promise<void> {
+    const host = window.location.hostname;
+    const res = await fetch(`http://${host}:3001/api/vehicles/${vehicleId}/weapon`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${this.token}` },
+      body: JSON.stringify({ mountId, weaponId }),
+    });
+    const body = await res.json().catch(() => ({}));
+    if (!res.ok) { alert(body.error ?? 'Workshop change failed'); return; }
+    destroyModal();
+    this.scene.restart({ token: this.token });
   }
 
   private async hireDriver(): Promise<void> {
