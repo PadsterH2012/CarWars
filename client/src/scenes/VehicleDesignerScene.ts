@@ -3,6 +3,7 @@ import {
   BODY_TYPES, POWER_PLANTS, SUSPENSIONS, TIRE_TYPES, ARMOR_TYPES, WEAPONS, ARCS,
   type MountConfig, type ArcType,
 } from '../ui/DesignerUI';
+import { preloadVehicleSprites, bodySpriteKey, weaponSpriteKey } from '../game/VehicleSprite';
 
 const SEL_COLOR   = '#00ff88';
 const SEL_BG      = '#003322';
@@ -80,15 +81,37 @@ export class VehicleDesignerScene extends Phaser.Scene {
 
   // Workshop edit-mode state (when launched from garage [WORKSHOP])
   private editVehicleId: string | null = null;
+  private gangPrimaryColour: number = 0x00cd68;  // default green, replaced from /api/gangs/mine
+
+  // Sprite preview objects (recreated each redraw)
+  private previewBody: Phaser.GameObjects.Image | null = null;
+  private previewWeapons: Phaser.GameObjects.Image[] = [];
 
   init(data: { token?: string; vehicleId?: string }): void {
     this.token = data.token ?? '';
     this.editVehicleId = data.vehicleId ?? null;
   }
 
+  preload(): void {
+    // Ensure body + weapon sprites are available for the schematic preview
+    preloadVehicleSprites(this);
+  }
+
   async create(): Promise<void> {
     // Background
     this.add.rectangle(640, 360, 1280, 720, 0x111122);
+
+    // Pull the gang's primary colour so the preview sprite tints correctly
+    try {
+      const host = window.location.hostname;
+      const gRes = await fetch(`http://${host}:3001/api/gangs/mine`, {
+        headers: { Authorization: `Bearer ${this.token}` },
+      });
+      if (gRes.ok) {
+        const g = await gRes.json();
+        if (typeof g.primary_colour === 'number') this.gangPrimaryColour = g.primary_colour;
+      }
+    } catch { /* fall back to default green */ }
 
     // When launched in workshop edit mode, pre-load the existing vehicle's loadout
     // into our state fields BEFORE the UI is built, so every panel renders with the
@@ -157,6 +180,7 @@ export class VehicleDesignerScene extends Phaser.Scene {
         this.updateOptionBtns(this.bodyBtns, () => this.bodyType);
         this.syncPowerPlantToBody();
         this.scheduleStatsRefresh();
+        this.redrawSchematic();  // body-type changed → refresh preview sprite
       });
 
     y += 6;
@@ -467,11 +491,31 @@ export class VehicleDesignerScene extends Phaser.Scene {
 
     this.schematicGfx.clear();
 
-    // Car body interior (darker background)
-    this.schematicGfx.fillStyle(0x1a1a3a, 1);
-    this.schematicGfx.fillRect(cx - 50, cy - 60, 100, 120);
-    this.schematicGfx.lineStyle(1, 0x444466, 1);
-    this.schematicGfx.strokeRect(cx - 50, cy - 60, 100, 120);
+    // Clear previous sprite preview so selector changes take effect
+    this.previewBody?.destroy();
+    this.previewBody = null;
+    this.previewWeapons.forEach(img => img.destroy());
+    this.previewWeapons = [];
+
+    // Render the body sprite at the centre of the schematic, tinted with the
+    // gang primary colour. Scale so the sprite fits the 100×120 area comfortably.
+    const bKey = `body_${bodySpriteKey(this.bodyType)}`;
+    if (this.textures.exists(bKey)) {
+      const tex = this.textures.get(bKey).getSourceImage();
+      const scaleX = 100 / tex.width;
+      const scaleY = 120 / tex.height;
+      const scale = Math.min(scaleX, scaleY);
+      this.previewBody = this.add.image(cx, cy, bKey)
+        .setOrigin(0.5)
+        .setScale(scale)
+        .setTint(this.gangPrimaryColour);
+    } else {
+      // Fallback: original dark-blue rectangle if the sprite hasn't loaded yet
+      this.schematicGfx.fillStyle(0x1a1a3a, 1);
+      this.schematicGfx.fillRect(cx - 50, cy - 60, 100, 120);
+      this.schematicGfx.lineStyle(1, 0x444466, 1);
+      this.schematicGfx.strokeRect(cx - 50, cy - 60, 100, 120);
+    }
 
     // Panel definitions
     type FaceKey = 'front' | 'back' | 'left' | 'right';
@@ -504,42 +548,40 @@ export class VehicleDesignerScene extends Phaser.Scene {
       this.schematicTexts.get(key)?.setText(String(pts));
     });
 
-    // Weapon mount dots
-    const mountPositions: Record<string, { x: number; y: number }> = {
-      front:  { x: cx,      y: cy - 30 },
-      back:   { x: cx,      y: cy + 30 },
-      left:   { x: cx - 25, y: cy      },
-      right:  { x: cx + 25, y: cy      },
-      turret: { x: cx,      y: cy      },
+    // Weapon overlays — positioned on the body sprite at each mount's arc anchor,
+    // using the actual generated weapon sprite (barrel / missile / laser glyph)
+    // tinted to stay readable against any gang colour.
+    const mountAnchors: Record<string, { x: number; y: number; rot: number }> = {
+      front:  { x: cx,      y: cy - 36, rot: 0              },
+      back:   { x: cx,      y: cy + 36, rot: Math.PI        },
+      left:   { x: cx - 36, y: cy,      rot: -Math.PI / 2   },
+      right:  { x: cx + 36, y: cy,      rot:  Math.PI / 2   },
+      turret: { x: cx,      y: cy,      rot: 0              },
     };
-
-    const categoryColors: Record<string, number> = {
-      small_bore: 0xffff00,
-      large_bore: 0xff8800,
-      rocket:     0xff4444,
-      laser:      0x00ffff,
-      flamer:     0xff6600,
-      dropped:    0x888888,
-    };
-
-    const arcDotOffset = new Map<string, number>();
+    // Track per-arc index so stacked mounts don't sit on top of each other
+    const arcOffset = new Map<string, number>();
     this.mounts.forEach(mount => {
-      const pos = mountPositions[mount.arc as keyof typeof mountPositions];
-      if (!pos) return;
+      const anchor = mountAnchors[mount.arc as keyof typeof mountAnchors];
+      if (!anchor) return;
+      const count = arcOffset.get(mount.arc) ?? 0;
+      arcOffset.set(mount.arc, count + 1);
+      const lateralOffset = (count % 2 === 0 ? 1 : -1) * Math.floor(count / 2) * 10;
 
-      const count = arcDotOffset.get(mount.arc) ?? 0;
-      arcDotOffset.set(mount.arc, count + 1);
-      const offsetX = (count % 2 === 0 ? 1 : -1) * Math.floor(count / 2) * 8;
+      const wKey = weaponSpriteKey(mount.weaponId ?? null);
+      if (!wKey || !this.textures.exists(`weapon_${wKey}`)) return;
 
-      // Look up weapon category from WEAPONS list
-      const weaponDef = WEAPONS.find(w => w.id === mount.weaponId);
-      const category = weaponDef?.category ?? 'small_bore';
-      const dotColor = categoryColors[category] ?? 0xffffff;
-
-      this.schematicGfx.fillStyle(dotColor, 1);
-      this.schematicGfx.fillCircle(pos.x + offsetX, pos.y, 5);
-      this.schematicGfx.lineStyle(1, 0x000000, 0.6);
-      this.schematicGfx.strokeCircle(pos.x + offsetX, pos.y, 5);
+      // Lateral offset along the perpendicular to anchor rotation
+      const perpX = Math.cos(anchor.rot + Math.PI / 2);
+      const perpY = Math.sin(anchor.rot + Math.PI / 2);
+      const img = this.add.image(
+        anchor.x + perpX * lateralOffset,
+        anchor.y + perpY * lateralOffset,
+        `weapon_${wKey}`,
+      )
+        .setOrigin(0.5)
+        .setRotation(anchor.rot)
+        .setScale(1.4);
+      this.previewWeapons.push(img);
     });
   }
 
