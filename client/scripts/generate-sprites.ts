@@ -600,9 +600,9 @@ function trailerBody(ctx: SKRSContext2D, w: number, h: number) {
 }
 
 const BODIES: BodySpec[] = [
-  { id: 'cycle_light',  w: 10, h: 22, draw: cycleBody },
-  { id: 'cycle_med',    w: 12, h: 24, draw: cycleBody },
-  { id: 'cycle_heavy',  w: 14, h: 26, draw: cycleBody },
+  { id: 'light_cycle',  w: 10, h: 22, draw: cycleBody },
+  { id: 'med_cycle',    w: 12, h: 24, draw: cycleBody },
+  { id: 'hvy_cycle',    w: 14, h: 26, draw: cycleBody },
   { id: 'trike',        w: 18, h: 26, draw: trikeBody },
   { id: 'subcompact',   w: 18, h: 28, draw: (c, w, h) => carBody(c, w, h, { wheelSize: 2 }) },
   { id: 'compact',      w: 20, h: 30, draw: (c, w, h) => carBody(c, w, h) },

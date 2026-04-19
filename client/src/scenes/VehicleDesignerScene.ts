@@ -1016,8 +1016,6 @@ export class VehicleDesignerScene extends Phaser.Scene {
   // ── Car SVG preview (shared) ─────────────────────────────────────────────
 
   private renderCarSvg(height: number): string {
-    const primary = `#${this.gangPrimaryColour.toString(16).padStart(6, '0')}`;
-    const primaryDark = `#${Math.floor(this.gangPrimaryColour * 0.35).toString(16).padStart(6, '0')}`;
     const isCycle = BODY_TYPES.find(b => b.id === this.bodyType)?.isCycle ?? false;
     const isTrike = this.bodyType === 'trike';
     const isTruck = this.bodyType === 'truck';
@@ -1026,6 +1024,14 @@ export class VehicleDesignerScene extends Phaser.Scene {
     // Body dimensions in SVG units — matches the visual proportions of each sprite
     const bodyW = isCycle && !isTrike ? 40 : isTrike ? 70 : 90;
     const bodyH = isCycle ? 140 : isBus ? 280 : (isTruck || isTrailer) ? 240 : 200;
+
+    // RGB multiply coefficients for the tint filter — matches Phaser setTint
+    // on a greyscale sprite. The PNG is drawn in neutral #c8c8c8 hull colour
+    // and each channel gets multiplied by the gang primary channel fraction.
+    const tintR = (((this.gangPrimaryColour >> 16) & 0xff) / 255).toFixed(3);
+    const tintG = (((this.gangPrimaryColour >>  8) & 0xff) / 255).toFixed(3);
+    const tintB = ((this.gangPrimaryColour & 0xff) / 255).toFixed(3);
+    const filterId = `body-tint-${this.bodyType}`;
 
     const vbW = 240;
     const vbH = Math.max(340, bodyH + 100);
@@ -1048,54 +1054,9 @@ export class VehicleDesignerScene extends Phaser.Scene {
         <text x="${p.x + p.w / 2}" y="${p.labelY}" text-anchor="middle" fill="#fff" font-size="10" font-family="monospace" font-weight="bold" dominant-baseline="middle">${pts}</text>`;
     }).join('');
 
-    // Wheel layout varies by body type. Car = 4; trike = 3 (1 front + 2 rear);
-    // truck = 6 (2 front + 4 rear across two rear axles); trailer = 4 tandem
-    // at the rear (no front wheels — hitched). Cycles render no wheels (body
-    // sprite already reads as two-wheeled via its narrow pill shape).
-    type WheelPos = { x: number; y: number; w: number; h: number };
-    const wheelList: WheelPos[] = [];
-    const stdWheel = { w: 14, h: 30 };
-    const bigWheel = { w: 13, h: 26 };
-    const smallWheel = { w: 10, h: 20 };
-    if (isCycle && !isTrike) {
-      // No visible wheels — the narrow pill body sells the two-wheeled silhouette
-    } else if (isTrike) {
-      // Front wheel, centered + protruding
-      wheelList.push({ x: cx - smallWheel.w / 2, y: cy - halfH - 10, ...smallWheel });
-      // Rear axle (2 wheels)
-      wheelList.push({ x: cx - halfW - 8,  y: cy + halfH * 0.5, ...smallWheel });
-      wheelList.push({ x: cx + halfW - 2,  y: cy + halfH * 0.5, ...smallWheel });
-    } else if (isTruck) {
-      // Front axle (2 wheels)
-      wheelList.push({ x: cx - halfW - 10, y: cy - halfH * 0.75, ...bigWheel });
-      wheelList.push({ x: cx + halfW - 3,  y: cy - halfH * 0.75, ...bigWheel });
-      // Two rear axles (4 wheels)
-      [0.25, 0.55].forEach(yFrac => {
-        wheelList.push({ x: cx - halfW - 10, y: cy + halfH * yFrac, ...bigWheel });
-        wheelList.push({ x: cx + halfW - 3,  y: cy + halfH * yFrac, ...bigWheel });
-      });
-    } else if (isTrailer) {
-      // Tandem rear axles only — trailers have no front wheels
-      [0.25, 0.55].forEach(yFrac => {
-        wheelList.push({ x: cx - halfW - 10, y: cy + halfH * yFrac, ...bigWheel });
-        wheelList.push({ x: cx + halfW - 3,  y: cy + halfH * yFrac, ...bigWheel });
-      });
-    } else if (isBus) {
-      // 5 axles evenly spaced down the length (10 wheels total)
-      [-0.7, -0.35, 0, 0.35, 0.7].forEach(yFrac => {
-        wheelList.push({ x: cx - halfW - 10, y: cy + halfH * yFrac, ...bigWheel });
-        wheelList.push({ x: cx + halfW - 3,  y: cy + halfH * yFrac, ...bigWheel });
-      });
-    } else {
-      // Default 4-wheel car
-      wheelList.push({ x: cx - halfW - 10, y: cy - halfH * 0.7, ...stdWheel });
-      wheelList.push({ x: cx + halfW - 4,  y: cy - halfH * 0.7, ...stdWheel });
-      wheelList.push({ x: cx - halfW - 10, y: cy + halfH * 0.4, ...stdWheel });
-      wheelList.push({ x: cx + halfW - 4,  y: cy + halfH * 0.4, ...stdWheel });
-    }
-    const wheels = wheelList.map(w =>
-      `<rect x="${w.x}" y="${w.y}" width="${w.w}" height="${w.h}" fill="#000" stroke="#fff" stroke-width="1" rx="3"/>`
-    ).join('');
+    // Wheels come baked into the PNG sprite now, so we don't add SVG overlays.
+    // (Kept the body-type branching above so armor panel positions stay right.)
+    const wheels = '';
 
     const weaponDots = this.mounts.map(m => {
       if (!m.weaponId) return '';
@@ -1120,12 +1081,27 @@ export class VehicleDesignerScene extends Phaser.Scene {
       <text x="${cx}" y="${cy - halfH - 26}" text-anchor="middle" fill="#ffcc88" font-size="9" font-family="monospace" letter-spacing="2">FRONT</text>
       <text x="${cx}" y="${cy + halfH + 30}" text-anchor="middle" fill="#ccaa66" font-size="9" font-family="monospace" letter-spacing="2">BACK</text>`;
 
+    // The PNG is drawn neutral-grey by generate-sprites.ts so the tint filter
+    // can recolour it to the gang primary. image-rendering: pixelated keeps
+    // the stylised look sharp when scaled up.
     return `
       <svg width="${height * (vbW / vbH)}" height="${height}" viewBox="0 0 ${vbW} ${vbH}">
+        <defs>
+          <filter id="${filterId}" color-interpolation-filters="sRGB">
+            <feColorMatrix type="matrix" values="
+              ${tintR} 0 0 0 0
+              0 ${tintG} 0 0 0
+              0 0 ${tintB} 0 0
+              0 0 0 1 0"/>
+          </filter>
+        </defs>
         ${wheels}
-        <rect x="${cx - halfW}" y="${cy - halfH}" width="${bodyW}" height="${bodyH}" fill="${primary}" stroke="${primaryDark}" stroke-width="2" rx="10"/>
-        <rect x="${cx - halfW + 8}" y="${cy - halfH + 16}" width="${bodyW - 16}" height="${bodyH * 0.28}" fill="#00000033" rx="4"/>
-        <rect x="${cx - halfW + 8}" y="${cy + halfH - 16 - bodyH * 0.28}" width="${bodyW - 16}" height="${bodyH * 0.28}" fill="#00000033" rx="4"/>
+        <image href="/sprites/bodies/${esc(this.bodyType)}.png"
+               x="${cx - halfW}" y="${cy - halfH}"
+               width="${bodyW}" height="${bodyH}"
+               preserveAspectRatio="none"
+               filter="url(#${filterId})"
+               style="image-rendering: pixelated;"/>
         ${chevron}
         ${armorSvg}
         ${weaponDots}

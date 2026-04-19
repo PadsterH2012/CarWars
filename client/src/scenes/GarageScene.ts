@@ -1,6 +1,7 @@
 import Phaser from 'phaser';
 import { paintEmblem, EMBLEM_IDS, type EmblemId } from '../game/CoatOfArms';
 import { bindFullscreenToggle, onLayout } from '../ui/responsive';
+import { preloadVehicleSprites, bodySpriteKey } from '../game/VehicleSprite';
 
 interface Vehicle { id: string; name: string; value: number; damage_state: any; loadout: any; in_arena?: boolean; }
 interface Driver { id: string; name: string; skill: number; xp: number; assigned_vehicle_id: string | null; alive: boolean; }
@@ -19,6 +20,10 @@ export class GarageScene extends Phaser.Scene {
   private mainLayer!: Phaser.GameObjects.Container;
 
   constructor() { super({ key: 'GarageScene' }); }
+
+  preload(): void {
+    preloadVehicleSprites(this);
+  }
 
   init(data: { token: string; lastResult?: { prize: number; jobPayout: number } | null }): void {
     this.token = data.token;
@@ -107,19 +112,35 @@ export class GarageScene extends Phaser.Scene {
         if (d.alive && d.assigned_vehicle_id) driverByVid.set(d.assigned_vehicle_id, d);
       }
 
+      const thumbBoxW = 42, thumbBoxH = 64;
+      const textX = leftX + thumbBoxW + 10;
       this.vehicles.forEach((v, i) => {
         const y = 160 + i * 80;
         const ds = v.damage_state ?? {};
         const isDestroyed = ds.destroyed;
         const nameColor = isDestroyed ? '#ff4444' : '#00ff88';
 
-        add(this.add.text(leftX, y, `${v.name}`, { color: nameColor, fontSize: '16px', fontFamily: 'monospace' }));
-        add(this.add.text(leftX + 270, y, `$${v.value.toLocaleString()}`, { color: '#888888', fontSize: '14px', fontFamily: 'monospace' }));
+        // Thumbnail — body PNG tinted with the gang's primary colour so each
+        // vehicle reads at a glance as a cycle / pickup / bus etc.
+        const spriteKey = `body_${bodySpriteKey(v.loadout?.bodyType)}`;
+        if (this.textures.exists(spriteKey)) {
+          const src = this.textures.get(spriteKey).getSourceImage() as HTMLImageElement;
+          const scale = Math.min(thumbBoxW / src.width, thumbBoxH / src.height);
+          const thumb = this.add.image(leftX + thumbBoxW / 2, y + 28, spriteKey)
+            .setOrigin(0.5)
+            .setScale(scale);
+          if (this.gang) thumb.setTint(this.gang.primary_colour);
+          if (isDestroyed) thumb.setTint(0x555555);
+          add(thumb);
+        }
+
+        add(this.add.text(textX, y, `${v.name}`, { color: nameColor, fontSize: '16px', fontFamily: 'monospace' }));
+        add(this.add.text(textX + 230, y, `$${v.value.toLocaleString()}`, { color: '#888888', fontSize: '14px', fontFamily: 'monospace' }));
 
         const driver = driverByVid.get(v.id);
         const driverStr = driver ? `Driver: ${driver.name} (sk${driver.skill})` : '\u26A0 NO DRIVER';
         const driverColor = driver ? '#88ccff' : '#ffaa44';
-        add(this.add.text(leftX, y + 20, driverStr, {
+        add(this.add.text(textX, y + 20, driverStr, {
           color: driverColor, fontSize: '11px', fontFamily: 'monospace'
         }));
         const mounts: any[] = v.loadout?.mounts ?? [];
@@ -129,7 +150,7 @@ export class GarageScene extends Phaser.Scene {
         const tiresBlow = ds.tiresBlown?.length ?? 0;
         const tireStr = tiresBlow > 0 ? `  [${tiresBlow} TIRE${tiresBlow > 1 ? 'S' : ''} BLOWN]` : '';
         const engineStr = ds.engineDamaged ? '  [ENGINE]' : '';
-        add(this.add.text(leftX, y + 38, `${ammoStr}${tireStr}${engineStr}`, {
+        add(this.add.text(textX, y + 38, `${ammoStr}${tireStr}${engineStr}`, {
           color: '#666666', fontSize: '10px', fontFamily: 'monospace'
         }));
 
