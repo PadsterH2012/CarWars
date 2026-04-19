@@ -87,11 +87,15 @@ export class ArenaScene extends Phaser.Scene {
   }
 
   create(): void {
+    // All key bindings use enableCapture=false so leaving the arena doesn't leave
+    // lingering preventDefault captures that block DOM text inputs elsewhere
+    // (gang settings modal, vehicle-name fields, etc.)
+    const K = Phaser.Input.Keyboard.KeyCodes;
     this.cursors = this.input.keyboard!.createCursorKeys();
-    this.fireKey = this.input.keyboard!.addKey(Phaser.Input.Keyboard.KeyCodes.SPACE);
-    this.autopilotKey = this.input.keyboard!.addKey(Phaser.Input.Keyboard.KeyCodes.P);
+    this.fireKey = this.input.keyboard!.addKey(K.SPACE, false);
+    this.autopilotKey = this.input.keyboard!.addKey(K.P, false);
     // Commander mode: T pauses the match and opens the tactical overlay
-    this.input.keyboard!.addKey(Phaser.Input.Keyboard.KeyCodes.T).on('down', () => {
+    this.input.keyboard!.addKey(K.T, false).on('down', () => {
       if (this.zoneEnded) return;
       if (this.squadVehicleIds.length < 2) return;  // no squad → no point opening overlay
       this.connection.send({ type: 'pause' });
@@ -109,10 +113,10 @@ export class ArenaScene extends Phaser.Scene {
       });
     });
     this.wasdKeys = {
-      w: this.input.keyboard!.addKey(Phaser.Input.Keyboard.KeyCodes.W),
-      s: this.input.keyboard!.addKey(Phaser.Input.Keyboard.KeyCodes.S),
-      a: this.input.keyboard!.addKey(Phaser.Input.Keyboard.KeyCodes.A),
-      d: this.input.keyboard!.addKey(Phaser.Input.Keyboard.KeyCodes.D),
+      w: this.input.keyboard!.addKey(K.W, false),
+      s: this.input.keyboard!.addKey(K.S, false),
+      a: this.input.keyboard!.addKey(K.A, false),
+      d: this.input.keyboard!.addKey(K.D, false),
     };
     // JustDown only fires for a single frame (~16ms) but inputs are batched every 100ms.
     // Use keydown event to accumulate fire intent so it isn't dropped between send ticks.
@@ -131,7 +135,7 @@ export class ArenaScene extends Phaser.Scene {
       Phaser.Input.Keyboard.KeyCodes.FOUR,
       Phaser.Input.Keyboard.KeyCodes.FIVE,
     ];
-    this.weaponKeys = weaponKeyCodes.map(code => this.input.keyboard!.addKey(code));
+    this.weaponKeys = weaponKeyCodes.map(code => this.input.keyboard!.addKey(code, false));
     this.weaponKeys.forEach((key, i) => {
       key.on('down', () => { this.selectedMountIndex = i; });
     });

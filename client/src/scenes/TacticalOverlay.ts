@@ -47,25 +47,26 @@ export class TacticalOverlay extends Phaser.Scene {
 
     this.drawTactical();
 
-    // Close keys
+    // Close keys — capture disabled so leaving doesn't block DOM inputs later
+    const K = Phaser.Input.Keyboard.KeyCodes;
     const close = () => this.closeOverlay();
-    this.input.keyboard!.addKey(Phaser.Input.Keyboard.KeyCodes.ESC).on('down', close);
-    this.input.keyboard!.addKey(Phaser.Input.Keyboard.KeyCodes.T).on('down', close);
+    this.input.keyboard!.addKey(K.ESC, false).on('down', close);
+    this.input.keyboard!.addKey(K.T, false).on('down', close);
 
     // Order keys — apply to selected squadmate
-    this.input.keyboard!.addKey(Phaser.Input.Keyboard.KeyCodes.F).on('down', () => {
+    this.input.keyboard!.addKey(K.F, false).on('down', () => {
       if (this.selectedSquadmate) {
         this.cmdData.sendOrder(this.selectedSquadmate, { type: 'follow', leaderId: this.cmdData.myVehicleId });
         this.flashFeedback(`${this.selectedSquadmate.slice(0, 8)}: FOLLOW`);
       }
     });
-    this.input.keyboard!.addKey(Phaser.Input.Keyboard.KeyCodes.R).on('down', () => {
+    this.input.keyboard!.addKey(K.R, false).on('down', () => {
       if (this.selectedSquadmate) {
         this.cmdData.sendOrder(this.selectedSquadmate, { type: 'retreat' });
         this.flashFeedback(`${this.selectedSquadmate.slice(0, 8)}: RETREAT`);
       }
     });
-    this.input.keyboard!.addKey(Phaser.Input.Keyboard.KeyCodes.C).on('down', () => {
+    this.input.keyboard!.addKey(K.C, false).on('down', () => {
       if (this.selectedSquadmate) {
         this.cmdData.sendOrder(this.selectedSquadmate, { type: 'clear' });
         this.flashFeedback(`${this.selectedSquadmate.slice(0, 8)}: ORDER CLEARED`);
