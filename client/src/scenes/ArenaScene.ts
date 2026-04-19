@@ -84,6 +84,20 @@ export class ArenaScene extends Phaser.Scene {
     this.cursors = this.input.keyboard!.createCursorKeys();
     this.fireKey = this.input.keyboard!.addKey(Phaser.Input.Keyboard.KeyCodes.SPACE);
     this.autopilotKey = this.input.keyboard!.addKey(Phaser.Input.Keyboard.KeyCodes.P);
+    // Commander mode: T pauses the match and opens the tactical overlay
+    this.input.keyboard!.addKey(Phaser.Input.Keyboard.KeyCodes.T).on('down', () => {
+      if (this.zoneEnded) return;
+      if (this.squadVehicleIds.length < 2) return;  // no squad → no point opening overlay
+      this.connection.send({ type: 'pause' });
+      this.scene.launch('TacticalOverlay', {
+        zoneState: this.zoneState,
+        myVehicleId: this.myVehicleId,
+        squadVehicleIds: this.squadVehicleIds,
+        sendOrder: (vid: string, order: import('@carwars/shared').SquadOrder) =>
+          this.connection.send({ type: 'squad_order', vehicleId: vid, order }),
+        onClose: () => this.connection.send({ type: 'unpause' }),
+      });
+    });
     this.wasdKeys = {
       w: this.input.keyboard!.addKey(Phaser.Input.Keyboard.KeyCodes.W),
       s: this.input.keyboard!.addKey(Phaser.Input.Keyboard.KeyCodes.S),
@@ -141,7 +155,7 @@ export class ArenaScene extends Phaser.Scene {
       fontStyle: 'bold',
       fontFamily: 'monospace'
     }).setScrollFactor(0);
-    this.add.text(16, 48, 'Arrows/WASD: drive | Space: fire | 1-5: weapon | P: pilot', {
+    this.add.text(16, 48, 'Arrows/WASD: drive | Space: fire | 1-5: weapon | P: pilot | T: tactical', {
       color: '#888888',
       fontSize: '12px',
       fontFamily: 'monospace'

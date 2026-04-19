@@ -1,4 +1,4 @@
-import type { VehicleState, ArenaMap } from '@carwars/shared';
+import type { VehicleState, ArenaMap, SquadOrder } from '@carwars/shared';
 import { WEAPONS } from '../rules/data/weapons';
 
 export interface AiInput {
@@ -215,8 +215,51 @@ export function computeAiInput(
   others: VehicleState[],
   skill: number,
   map?: ArenaMap,
+  order?: SquadOrder,
+  allVehicles?: VehicleState[],
 ): AiInput {
   const enemies = others.filter(o => o.playerId !== self.playerId && !o.stats.damageState.destroyed);
+
+  // ── Commander-mode order handling ─────────────────────────────────────────
+  // Short-circuit the full tactic engine for movement-focused orders (move/retreat/follow).
+  // 'attack' orders fall through to the normal tactic loop with target narrowed
+  // to the specified enemy.
+  if (order) {
+    if (order.type === 'move') {
+      const bearingDeg = bearingTo(self.position, { x: order.x, y: order.y });
+      const dist = dist2d(self.position, { x: order.x, y: order.y });
+      if (dist < 1.5) return { speed: 0, steer: 0, fireWeapon: null };  // arrived
+      const steer = Math.max(-MAX_TURN, Math.min(MAX_TURN, shortestTurn(self.facing, bearingDeg)));
+      return { speed: Math.min(self.stats.maxSpeed, dist > 6 ? self.stats.maxSpeed : Math.floor(self.stats.maxSpeed * 0.5)), steer, fireWeapon: null };
+    }
+    if (order.type === 'retreat') {
+      if (enemies.length > 0) {
+        const cx = enemies.reduce((s, e) => s + e.position.x, 0) / enemies.length;
+        const cy = enemies.reduce((s, e) => s + e.position.y, 0) / enemies.length;
+        const awayBearing = bearingTo({ x: cx, y: cy }, self.position);
+        const steer = Math.max(-MAX_TURN, Math.min(MAX_TURN, shortestTurn(self.facing, awayBearing)));
+        return { speed: self.stats.maxSpeed, steer, fireWeapon: null };
+      }
+      return { speed: 0, steer: 0, fireWeapon: null };
+    }
+    if (order.type === 'follow' && allVehicles) {
+      const leader = allVehicles.find(v => v.id === order.leaderId && !v.stats.damageState.destroyed);
+      if (leader) {
+        // Stay 4 units behind the leader along their facing
+        const backRad = (leader.facing - 90 + 180) * Math.PI / 180;
+        const targetX = leader.position.x + Math.cos(backRad) * 4;
+        const targetY = leader.position.y + Math.sin(backRad) * 4;
+        const dist = dist2d(self.position, { x: targetX, y: targetY });
+        const bearingDeg = bearingTo(self.position, { x: targetX, y: targetY });
+        const steer = Math.max(-MAX_TURN, Math.min(MAX_TURN, shortestTurn(self.facing, bearingDeg)));
+        const speed = dist < 1 ? leader.speed : Math.min(self.stats.maxSpeed, Math.max(leader.speed, Math.floor(dist * 5)));
+        // Follow mode prioritises positioning; firing is suspended so the player
+        // can choose engage-vs-regroup via explicit attack/retreat orders.
+        return { speed, steer, fireWeapon: null };
+      }
+    }
+    // 'attack' orders narrow target selection but keep the normal tactic engine
+  }
 
   if (enemies.length === 0) return { speed: 0, steer: 0, fireWeapon: null };
 
@@ -235,7 +278,11 @@ export function computeAiInput(
     ds.orbitFlipIn = 40 + Math.floor(Math.random() * 40);
   }
 
-  const target = pickTarget(self, enemies);
+  // Attack order pins target selection to a specific enemy if it's still alive
+  const attackTarget = order?.type === 'attack'
+    ? enemies.find(e => e.id === order.targetId)
+    : undefined;
+  const target = attackTarget ?? pickTarget(self, enemies);
   const d = dist2d(self.position, target.position);
   const bearing = bearingTo(self.position, target.position);
   const w = pickWeapon(self);

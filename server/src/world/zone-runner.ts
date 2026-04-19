@@ -1,5 +1,5 @@
 import { WebSocket } from 'ws';
-import type { ServerMessage, ArenaMap } from '@carwars/shared';
+import type { ServerMessage, ArenaMap, SquadOrder } from '@carwars/shared';
 import { createTurnEngine, TurnEngine } from '../rules/engine';
 import { computeAiInput } from '../ai/driver';
 import { getMap } from '../rules/maps';
@@ -22,6 +22,8 @@ export class ZoneRunner {
   // Vehicles where the human has opted into AI autopilot
   private autopilotVehicles = new Set<string>();
   private vehicleSkills = new Map<string, number>(); // vehicleId → driver skill
+  private squadOrders = new Map<string, SquadOrder>(); // vehicleId → current order (commander mode)
+  private pausedBy: WebSocket | null = null;   // the client that initiated the pause; only they can unpause
   private map: ArenaMap;
 
   hasEnded(): boolean { return this.ended; }
@@ -91,6 +93,27 @@ export class ZoneRunner {
   queueInput(vehicleId: string, input: { speed: number; steer: number; fireWeapon: string | null }): void {
     this.humanInputThisTick.add(vehicleId);
     this.engine.queueInput(vehicleId, input);
+  }
+
+  // Commander-mode pause control — while paused, the tick loop still fires but returns
+  // early without advancing engine state. Input messages are ignored during pause.
+  pause(ws: WebSocket): void {
+    if (!this.pausedBy) this.pausedBy = ws;
+  }
+  unpause(ws: WebSocket): void {
+    if (this.pausedBy === ws) this.pausedBy = null;
+  }
+  isPaused(): boolean {
+    return this.pausedBy !== null;
+  }
+
+  setSquadOrder(vehicleId: string, order: SquadOrder): void {
+    if (order.type === 'clear') this.squadOrders.delete(vehicleId);
+    else this.squadOrders.set(vehicleId, order);
+  }
+
+  getSquadOrder(vehicleId: string): SquadOrder | undefined {
+    return this.squadOrders.get(vehicleId);
   }
 
   getEngine(): TurnEngine {
@@ -165,6 +188,13 @@ export class ZoneRunner {
   }
 
   private tick(): void {
+    // Commander-mode pause: tick loop runs but engine doesn't advance, so the
+    // player can issue orders with the world frozen.
+    if (this.pausedBy) {
+      this.humanInputThisTick.clear();
+      return;
+    }
+
     const state = this.engine.getState();
     state.vehicles.forEach(vehicle => {
       if (vehicle.stats.damageState.destroyed) return;
@@ -174,7 +204,8 @@ export class ZoneRunner {
       if (needsAi && !this.humanInputThisTick.has(vehicle.id)) {
         const enemies = state.vehicles.filter(v => v.playerId !== vehicle.playerId);
         const skill = this.vehicleSkills.get(vehicle.id) ?? 3;
-        const aiInput = computeAiInput(vehicle, enemies, skill, this.map);
+        const order = this.squadOrders.get(vehicle.id);
+        const aiInput = computeAiInput(vehicle, enemies, skill, this.map, order, state.vehicles);
         this.engine.queueInput(vehicle.id, aiInput);
       }
     });

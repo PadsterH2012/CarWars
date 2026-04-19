@@ -543,6 +543,24 @@ async function handleMessage(ws: WebSocket, raw: string): Promise<void> {
     return;
   }
 
+  if (msg.type === 'pause' || msg.type === 'unpause' || msg.type === 'squad_order') {
+    const zid = clientZones.get(ws);
+    const runner = zid ? zones.get(zid) : null;
+    if (!runner) { send(ws, { type: 'error', message: 'Not in a zone' }); return; }
+    if (msg.type === 'pause') runner.pause(ws);
+    if (msg.type === 'unpause') runner.unpause(ws);
+    if (msg.type === 'squad_order') {
+      // Only allow orders on the client's own squad vehicles — prevents cross-player tampering
+      const mySquad = clientSquads.get(ws) ?? [];
+      if (!mySquad.includes(msg.vehicleId)) {
+        send(ws, { type: 'error', message: 'Vehicle not in your squad' });
+        return;
+      }
+      runner.setSquadOrder(msg.vehicleId, msg.order);
+    }
+    return;
+  }
+
   send(ws, { type: 'error', message: `Unknown message type: ${(msg as any).type}` });
 }
 
