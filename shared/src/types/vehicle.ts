@@ -48,11 +48,17 @@ export type ArmorType = 'ablative' | 'fireproof' | 'laser_reflective' | 'lr_fire
 
 export type PowerPlantType = 'small' | 'medium' | 'large' | 'super' | 'sport' | 'thundercat';
 
+export type TurretSize = 'small' | 'standard' | 'heavy';
+
 export interface WeaponMount {
   id: string;
   arc: 'front' | 'back' | 'left' | 'right' | 'turret';
   weaponId: string | null;
   ammo: number;
+  // Required when arc === 'turret' — absent/undefined for fixed-arc mounts.
+  // Determines the turret structure's own cost, weight, and space footprint
+  // as well as the maximum weapon size it can hold.
+  turretSize?: TurretSize;
 }
 
 export interface VehicleLoadout {

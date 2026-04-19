@@ -2,7 +2,7 @@ import { Router } from 'express';
 import { getDb } from '../db/client';
 import { requireAuth, AuthRequest } from './middleware';
 import { deriveStats } from '../rules/vehicle';
-import { computeCapacity } from '../rules/capacity';
+import { computeCapacity, isInvalid } from '../rules/capacity';
 import { WEAPONS } from '../rules/data/weapons';
 import type { VehicleLoadout, WeaponMount } from '@carwars/shared';
 
@@ -27,8 +27,8 @@ vehiclesRouter.post('/', async (req: AuthRequest, res) => {
   // just because the designer permits the dropdown. Enforced for new builds;
   // existing over-capacity vehicles (pre-rule) are grandfathered until edited.
   const cap = computeCapacity(loadout);
-  if (cap.overSpaces || cap.overWeight) {
-    return res.status(400).json({ error: `Loadout exceeds body capacity — ${cap.errors.join('; ')}` });
+  if (isInvalid(cap)) {
+    return res.status(400).json({ error: `Invalid loadout — ${cap.errors.join('; ')}` });
   }
 
   const cost = loadout.totalCost ?? 0;
@@ -162,8 +162,8 @@ vehiclesRouter.patch('/:id/loadout', async (req: AuthRequest, res) => {
   // spaces + weight budget. Existing over-capacity vehicles are readable but
   // can't be re-saved until brought into spec.
   const cap = computeCapacity(newLoadout);
-  if (cap.overSpaces || cap.overWeight) {
-    return res.status(400).json({ error: `Loadout exceeds body capacity — ${cap.errors.join('; ')}` });
+  if (isInvalid(cap)) {
+    return res.status(400).json({ error: `Invalid loadout — ${cap.errors.join('; ')}` });
   }
 
   const db = getDb();

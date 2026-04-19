@@ -1,10 +1,13 @@
 export type ArcType = 'front' | 'back' | 'left' | 'right' | 'turret';
 
+export type TurretSize = 'small' | 'standard' | 'heavy';
+
 export interface MountConfig {
   id: string;
   arc: ArcType;
   weaponId: string | null;
   ammo: number;
+  turretSize?: TurretSize;
 }
 
 export const BODY_TYPES = [

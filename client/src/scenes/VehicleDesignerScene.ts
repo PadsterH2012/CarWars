@@ -1,7 +1,7 @@
 import Phaser from 'phaser';
 import {
   BODY_TYPES, SUSPENSIONS, TIRE_TYPES, ARMOR_TYPES, WEAPONS, ARCS,
-  type MountConfig, type ArcType,
+  type MountConfig, type ArcType, type TurretSize,
 } from '../ui/DesignerUI';
 import { bindFullscreenToggle } from '../ui/responsive';
 
@@ -36,18 +36,22 @@ interface DesignerStats {
   capacity: CapacityReport | null;
 }
 
-interface BodyDef  { id: string; name: string; isCycle: boolean; spaces: number; maxLoad: number; baseWeight: number; armorWtPerPt: number; tireCount: number; }
+interface BodyDef  { id: string; name: string; isCycle: boolean; spaces: number; maxLoad: number; baseWeight: number; armorWtPerPt: number; tireCount: number; maxTurretSize: TurretSize | null; }
 interface PlantDef { id: string; name: string; cycleOnly: boolean; spaces: number; weight: number; }
 interface TireDef  { id: string; name: string; weightPerTire: number; hcModifier: number; }
+interface TurretDef { id: TurretSize; name: string; cost: number; weight: number; spaces: number; maxWeaponSpaces: number; }
 type ArmorMuls = Record<string, { costMul: number; wtMul: number }>;
 
 interface DesignCatalog {
   bodies: BodyDef[];
   plants: PlantDef[];
   tires: TireDef[];
+  turrets: TurretDef[];
   armors: ArmorMuls;
   weapons: WeaponDef[];
 }
+
+const TURRET_RANK: Record<TurretSize, number> = { small: 1, standard: 2, heavy: 3 };
 
 const LS_MODE = 'cw_designer_mode';
 
@@ -339,9 +343,39 @@ export class VehicleDesignerScene extends Phaser.Scene {
   private cycleArc(weaponId: string): void {
     const mount = this.mounts.find(m => m.weaponId === weaponId);
     if (!mount) return;
-    const idx = ARCS.indexOf(mount.arc);
-    mount.arc = ARCS[(idx + 1) % ARCS.length] as ArcType;
+    const body = this.catalog?.bodies.find(b => b.id === this.bodyType);
+    // Skip 'turret' in the cycle when the body can't mount one at all, or
+    // the current weapon would exceed the biggest turret the body supports
+    // (e.g. a 3-space cannon on a subcompact's small turret).
+    const turretOK = body?.maxTurretSize != null && !!this.smallestCompatibleTurret(mount.weaponId);
+    const valid = ARCS.filter(a => a !== 'turret' || turretOK);
+    const idx = valid.indexOf(mount.arc);
+    const next = valid[(idx + 1) % valid.length] as ArcType;
+    mount.arc = next;
+    if (next === 'turret') {
+      mount.turretSize = this.smallestCompatibleTurret(mount.weaponId) ?? undefined;
+    } else {
+      delete mount.turretSize;
+    }
     this.markDirty();
+  }
+
+  // Smallest turret tier that (a) the current body supports and (b) fits the
+  // weapon in its maxWeaponSpaces. Returns null if no size qualifies — the
+  // caller should avoid switching to the turret arc in that case.
+  private smallestCompatibleTurret(weaponId: string | null): TurretSize | null {
+    const body = this.catalog?.bodies.find(b => b.id === this.bodyType);
+    if (!body || !body.maxTurretSize) return null;
+    const maxRank = TURRET_RANK[body.maxTurretSize];
+    const wep = weaponId ? this.weaponCatalog.find(w => w.id === weaponId) : null;
+    const wepSpaces = wep?.spaces ?? 0;
+    const order: TurretSize[] = ['small', 'standard', 'heavy'];
+    for (const size of order) {
+      if (TURRET_RANK[size] > maxRank) break;
+      const t = this.catalog?.turrets.find(tt => tt.id === size);
+      if (t && wepSpaces <= t.maxWeaponSpaces) return size;
+    }
+    return null;
   }
 
   private setMountWeapon(mountId: string, weaponId: string | null): void {
@@ -354,11 +388,24 @@ export class VehicleDesignerScene extends Phaser.Scene {
     } else {
       mount.ammo = 0;
     }
+    // If this is a turret mount, upgrade the turret to the smallest size that
+    // can hold the new weapon (keeps the user from getting stuck on a 2-space
+    // weapon in a small turret that only holds 2-space weapons, etc.)
+    if (mount.arc === 'turret') {
+      const next = this.smallestCompatibleTurret(weaponId);
+      if (next) mount.turretSize = next;
+    }
     this.markDirty();
   }
 
   private addMount(arc: ArcType): void {
-    this.mounts.push({ id: `m${Date.now()}`, arc, weaponId: null, ammo: 0 });
+    const turretSize = arc === 'turret' ? this.smallestCompatibleTurret(null) : undefined;
+    if (arc === 'turret' && !turretSize) {
+      this.flashStatus(`${this.bodyType} can't mount a turret`, '#ff4444');
+      this.rebuild();
+      return;
+    }
+    this.mounts.push({ id: `m${Date.now()}`, arc, weaponId: null, ammo: 0, ...(turretSize ? { turretSize } : {}) });
     this.markDirty();
   }
 
@@ -774,11 +821,14 @@ export class VehicleDesignerScene extends Phaser.Scene {
   private renderDsPreview(): string {
     const s = this.stats;
     const mountChips = this.mounts.map(m => {
+      const arcLabel = m.arc === 'turret' && m.turretSize
+        ? `▸T·${m.turretSize[0]}`   // ▸T·s / ▸T·h etc.
+        : `▸${m.arc.charAt(0).toUpperCase()}`;
       if (!m.weaponId) {
-        return `<span class="mount-chip empty">▸${m.arc.charAt(0).toUpperCase()} —<button data-action="remove-mount" data-value="${m.id}">×</button></span>`;
+        return `<span class="mount-chip empty">${arcLabel} —<button data-action="remove-mount" data-value="${m.id}">×</button></span>`;
       }
       const wep = this.weaponCatalog.find(w => w.id === m.weaponId);
-      return `<span class="mount-chip">▸${m.arc.charAt(0).toUpperCase()} ${esc(wep?.name ?? m.weaponId)}<button data-action="remove-mount" data-value="${m.id}">×</button></span>`;
+      return `<span class="mount-chip">${arcLabel} ${esc(wep?.name ?? m.weaponId)}<button data-action="remove-mount" data-value="${m.id}">×</button></span>`;
     }).join('');
 
     const weakFace = (Object.entries(this.armor) as [Face, number][])
@@ -807,7 +857,13 @@ export class VehicleDesignerScene extends Phaser.Scene {
         <div style="display:flex;gap:4px;margin-top:6px;">
           <button class="opt" style="padding:4px 8px;font-size:10px;" data-action="add-mount" data-value="front">+ front</button>
           <button class="opt" style="padding:4px 8px;font-size:10px;" data-action="add-mount" data-value="back">+ back</button>
-          <button class="opt" style="padding:4px 8px;font-size:10px;" data-action="add-mount" data-value="turret">+ turret</button>
+          ${(() => {
+            const body = this.catalog?.bodies.find(b => b.id === this.bodyType);
+            const disabled = !body?.maxTurretSize;
+            const style = disabled ? 'padding:4px 8px;font-size:10px;opacity:0.35;cursor:not-allowed;pointer-events:none;' : 'padding:4px 8px;font-size:10px;';
+            const tip = disabled ? `${body?.name ?? this.bodyType} can't mount a turret` : `max ${body?.maxTurretSize}`;
+            return `<button class="opt" style="${style}" data-action="add-mount" data-value="turret" title="${esc(tip)}">+ turret${disabled ? ' ✕' : ''}</button>`;
+          })()}
         </div>
       </div>`;
   }
@@ -867,9 +923,12 @@ export class VehicleDesignerScene extends Phaser.Scene {
     )).join('');
 
     const weaponItems = this.mounts.map(m => {
+      const arcLabel = m.arc === 'turret' && m.turretSize
+        ? `TURRET (${m.turretSize})`
+        : m.arc.toUpperCase();
       const rows = [`
         <div style="padding:6px 10px;background:#0a0a1a;font-size:10px;color:#aac;letter-spacing:2px;">
-          ▸ MOUNT ${esc(m.id.slice(0, 6))} — ARC: ${m.arc.toUpperCase()}
+          ▸ MOUNT ${esc(m.id.slice(0, 6))} — ARC: ${arcLabel}
           ${m.weaponId ? `<button class="opt" style="padding:2px 6px;margin-left:8px;font-size:10px;" data-action="cycle-arc" data-value="${esc(m.weaponId)}">cycle arc</button>` : ''}
           <button class="opt" style="padding:2px 6px;margin-left:6px;font-size:10px;color:#ff6666;" data-action="remove-mount" data-value="${m.id}">remove</button>
         </div>
@@ -1075,6 +1134,15 @@ export class VehicleDesignerScene extends Phaser.Scene {
   private canFitWeapon(weaponId: string, replacing?: MountConfig): { fits: boolean; reason: string } {
     const wep = this.weaponCatalog.find(w => w.id === weaponId);
     if (!wep) return { fits: false, reason: 'unknown weapon' };
+    // Turret constraint: when swapping onto a turret mount, the new weapon
+    // must fit the turret's maxWeaponSpaces — a small turret can't hold a
+    // 3-space cannon regardless of overall spaces budget.
+    if (replacing?.arc === 'turret' && replacing.turretSize) {
+      const turret = this.catalog?.turrets.find(t => t.id === replacing.turretSize);
+      if (turret && wep.spaces > turret.maxWeaponSpaces) {
+        return { fits: false, reason: `too big for a ${replacing.turretSize} turret (${wep.spaces} > ${turret.maxWeaponSpaces} spc)` };
+      }
+    }
     const c = this.stats?.capacity;
     if (!c) return { fits: true, reason: '' };
     const ammoForNew = wep.shotsPerMag ?? 0;

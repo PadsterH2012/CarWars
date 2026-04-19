@@ -3,6 +3,7 @@ import { BODIES } from '../rules/data/bodies';
 import { POWER_PLANTS } from '../rules/data/power-plants';
 import { TIRES } from '../rules/data/tires';
 import { WEAPONS } from '../rules/data/weapons';
+import { TURRETS } from '../rules/data/turrets';
 
 // Aggregate design catalog — read-only, powers the client's fit-check greying
 // of engine / tire / armor-type pickers. No auth required.
@@ -25,7 +26,9 @@ catalogRouter.get('/', (_req, res) => {
       spaces: b.spaces, maxLoad: b.maxLoad, baseWeight: b.baseWeight,
       armorWtPerPt: b.armorWtPerPt,
       tireCount: b.tireCount ?? (b.isCycle ? 2 : 4),
+      maxTurretSize: b.maxTurretSize,
     })),
+    turrets: TURRETS,
     plants: POWER_PLANTS.map(p => ({
       id: p.id, name: p.name, cycleOnly: p.cycleOnly,
       spaces: p.spaces, weight: p.weight,
