@@ -78,16 +78,55 @@ export class VehicleDesignerScene extends Phaser.Scene {
 
   constructor() { super({ key: 'VehicleDesignerScene' }); }
 
-  init(data: { token?: string }): void {
+  // Workshop edit-mode state (when launched from garage [WORKSHOP])
+  private editVehicleId: string | null = null;
+
+  init(data: { token?: string; vehicleId?: string }): void {
     this.token = data.token ?? '';
+    this.editVehicleId = data.vehicleId ?? null;
   }
 
-  create(): void {
+  async create(): Promise<void> {
     // Background
     this.add.rectangle(640, 360, 1280, 720, 0x111122);
 
-    // Title
-    this.add.text(640, 25, 'VEHICLE DESIGNER', {
+    // When launched in workshop edit mode, pre-load the existing vehicle's loadout
+    // into our state fields BEFORE the UI is built, so every panel renders with the
+    // real current settings (body type, power plant, tires, weapons, armor). The
+    // vehicle name also defaults to the existing one so we don't overwrite it.
+    if (this.editVehicleId) {
+      try {
+        const host = window.location.hostname;
+        const res = await fetch(`http://${host}:3001/api/vehicles/${this.editVehicleId}`, {
+          headers: { Authorization: `Bearer ${this.token}` },
+        });
+        if (res.ok) {
+          const v: any = await res.json();
+          const l = v.loadout ?? {};
+          this.vehicleName     = v.name ?? this.vehicleName;
+          this.bodyType        = l.bodyType        ?? this.bodyType;
+          this.powerPlantType  = l.powerPlantType  ?? this.powerPlantType;
+          this.suspensionType  = l.suspensionType  ?? this.suspensionType;
+          this.tireType        = l.tireType        ?? this.tireType;
+          this.armorType       = l.armorType       ?? this.armorType;
+          if (Array.isArray(l.mounts) && l.mounts.length > 0) this.mounts = l.mounts;
+          if (l.armor) {
+            this.armor = {
+              front: l.armor.front ?? this.armor.front,
+              back:  l.armor.back  ?? this.armor.back,
+              left:  l.armor.left  ?? this.armor.left,
+              right: l.armor.right ?? this.armor.right,
+            };
+          }
+        }
+      } catch {
+        // If the load fails we fall back to defaults and the user can still edit
+      }
+    }
+
+    // Title — switches between BUILD and WORKSHOP depending on mode
+    const titleText = this.editVehicleId ? `WORKSHOP — ${this.vehicleName}` : 'VEHICLE DESIGNER';
+    this.add.text(640, 25, titleText, {
       color: HEADING_COLOR, fontSize: '24px', fontFamily: 'monospace', fontStyle: 'bold',
     }).setOrigin(0.5);
 
@@ -536,8 +575,9 @@ export class VehicleDesignerScene extends Phaser.Scene {
       }
     });
 
-    // Build button
-    const buildBtn = this.add.text(640, 685, '[ BUILD THIS CAR ]', {
+    // Build / Save button — label and behaviour depend on mode
+    const label = this.editVehicleId ? '[ SAVE CHANGES ]' : '[ BUILD THIS CAR ]';
+    const buildBtn = this.add.text(640, 685, label, {
       color: SEL_COLOR, fontSize: '18px', fontFamily: 'monospace',
       backgroundColor: SEL_BG, padding: { x: 16, y: 6 },
     }).setOrigin(0.5).setInteractive();
@@ -646,24 +686,29 @@ export class VehicleDesignerScene extends Phaser.Scene {
     this.statusText.setColor('#aaaaaa').setText('Saving...');
     try {
       const host = window.location.hostname;
-      const res = await fetch(`http://${host}:3001/api/vehicles`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${this.token}`,
-        },
-        body: JSON.stringify({
-          name: this.vehicleName,
-          loadout: {
-            ...this.buildDesignPayload(),
-            totalCost: this.derivedCost,
-          },
-        }),
-      });
+      const loadout = { ...this.buildDesignPayload(), totalCost: this.derivedCost };
+
+      let res: Response;
+      if (this.editVehicleId) {
+        // Workshop edit: PATCH just the loadout; server handles delta pricing
+        res = await fetch(`http://${host}:3001/api/vehicles/${this.editVehicleId}/loadout`, {
+          method: 'PATCH',
+          headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${this.token}` },
+          body: JSON.stringify(loadout),
+        });
+      } else {
+        // New-vehicle create path
+        res = await fetch(`http://${host}:3001/api/vehicles`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${this.token}` },
+          body: JSON.stringify({ name: this.vehicleName, loadout }),
+        });
+      }
 
       if (res.ok) {
-        this.statusText.setColor(SEL_COLOR).setText('Vehicle created!');
-        this.time.delayedCall(1500, () => this.scene.start('GarageScene', { token: this.token }));
+        const successText = this.editVehicleId ? 'Changes saved!' : 'Vehicle created!';
+        this.statusText.setColor(SEL_COLOR).setText(successText);
+        this.time.delayedCall(1200, () => this.scene.start('GarageScene', { token: this.token }));
       } else {
         const err = await res.json() as { error?: string };
         this.statusText.setColor('#ff4444').setText(err.error ?? 'Save failed');

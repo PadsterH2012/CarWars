@@ -127,7 +127,10 @@ export class GarageScene extends Phaser.Scene {
         });
         if (!isDestroyed) {
           workBtn.setInteractive();
-          workBtn.on('pointerdown', () => this.showWorkshop(v.id));
+          // Workshop = the full vehicle designer in edit mode for this vehicle
+          workBtn.on('pointerdown', () =>
+            this.scene.start('VehicleDesignerScene', { token: this.token, vehicleId: v.id })
+          );
         }
 
         // [FIGHT] or [DESTROYED]

@@ -121,6 +121,92 @@ vehiclesRouter.delete('/:id', async (req: AuthRequest, res) => {
   return res.json({ salePrice });
 });
 
+// ── Workshop: replace the whole loadout of an existing vehicle ──────────────
+// PATCH /api/vehicles/:id/loadout   body: VehicleLoadout
+//
+// Lets the garage workshop reuse the full vehicle-designer UI to modify any
+// subsystem (body, power plant, suspension, tires, armor, mounts). The server
+// validates the loadout via deriveStats, then compares the client-supplied
+// totalCost to the vehicle's current value:
+//
+//   delta = newLoadout.totalCost - vehicle.value
+//   charge: if delta > 0 → pay full delta
+//           if delta < 0 → refund 50% of |delta|  (trade-in rate, matches
+//                          single-weapon swap endpoint)
+//
+// Atomic: money debit/credit + loadout + value update all in one transaction,
+// with gang_ledger logging. Forbidden while vehicle is in_arena.
+vehiclesRouter.patch('/:id/loadout', async (req: AuthRequest, res) => {
+  const newLoadout = req.body as VehicleLoadout;
+  if (!newLoadout || typeof newLoadout !== 'object') {
+    return res.status(400).json({ error: 'loadout body required' });
+  }
+
+  // Sanity-check the loadout runs through deriveStats without throwing
+  try {
+    deriveStats('workshop-preview', 'preview', newLoadout);
+  } catch (e: any) {
+    return res.status(400).json({ error: e.message ?? 'invalid loadout' });
+  }
+
+  const db = getDb();
+  const vRes = await db.query(
+    `SELECT id, value, in_arena FROM vehicles WHERE id = $1 AND player_id = $2`,
+    [req.params.id, req.playerId]
+  );
+  if (!vRes.rows.length) return res.status(403).json({ error: 'Vehicle not found' });
+  const row = vRes.rows[0];
+  if (row.in_arena) return res.status(409).json({ error: 'Cannot modify a vehicle in an arena' });
+
+  const newCost = Math.max(0, newLoadout.totalCost ?? 0);
+  const oldCost = row.value;
+  const delta = newCost - oldCost;
+  const charge = delta > 0 ? delta : -Math.floor(Math.abs(delta) * 0.5);
+
+  const client = await db.connect();
+  try {
+    await client.query('BEGIN');
+    if (charge > 0) {
+      const debit = await client.query(
+        `UPDATE players SET money = money - $1 WHERE id = $2 AND money >= $1 RETURNING money`,
+        [charge, req.playerId]
+      );
+      if (!debit.rows.length) {
+        await client.query('ROLLBACK');
+        return res.status(400).json({ error: 'Insufficient funds' });
+      }
+    } else if (charge < 0) {
+      await client.query(`UPDATE players SET money = money + $1 WHERE id = $2`,
+        [Math.abs(charge), req.playerId]);
+    }
+    await client.query(
+      `UPDATE vehicles SET loadout = $1, value = $2 WHERE id = $3`,
+      [JSON.stringify(newLoadout), newCost, row.id]
+    );
+    await client.query(
+      `INSERT INTO gang_ledger (gang_id, event_type, amount, description, result)
+       VALUES ((SELECT id FROM gangs WHERE owner_player_id = $1), 'workshop', $2, $3, $4)`,
+      [req.playerId, -charge, 'Workshop: loadout modified',
+       JSON.stringify({ vehicleId: row.id, oldCost, newCost, delta })]
+    );
+    await client.query('COMMIT');
+  } catch (e) {
+    await client.query('ROLLBACK');
+    throw e;
+  } finally {
+    client.release();
+  }
+
+  const me = await db.query(`SELECT money FROM players WHERE id = $1`, [req.playerId]);
+  return res.json({
+    ok: true,
+    delta,
+    charge,
+    newValue: newCost,
+    moneyRemaining: me.rows[0]?.money ?? 0,
+  });
+});
+
 // ── Workshop: swap a weapon mount on an existing vehicle ────────────────────
 // PATCH /api/vehicles/:id/weapon   body: { mountId, weaponId|null, ammo? }
 //

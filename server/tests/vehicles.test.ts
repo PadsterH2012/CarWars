@@ -213,6 +213,45 @@ describe('workshop — PATCH /api/vehicles/:id/weapon', () => {
       .send({ mountId: 'mount0', weaponId: 'atg' });
     expect(res.status).toBe(200);
   });
+
+  it('PATCH /loadout charges full delta on upgrade', async () => {
+    const db = getDb();
+    await db.query(`UPDATE players SET money = 50000 WHERE id = $1`, [playerId]);
+    const before = (await request(app).get('/api/me').set('Authorization', `Bearer ${workshopToken}`)).body.money;
+    const upgraded = {
+      chassisId: 'mid', engineId: 'medium', suspensionId: 'standard',
+      tires: [{ id: 't0', blown: false }],
+      mounts: [{ id: 'mount0', arc: 'front', weaponId: 'mg', ammo: 20 }],
+      armor: { front: 4 },
+      totalCost: 20000,  // clear upgrade from whatever value the vehicle is at
+    };
+    const res = await request(app)
+      .patch(`/api/vehicles/${workshopVehicleId}/loadout`)
+      .set('Authorization', `Bearer ${workshopToken}`)
+      .send(upgraded);
+    expect(res.status).toBe(200);
+    expect(res.body.delta).toBeGreaterThan(0);
+    expect(res.body.moneyRemaining).toBe(before - res.body.delta);
+  });
+
+  it('PATCH /loadout refunds 50% on downgrade', async () => {
+    const before = (await request(app).get('/api/me').set('Authorization', `Bearer ${workshopToken}`)).body.money;
+    const downgraded = {
+      chassisId: 'mid', engineId: 'medium', suspensionId: 'standard',
+      tires: [{ id: 't0', blown: false }],
+      mounts: [{ id: 'mount0', arc: 'front', weaponId: 'mg', ammo: 20 }],
+      armor: { front: 4 },
+      totalCost: 5000,  // downgrade from 20000
+    };
+    const res = await request(app)
+      .patch(`/api/vehicles/${workshopVehicleId}/loadout`)
+      .set('Authorization', `Bearer ${workshopToken}`)
+      .send(downgraded);
+    expect(res.status).toBe(200);
+    expect(res.body.delta).toBeLessThan(0);
+    const expectedRefund = Math.floor(Math.abs(res.body.delta) * 0.5);
+    expect(res.body.moneyRemaining).toBe(before + expectedRefund);
+  });
 });
 
 describe('calcPrize squad scaling', () => {
