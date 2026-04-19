@@ -608,15 +608,16 @@ export class VehicleDesignerScene extends Phaser.Scene {
       this.schematicTexts.get(key)?.setText(String(pts));
     });
 
-    // Weapon overlays — positioned on the body sprite at each mount's arc anchor,
-    // using the actual generated weapon sprite (barrel / missile / laser glyph)
-    // tinted to stay readable against any gang colour.
+    // Weapon overlays — anchored to the body sprite's actual scaled extents so
+    // weapons sit at the hull edge (front/back/left/right) rather than inside the
+    // body. Small 4-px offset pushes them slightly outboard so the barrel
+    // clearly points away from the car.
     const mountAnchors: Record<string, { x: number; y: number; rot: number }> = {
-      front:  { x: cx,      y: cy - 36, rot: 0              },
-      back:   { x: cx,      y: cy + 36, rot: Math.PI        },
-      left:   { x: cx - 36, y: cy,      rot: -Math.PI / 2   },
-      right:  { x: cx + 36, y: cy,      rot:  Math.PI / 2   },
-      turret: { x: cx,      y: cy,      rot: 0              },
+      front:  { x: cx,                    y: cy - bodyHalfH - 4, rot: 0              },
+      back:   { x: cx,                    y: cy + bodyHalfH + 4, rot: Math.PI        },
+      left:   { x: cx - bodyHalfW - 4,    y: cy,                 rot: -Math.PI / 2   },
+      right:  { x: cx + bodyHalfW + 4,    y: cy,                 rot:  Math.PI / 2   },
+      turret: { x: cx,                    y: cy,                 rot: 0              },
     };
     // Track per-arc index so stacked mounts don't sit on top of each other
     const arcOffset = new Map<string, number>();
