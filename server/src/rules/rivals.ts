@@ -12,6 +12,10 @@ export interface RivalGang {
   min_division: number;
   boast_lines: string[];
   defeat_lines: string[];
+  // Stock-vehicle ids this gang fields per division, e.g.
+  //   { "5": ["sprocket"], "10": ["mg3","guardian"], ... }
+  // Empty object means "no lineup — fall back to generic AI vehicle".
+  lineup: Record<string, string[]>;
 }
 
 export interface RivalRep {
@@ -37,7 +41,7 @@ export async function pickRivalForMatch(
   // division number must be ≤ rival's min_division threshold.
   const eligibleRes = await db.query<RivalGang>(
     `SELECT id, name, description, base_skill, primary_colour, secondary_colour,
-            emblem_id, min_division, boast_lines, defeat_lines
+            emblem_id, min_division, boast_lines, defeat_lines, lineup
      FROM rival_gangs WHERE min_division >= $1`,
     [division],
   );

@@ -5,6 +5,7 @@ import type { ClientMessage, ServerMessage, VehicleState, VehicleLoadout, Damage
 import { ZoneRunner } from '../world/zone-runner';
 import { getDb } from '../db/client';
 import { deriveStats } from '../rules/vehicle';
+import type { Pool } from 'pg';
 import { pickRivalForMatch, recordRivalOutcome, rivalEffectiveSkill, type RivalGang } from '../rules/rivals';
 
 const JWT_SECRET = process.env.JWT_SECRET ?? 'dev-secret-change-in-prod';
@@ -79,6 +80,33 @@ function makeTestVehicle(id: string, playerId: string, x: number, y: number, fac
       maxSpeed, handlingClass: 3, weight: 3000
     }
   };
+}
+
+// Build an arena vehicle from a stock blueprint — pass through deriveStats so
+// maxSpeed / HC / weight are properly derived from the loadout, and clone the
+// armor into damageState so hits apply to a fresh copy. Used to spawn rival
+// enemies that actually field their published designs.
+function makeVehicleFromLoadout(
+  id: string, playerId: string, x: number, y: number, facing: number,
+  name: string, loadout: VehicleLoadout,
+): VehicleState {
+  const stats = deriveStats(id, name, loadout);
+  return {
+    id, playerId, driverId: `driver_${id}`,
+    position: { x, y }, facing, speed: 0,
+    stats,
+  };
+}
+
+async function fetchStockLoadouts(db: Pool, stockIds: string[]): Promise<Map<string, { name: string; loadout: VehicleLoadout }>> {
+  const out = new Map<string, { name: string; loadout: VehicleLoadout }>();
+  if (!stockIds.length) return out;
+  const res = await db.query<{ id: string; name: string; loadout: VehicleLoadout }>(
+    `SELECT id, name, loadout FROM stock_vehicles WHERE id = ANY($1::text[])`,
+    [stockIds],
+  );
+  for (const r of res.rows) out.set(r.id, { name: r.name, loadout: r.loadout });
+  return out;
 }
 
 // Load a vehicle for a known playerId (used for squadmates after the primary is auth'd).
@@ -537,10 +565,41 @@ async function handleMessage(ws: WebSocket, raw: string): Promise<void> {
         }
         const rivalSkill = rival ? rivalEffectiveSkill(rival, rivalGrudge) : 3;
 
+        // If the rival has a lineup for the player's division, field those
+        // stock blueprints. Otherwise fall back to the generic test vehicle so
+        // matches always have enemies even before lineups are populated.
+        let lineupLoadouts: Map<string, { name: string; loadout: VehicleLoadout }> = new Map();
+        let lineupIds: string[] = [];
+        if (rival && rival.lineup) {
+          // Resolve the player's division from the same rival-selection path above
+          const divStr = String((await (async () => {
+            const r = await getDb().query<{ division: number }>(
+              `SELECT p.division FROM vehicles v JOIN players p ON p.id = v.player_id WHERE v.id = $1`,
+              [msg.vehicleId],
+            );
+            return r.rows[0]?.division ?? 5;
+          })()));
+          lineupIds = rival.lineup[divStr] ?? [];
+          if (lineupIds.length) lineupLoadouts = await fetchStockLoadouts(getDb(), lineupIds);
+        }
+
         enemyPositions.forEach((sp, i) => {
           const name = names[i] ?? `ai-${i}`;
+          if (lineupIds.length) {
+            // Round-robin across the lineup so a 4-vehicle squad fielding a
+            // 2-design lineup gets mixed pairs instead of 4 identical rigs.
+            const stockId = lineupIds[i % lineupIds.length];
+            const entry = lineupLoadouts.get(stockId);
+            if (entry) {
+              runner.getEngine().addVehicle(
+                makeVehicleFromLoadout(name, 'ai-team', sp.x, sp.y, sp.facing, `${rival!.name}: ${entry.name}`, entry.loadout),
+              );
+              runner.setVehicleSkill(name, rivalSkill);
+              return;
+            }
+          }
+          // Fallback — generic AI rig
           runner.getEngine().addVehicle(makeTestVehicle(name, 'ai-team', sp.x, sp.y, sp.facing, 70));
-          // Set each enemy's AI skill to the rival's effective skill (base + grudge/20)
           runner.setVehicleSkill(name, rivalSkill);
         });
       } else if (isHighway) {

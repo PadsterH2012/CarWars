@@ -127,8 +127,11 @@ CREATE TABLE IF NOT EXISTS rival_gangs (
   emblem_id TEXT NOT NULL DEFAULT 'skull',
   min_division INTEGER NOT NULL DEFAULT 5,
   boast_lines JSONB NOT NULL DEFAULT '[]',    -- shown when rival beats the player
-  defeat_lines JSONB NOT NULL DEFAULT '[]'    -- shown when player beats the rival
+  defeat_lines JSONB NOT NULL DEFAULT '[]',   -- shown when player beats the rival
+  lineup JSONB NOT NULL DEFAULT '{}'          -- {"5":["stock_id","..."],"10":[...],...} — stock ids fielded per division
 );
+-- Add the column if the table existed before this migration
+ALTER TABLE rival_gangs ADD COLUMN IF NOT EXISTS lineup JSONB NOT NULL DEFAULT '{}';
 
 CREATE TABLE IF NOT EXISTS player_rival_rep (
   player_gang_id UUID NOT NULL REFERENCES gangs(id) ON DELETE CASCADE,
@@ -184,6 +187,27 @@ INSERT INTO rival_gangs (id, name, description, base_skill, primary_colour, seco
    $$["The road has judged you. Guilty.", "Your faith was weak. Our ramplates, strong."]$$,
    $$["The saints bled for this loss. We shall return.", "You drive well. Perhaps there is hope for you."]$$)
 ON CONFLICT (id) DO NOTHING;
+
+-- Rival lineups — which stock blueprints each gang fields at each division.
+-- UPDATE (not INSERT) so adjustments roll out to existing seeded rows. Each
+-- gang's picks match their flavour: Iron Wolves favour heavy metal, Samurai
+-- favour lasers, Rust Raiders the cheap MG/VMG rigs, Executioners pair
+-- precision lasers with turrets, Apostles chase the ram-plate Omega-20.
+UPDATE rival_gangs SET lineup = $$
+  {"5":["sprocket"],"10":["mg3","guardian"],"15":["gatling"],"20":["omega_20","desperado"],"25":["firedrake"],"30":["stormy_weather"]}
+$$ WHERE id = 'iron_wolves';
+UPDATE rival_gangs SET lineup = $$
+  {"5":["lo_beam"],"10":["guardian"],"15":["gatling"],"20":["desperado"],"25":["firedrake"],"30":["stormy_weather"]}
+$$ WHERE id = 'neon_samurai';
+UPDATE rival_gangs SET lineup = $$
+  {"5":["sprocket","lo_beam"],"10":["mg3"],"15":["gatling","volcano"],"20":["desperado"],"25":["firedrake"],"30":["stormy_weather"]}
+$$ WHERE id = 'rust_raiders';
+UPDATE rival_gangs SET lineup = $$
+  {"5":["lo_beam"],"10":["guardian"],"15":["volcano"],"20":["desperado"],"25":["firedrake"],"30":["stormy_weather"]}
+$$ WHERE id = 'executioners';
+UPDATE rival_gangs SET lineup = $$
+  {"5":["sprocket"],"10":["mg3","guardian"],"15":["gatling","volcano"],"20":["omega_20"],"25":["firedrake"],"30":["stormy_weather"]}
+$$ WHERE id = 'highway_apostles';
 
 -- Trigger: keep gangs.treasury in sync with players.money so existing money-update
 -- paths automatically credit/debit the gang. One-way for Phase 3; later phases will
