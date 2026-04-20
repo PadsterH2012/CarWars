@@ -2,6 +2,7 @@ import { Router } from 'express';
 import { getDb } from '../db/client';
 import { requireAuth, AuthRequest } from './middleware';
 import { generateCandidatePool } from '../rules/driverGenerator';
+import { generateRequestForDriver } from '../rules/requestGenerator';
 
 export const driversRouter = Router();
 driversRouter.use(requireAuth);
@@ -318,4 +319,208 @@ driversRouter.post('/candidates/:id/hire', async (req: AuthRequest, res) => {
   } finally {
     client.release();
   }
+});
+
+// ─── Driver requests (autonomous upgrade asks) ─────────────────────────────
+
+// GET /api/drivers/requests — returns pending requests, generating new ones
+// for any driver without one. Expired requests are cleared first.
+driversRouter.get('/requests', async (req: AuthRequest, res) => {
+  const db = getDb();
+  // Mark overdue requests as expired (status flip, not delete — kept for history)
+  await db.query(
+    `UPDATE driver_requests SET status = 'expired', resolved_at = NOW()
+     WHERE player_id = $1 AND status = 'pending' AND expires_at < NOW()`,
+    [req.playerId],
+  );
+  // Load drivers + their assigned vehicles
+  const drvs = await db.query(
+    `SELECT d.id, d.name, d.skill, d.aggression, d.loyalty,
+            d.assigned_vehicle_id,
+            v.id  AS vid, v.name AS vname, v.loadout, v.original_loadout, v.damage_state
+     FROM drivers d
+     LEFT JOIN vehicles v ON v.id = d.assigned_vehicle_id
+     WHERE d.player_id = $1 AND d.alive = TRUE`,
+    [req.playerId],
+  );
+  // Existing pending request per driver — skip if already has one
+  const existing = await db.query<{ driver_id: string }>(
+    `SELECT driver_id FROM driver_requests WHERE player_id = $1 AND status = 'pending'`,
+    [req.playerId],
+  );
+  const hasPending = new Set(existing.rows.map(r => r.driver_id));
+
+  for (const row of drvs.rows) {
+    if (hasPending.has(row.id)) continue;
+    const driver = {
+      id: row.id, name: row.name, skill: row.skill,
+      aggression: row.aggression, loyalty: row.loyalty,
+    };
+    const vehicle = row.vid ? {
+      id: row.vid, name: row.vname,
+      loadout: row.loadout, original_loadout: row.original_loadout, damage_state: row.damage_state,
+    } : null;
+    const gen = generateRequestForDriver(driver, vehicle);
+    if (!gen) continue;
+    await db.query(
+      `INSERT INTO driver_requests
+         (player_id, driver_id, vehicle_id, kind, description, payload, cost)
+       VALUES ($1, $2, $3, $4, $5, $6, $7)`,
+      [req.playerId, row.id, row.vid, gen.kind, gen.description, JSON.stringify(gen.payload), gen.cost],
+    );
+  }
+
+  const pending = await db.query(
+    `SELECT dr.id, dr.kind, dr.description, dr.payload, dr.cost, dr.created_at, dr.expires_at,
+            dr.driver_id, d.name AS driver_name, d.skill AS driver_skill,
+            dr.vehicle_id, v.name AS vehicle_name
+     FROM driver_requests dr
+     JOIN drivers d ON d.id = dr.driver_id
+     LEFT JOIN vehicles v ON v.id = dr.vehicle_id
+     WHERE dr.player_id = $1 AND dr.status = 'pending'
+     ORDER BY dr.created_at DESC`,
+    [req.playerId],
+  );
+  return res.json(pending.rows);
+});
+
+// POST /api/drivers/requests/:id/approve — execute the request action atomically
+driversRouter.post('/requests/:id/approve', async (req: AuthRequest, res) => {
+  const db = getDb();
+  const reqRes = await db.query(
+    `SELECT id, driver_id, vehicle_id, kind, payload, cost
+     FROM driver_requests
+     WHERE id = $1 AND player_id = $2 AND status = 'pending'`,
+    [req.params.id, req.playerId],
+  );
+  if (!reqRes.rows.length) return res.status(404).json({ error: 'Request not found' });
+  const r = reqRes.rows[0];
+  const payload = r.payload as Record<string, any>;
+
+  const client = await db.connect();
+  try {
+    await client.query('BEGIN');
+    const debit = await client.query(
+      `UPDATE players SET money = money - $1 WHERE id = $2 AND money >= $1 RETURNING money`,
+      [r.cost, req.playerId],
+    );
+    if (!debit.rows.length) {
+      await client.query('ROLLBACK');
+      return res.status(400).json({ error: 'Insufficient funds', cost: r.cost });
+    }
+
+    // Load current vehicle state (if request targets one)
+    const vid: string | null = r.vehicle_id;
+    if (vid) {
+      const vRes = await client.query(
+        `SELECT loadout, original_loadout, damage_state FROM vehicles WHERE id = $1 AND player_id = $2`,
+        [vid, req.playerId],
+      );
+      if (!vRes.rows.length) throw new Error('Vehicle not found');
+      const loadout = vRes.rows[0].loadout as any;
+      const orig = (vRes.rows[0].original_loadout ?? loadout) as any;
+      const ds = vRes.rows[0].damage_state as any;
+
+      if (r.kind === 'repair') {
+        // Restore all armor faces from original + clear damage flags + reset ammo
+        const restored = {
+          ...ds,
+          armor: { ...orig.armor },
+          engineDamaged: false,
+          tiresBlown: [],
+          destroyed: false,
+        };
+        const restoredMounts = (loadout.mounts ?? []).map((m: any) => {
+          const om = (orig.mounts ?? []).find((o: any) => o.id === m.id);
+          return om ? { ...m, ammo: om.ammo } : m;
+        });
+        await client.query(
+          `UPDATE vehicles SET damage_state = $1, loadout = $2 WHERE id = $3`,
+          [JSON.stringify(restored), JSON.stringify({ ...loadout, mounts: restoredMounts }), vid],
+        );
+      } else if (r.kind === 'ammo') {
+        const mountId = payload.mountId as string;
+        const mounts = (loadout.mounts ?? []).map((m: any) => {
+          if (m.id !== mountId) return m;
+          const om = (orig.mounts ?? []).find((o: any) => o.id === m.id);
+          return om ? { ...m, ammo: om.ammo } : m;
+        });
+        await client.query(
+          `UPDATE vehicles SET loadout = $1 WHERE id = $2`,
+          [JSON.stringify({ ...loadout, mounts }), vid],
+        );
+      } else if (r.kind === 'armor_up') {
+        const face = payload.face as string;
+        const delta = payload.delta as number;
+        const newOrigArmor = { ...orig.armor, [face]: (orig.armor[face] ?? 0) + delta };
+        const newArmor    = { ...ds.armor,   [face]: (ds.armor[face]   ?? 0) + delta };
+        await client.query(
+          `UPDATE vehicles
+             SET original_loadout = $1, damage_state = $2, value = value + $3
+             WHERE id = $4`,
+          [
+            JSON.stringify({ ...orig, armor: newOrigArmor }),
+            JSON.stringify({ ...ds, armor: newArmor }),
+            r.cost, vid,
+          ],
+        );
+      } else if (r.kind === 'accessory_add') {
+        const accessoryId = payload.accessoryId as string;
+        const bindToFirstMount = !!payload.bindToFirstMount;
+        const accessories = [...(loadout.accessories ?? [])];
+        const boundMountId = bindToFirstMount ? (loadout.mounts?.[0]?.id ?? undefined) : undefined;
+        accessories.push({ id: accessoryId, ...(boundMountId ? { boundMountId } : {}) });
+        await client.query(
+          `UPDATE vehicles SET loadout = $1, value = value + $2 WHERE id = $3`,
+          [JSON.stringify({ ...loadout, accessories }), r.cost, vid],
+        );
+      }
+    }
+
+    // Mark the request resolved
+    await client.query(
+      `UPDATE driver_requests SET status = 'approved', resolved_at = NOW() WHERE id = $1`,
+      [r.id],
+    );
+    // Loyalty +1 for approval (capped at 10)
+    await client.query(
+      `UPDATE drivers SET loyalty = LEAST(10, loyalty + 1) WHERE id = $1`,
+      [r.driver_id],
+    );
+    // Ledger
+    await client.query(
+      `INSERT INTO gang_ledger (gang_id, event_type, amount, description, result)
+       VALUES ((SELECT id FROM gangs WHERE owner_player_id = $1), 'driver_request', $2, $3, $4)`,
+      [
+        req.playerId, -r.cost,
+        `Approved driver request: ${r.kind}`,
+        JSON.stringify({ requestId: r.id, driverId: r.driver_id, vehicleId: vid }),
+      ],
+    );
+
+    await client.query('COMMIT');
+    return res.json({ ok: true, cost: r.cost, moneyRemaining: debit.rows[0].money });
+  } catch (e) {
+    await client.query('ROLLBACK');
+    throw e;
+  } finally {
+    client.release();
+  }
+});
+
+// POST /api/drivers/requests/:id/deny — close + small loyalty hit
+driversRouter.post('/requests/:id/deny', async (req: AuthRequest, res) => {
+  const db = getDb();
+  const r = await db.query(
+    `UPDATE driver_requests SET status = 'denied', resolved_at = NOW()
+     WHERE id = $1 AND player_id = $2 AND status = 'pending'
+     RETURNING driver_id`,
+    [req.params.id, req.playerId],
+  );
+  if (!r.rows.length) return res.status(404).json({ error: 'Request not found' });
+  await db.query(
+    `UPDATE drivers SET loyalty = GREATEST(0, loyalty - 1) WHERE id = $1`,
+    [r.rows[0].driver_id],
+  );
+  return res.json({ ok: true });
 });

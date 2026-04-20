@@ -561,6 +561,26 @@ CREATE TABLE IF NOT EXISTS hire_candidates (
 );
 CREATE INDEX IF NOT EXISTS idx_hire_candidates_player ON hire_candidates(player_id, expires_at);
 
+-- Driver requests — drivers autonomously ask for repairs, ammo, or upgrades.
+-- Player approves (fires the action + debits cost) or denies (closes +
+-- loyalty ding). Requests expire after a few days so stale ones don't pile up.
+CREATE TABLE IF NOT EXISTS driver_requests (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  player_id UUID NOT NULL REFERENCES players(id) ON DELETE CASCADE,
+  driver_id UUID NOT NULL REFERENCES drivers(id) ON DELETE CASCADE,
+  vehicle_id UUID REFERENCES vehicles(id) ON DELETE CASCADE,
+  kind TEXT NOT NULL,             -- 'repair' | 'ammo' | 'armor_up' | 'accessory_add' | 'weapon_swap' | 'weapon_add'
+  description TEXT NOT NULL,
+  payload JSONB NOT NULL,
+  cost INTEGER NOT NULL,
+  status TEXT NOT NULL DEFAULT 'pending',  -- 'pending' | 'approved' | 'denied' | 'expired'
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  expires_at TIMESTAMPTZ NOT NULL DEFAULT NOW() + INTERVAL '3 days',
+  resolved_at TIMESTAMPTZ
+);
+CREATE INDEX IF NOT EXISTS idx_driver_requests_player_status ON driver_requests(player_id, status);
+CREATE INDEX IF NOT EXISTS idx_driver_requests_driver ON driver_requests(driver_id);
+
 -- Indexes for frequent foreign key lookups
 CREATE INDEX IF NOT EXISTS idx_vehicles_player_id ON vehicles(player_id);
 CREATE INDEX IF NOT EXISTS idx_vehicles_gang_id ON vehicles(gang_id);

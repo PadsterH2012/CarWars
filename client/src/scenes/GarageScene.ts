@@ -6,11 +6,17 @@ import { preloadVehicleSprites, bodySpriteKey } from '../game/VehicleSprite';
 interface Vehicle { id: string; name: string; value: number; damage_state: any; loadout: any; in_arena?: boolean; }
 interface Driver { id: string; name: string; skill: number; xp: number; assigned_vehicle_id: string | null; alive: boolean; }
 interface Gang { id: string; name: string; primary_colour: number; secondary_colour: number; emblem_id: EmblemId; treasury: number; reputation: number; }
+interface DriverRequest {
+  id: string; kind: string; description: string; cost: number;
+  driver_id: string; driver_name: string; driver_skill: number;
+  vehicle_id: string | null; vehicle_name: string | null;
+}
 
 export class GarageScene extends Phaser.Scene {
   private token = '';
   private vehicles: Vehicle[] = [];
   private drivers: Driver[] = [];
+  private driverRequests: DriverRequest[] = [];
   private gang: Gang | null = null;
   private money = 0;
   private division = 0;
@@ -33,11 +39,12 @@ export class GarageScene extends Phaser.Scene {
   async create(): Promise<void> {
     const host = window.location.hostname;
 
-    const [meRes, vRes, dRes, gRes] = await Promise.all([
+    const [meRes, vRes, dRes, gRes, reqRes] = await Promise.all([
       fetch(`http://${host}:3001/api/me`, { headers: { Authorization: `Bearer ${this.token}` } }),
       fetch(`http://${host}:3001/api/vehicles`, { headers: { Authorization: `Bearer ${this.token}` } }),
       fetch(`http://${host}:3001/api/drivers`, { headers: { Authorization: `Bearer ${this.token}` } }),
       fetch(`http://${host}:3001/api/gangs/mine`, { headers: { Authorization: `Bearer ${this.token}` } }),
+      fetch(`http://${host}:3001/api/drivers/requests`, { headers: { Authorization: `Bearer ${this.token}` } }),
     ]);
     const me = await meRes.json();
     this.money = me.money ?? 0;
@@ -45,6 +52,7 @@ export class GarageScene extends Phaser.Scene {
     this.vehicles = await vRes.json();
     this.drivers = await dRes.json();
     if (gRes.ok) this.gang = await gRes.json();
+    if (reqRes.ok) this.driverRequests = await reqRes.json();
 
     this.mainLayer = this.add.container(0, 0);
 
@@ -212,6 +220,16 @@ export class GarageScene extends Phaser.Scene {
     }).setInteractive();
     hireBtn.on('pointerdown', () => this.hireDriver());
     add(hireBtn);
+
+    // Driver-request badge — only shown when there are pending requests
+    if (this.driverRequests.length > 0) {
+      const reqBtn = this.add.text(crewX, 156, `⚠ ${this.driverRequests.length} DRIVER REQUEST${this.driverRequests.length > 1 ? 'S' : ''}`, {
+        color: '#ffcc00', fontSize: '11px', fontFamily: 'monospace',
+        backgroundColor: '#332200', padding: { x: 6, y: 3 },
+      }).setInteractive();
+      reqBtn.on('pointerdown', () => this.showRequestsModal());
+      add(reqBtn);
+    }
 
     const livingDrivers = this.drivers.filter(d => d.alive);
     if (livingDrivers.length === 0) {
@@ -561,6 +579,115 @@ export class GarageScene extends Phaser.Scene {
     // modal and restarts the garage to reflect the new driver (and vehicle
     // if package deal).
     await this.showHireModal();
+  }
+
+  private async showRequestsModal(): Promise<void> {
+    const host = window.location.hostname;
+    const overlay = document.createElement('div');
+    Object.assign(overlay.style, {
+      position: 'fixed', inset: '0', zIndex: '200',
+      background: 'rgba(0,0,0,0.82)',
+      display: 'flex', alignItems: 'center', justifyContent: 'center',
+      fontFamily: "'Courier New', monospace",
+    });
+    const panel = document.createElement('div');
+    Object.assign(panel.style, {
+      background: '#0f0f22', border: '2px solid #ffcc00', color: '#ccc',
+      padding: '20px', width: 'min(760px, 92vw)', maxHeight: '88vh',
+      overflow: 'auto', boxShadow: '0 10px 40px rgba(0,0,0,0.6)',
+    });
+    overlay.appendChild(panel);
+    document.body.appendChild(overlay);
+
+    const esc = (s: string): string =>
+      s.replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c] as string));
+
+    const render = (requests: DriverRequest[]): void => {
+      const kindIcon: Record<string, string> = {
+        repair: '🔧', ammo: '📦', accessory_add: '💻', armor_up: '🛡️',
+      };
+      const rows = requests.length === 0
+        ? '<div style="color:#666;padding:12px;text-align:center;font-size:12px;">No pending requests.</div>'
+        : requests.map(r => {
+          const affordable = this.gang && this.gang.treasury >= r.cost;
+          return `
+            <div style="background:#11112a;border:1px solid #2a2a44;padding:12px;margin-bottom:10px;display:grid;grid-template-columns:40px 1fr auto;gap:12px;align-items:center;">
+              <div style="font-size:22px;">${kindIcon[r.kind] ?? '❓'}</div>
+              <div>
+                <div style="color:#ccc;font-size:12px;line-height:1.4;">${esc(r.description)}</div>
+                <div style="color:#888;font-size:10px;margin-top:2px;">${esc(r.driver_name)} (sk${r.driver_skill})${r.vehicle_name ? ` · ${esc(r.vehicle_name)}` : ''}</div>
+              </div>
+              <div style="display:flex;flex-direction:column;gap:6px;align-items:flex-end;">
+                <span style="color:#ffcc00;font-size:13px;font-weight:bold;">$${r.cost.toLocaleString()}</span>
+                <div style="display:flex;gap:4px;">
+                  <button data-action="approve" data-id="${r.id}"
+                          style="padding:4px 10px;font-family:inherit;font-size:10px;background:${affordable ? '#003322' : '#221122'};color:${affordable ? '#00ff88' : '#888'};border:1px solid ${affordable ? '#00ff88' : '#444'};cursor:${affordable ? 'pointer' : 'not-allowed'};"
+                          ${affordable ? '' : 'disabled'}>APPROVE</button>
+                  <button data-action="deny" data-id="${r.id}"
+                          style="padding:4px 10px;font-family:inherit;font-size:10px;background:#221122;color:#ff6666;border:1px solid #663333;cursor:pointer;">DENY</button>
+                </div>
+              </div>
+            </div>`;
+        }).join('');
+
+      panel.textContent = '';
+      const range = document.createRange();
+      range.selectNodeContents(panel);
+      const html = `
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:14px;">
+          <h2 style="margin:0;color:#ffcc00;letter-spacing:2px;">DRIVER REQUESTS</h2>
+          <div style="font-size:11px;color:#888;">Treasury <b style="color:#ffcc00;">$${this.gang?.treasury.toLocaleString() ?? 0}</b></div>
+        </div>
+        <div style="font-size:11px;color:#888;margin-bottom:10px;">Denying a request costs driver loyalty. Approving boosts it.</div>
+        ${rows}
+        <div style="margin-top:14px;padding-top:10px;border-top:1px solid #2a2a44;display:flex;justify-content:flex-end;">
+          <button data-action="close" style="padding:8px 18px;font-family:inherit;font-size:12px;background:transparent;color:#888;border:1px solid #444;cursor:pointer;">[ CLOSE ]</button>
+        </div>`;
+      panel.appendChild(range.createContextualFragment(html));
+    };
+
+    const loadPending = async (): Promise<void> => {
+      panel.textContent = 'Loading requests\u2026';
+      const r = await fetch(`http://${host}:3001/api/drivers/requests`, {
+        headers: { Authorization: `Bearer ${this.token}` },
+      });
+      this.driverRequests = r.ok ? await r.json() : [];
+      render(this.driverRequests);
+    };
+
+    const close = (): void => { overlay.remove(); this.scene.restart({ token: this.token }); };
+
+    panel.addEventListener('click', async (e) => {
+      const btn = (e.target as HTMLElement).closest<HTMLElement>('[data-action]');
+      if (!btn) return;
+      const action = btn.dataset.action;
+      if (action === 'close') { close(); return; }
+      const id = btn.dataset.id;
+      if (!id) return;
+      if (action === 'approve' || action === 'deny') {
+        const r = await fetch(`http://${host}:3001/api/drivers/requests/${id}/${action}`, {
+          method: 'POST',
+          headers: { Authorization: `Bearer ${this.token}` },
+        });
+        if (r.ok) {
+          await loadPending();
+          // Refresh gang treasury from the response
+          if (action === 'approve') {
+            const gr = await fetch(`http://${host}:3001/api/gangs/mine`, {
+              headers: { Authorization: `Bearer ${this.token}` },
+            });
+            if (gr.ok) this.gang = await gr.json();
+          }
+        } else {
+          const body = await r.json().catch(() => ({}));
+          alert(body.error ?? 'Action failed');
+        }
+      }
+    });
+
+    overlay.addEventListener('click', (e) => { if (e.target === overlay) close(); });
+
+    await loadPending();
   }
 
   private async showHireModal(): Promise<void> {
