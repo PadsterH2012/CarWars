@@ -276,8 +276,8 @@ export class VehicleDesignerScene extends Phaser.Scene {
         this.markDirty();
         return;
       }
-      case 'weapon-toggle':
-        this.toggleWeapon(value!);
+      case 'add-weapon':
+        this.addWeapon(value!);
         return;
       case 'cycle-arc':
         this.cycleArc(value!);
@@ -329,19 +329,18 @@ export class VehicleDesignerScene extends Phaser.Scene {
     }
   }
 
-  private toggleWeapon(id: string): void {
-    const idx = this.mounts.findIndex(m => m.weaponId === id);
-    if (idx >= 0) {
-      this.mounts.splice(idx, 1);
-      this.flashStatus('', '#888');
-    } else {
-      this.mounts.push({ id: `m${Date.now()}`, arc: 'front', weaponId: id, ammo: 50 });
-    }
+  // Add a new mount with this weapon (default arc=front, default ammo=mag size).
+  // Duplicates are explicitly allowed — a truck can carry 3 MGs, two front +
+  // one back, etc. Removal is done per-mount via the mount list, not here.
+  private addWeapon(id: string): void {
+    const wep = this.weaponCatalog.find(w => w.id === id);
+    const ammo = wep?.shotsPerMag ?? 50;
+    this.mounts.push({ id: `m${Date.now()}-${this.mounts.length}`, arc: 'front', weaponId: id, ammo });
     this.markDirty();
   }
 
-  private cycleArc(weaponId: string): void {
-    const mount = this.mounts.find(m => m.weaponId === weaponId);
+  private cycleArc(mountId: string): void {
+    const mount = this.mounts.find(m => m.id === mountId);
     if (!mount) return;
     const body = this.catalog?.bodies.find(b => b.id === this.bodyType);
     // Skip 'turret' in the cycle when the body can't mount one at all, or
@@ -728,39 +727,61 @@ export class VehicleDesignerScene extends Phaser.Scene {
   }
 
   private renderWeaponsPanel(): string {
-    // For the add/toggle grid the implicit arc is 'front' (new mounts default
-    // to front). Each inactive weapon is fit-checked against current capacity
-    // + its arc requirement; failures render disabled with a reason tooltip.
+    // Top half: weapon library — click to ADD a new mount. Each weapon may be
+    // installed multiple times (e.g. 3× MG) and the same arc may host more
+    // than one mount (linked weapons). Fit/arc checks grey out rows that
+    // won't fit.
+    const library = WEAPONS.map(({ id, label }) => {
+      const count = this.mounts.filter(m => m.weaponId === id).length;
+      let disabled = false;
+      let tip = '';
+      if (!this.arcAllowed(id, 'front')) {
+        disabled = true;
+        tip = 'front arc not allowed for this weapon';
+      } else {
+        const fit = this.canFitWeapon(id);
+        if (!fit.fits) { disabled = true; tip = fit.reason; }
+      }
+      const disabledStyle = disabled ? 'opacity:0.35;cursor:not-allowed;pointer-events:none;' : '';
+      const badge = count > 0 ? `<span style="float:right;color:#ffcc00;">×${count}</span>` : '';
+      return `
+        <button class="opt" data-action="add-weapon" data-value="${id}"
+                style="text-align:left;padding-left:10px;${disabledStyle}"
+                title="${esc(tip || 'add mount')}">
+          ${label}${badge}${disabled ? ' ✕' : ''}
+        </button>`;
+    }).join('');
+
+    // Bottom half: current mounts, per-mount arc cycle + remove.
+    const mountsList = this.mounts.length === 0
+      ? '<div style="color:#666;font-size:11px;padding:8px 2px;">No weapons mounted. Click a weapon above to add one.</div>'
+      : this.mounts.map((m, idx) => {
+        const wep = this.weaponCatalog.find(w => w.id === m.weaponId);
+        const arcLabel = m.arc === 'turret' && m.turretSize
+          ? `T·${m.turretSize[0]}`
+          : m.arc.charAt(0).toUpperCase();
+        return `
+          <div style="display:grid;grid-template-columns:20px 1fr 44px 30px;gap:4px;align-items:center;padding:4px 0;border-bottom:1px dotted #2a2a44;font-size:11px;">
+            <span style="color:#556;">${idx + 1}</span>
+            <span style="color:#ccc;">${esc(wep?.name ?? m.weaponId ?? '(empty)')}</span>
+            <button class="opt" style="padding:3px 6px;font-size:10px;color:#ffcc00;border-color:#664400;background:#332200;"
+                    data-action="cycle-arc" data-value="${m.id}"
+                    title="cycle arc">▸${arcLabel}</button>
+            <button class="opt" style="padding:3px 6px;font-size:10px;color:#ff6666;"
+                    data-action="remove-mount" data-value="${m.id}"
+                    title="remove mount">×</button>
+          </div>`;
+      }).join('');
+
     return `
       <div class="cw-panel">
-        <h3>WEAPONS (${this.mounts.length})</h3>
-        <div style="display:grid;grid-template-columns:1fr 50px;gap:4px;">
-          ${WEAPONS.map(({ id, label }) => {
-            const mount = this.mounts.find(m => m.weaponId === id);
-            const active = !!mount;
-            const arc = mount ? mount.arc.charAt(0).toUpperCase() : '';
-            let disabled = false;
-            let tip = '';
-            if (!active) {
-              if (!this.arcAllowed(id, 'front')) {
-                disabled = true;
-                tip = `front arc not allowed for this weapon`;
-              } else {
-                const fit = this.canFitWeapon(id);
-                if (!fit.fits) { disabled = true; tip = fit.reason; }
-              }
-            }
-            const disabledStyle = disabled
-              ? 'opacity:0.35;cursor:not-allowed;pointer-events:none;'
-              : '';
-            return `
-              <button class="opt ${active ? 'selected' : ''}" data-action="weapon-toggle" data-value="${id}" style="text-align:left;padding-left:10px;${disabledStyle}" title="${esc(tip)}">${label}${disabled ? ' ✕' : ''}</button>
-              <button class="opt" data-action="cycle-arc" data-value="${id}" style="${active ? 'color:#ffcc00;border-color:#664400;background:#332200' : 'opacity:0.3'}" ${active ? '' : 'disabled'}>▸${arc}</button>
-            `;
-          }).join('')}
+        <h3>ADD WEAPON</h3>
+        <div class="opt-grid" style="grid-template-columns:1fr 1fr;">
+          ${library}
         </div>
-        <div style="margin-top:10px;font-size:10px;color:#666;">
-          Greyed weapons don't fit the current body's spaces or weight budget.
+        <h3 style="margin-top:14px;">MOUNTS (${this.mounts.length})</h3>
+        <div style="max-height:260px;overflow-y:auto;">
+          ${mountsList}
         </div>
       </div>`;
   }
@@ -929,7 +950,7 @@ export class VehicleDesignerScene extends Phaser.Scene {
       const rows = [`
         <div style="padding:6px 10px;background:#0a0a1a;font-size:10px;color:#aac;letter-spacing:2px;">
           ▸ MOUNT ${esc(m.id.slice(0, 6))} — ARC: ${arcLabel}
-          ${m.weaponId ? `<button class="opt" style="padding:2px 6px;margin-left:8px;font-size:10px;" data-action="cycle-arc" data-value="${esc(m.weaponId)}">cycle arc</button>` : ''}
+          <button class="opt" style="padding:2px 6px;margin-left:8px;font-size:10px;" data-action="cycle-arc" data-value="${m.id}">cycle arc</button>
           <button class="opt" style="padding:2px 6px;margin-left:6px;font-size:10px;color:#ff6666;" data-action="remove-mount" data-value="${m.id}">remove</button>
         </div>
       `];
