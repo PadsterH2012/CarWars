@@ -605,6 +605,7 @@ export class GarageScene extends Phaser.Scene {
     const render = (requests: DriverRequest[]): void => {
       const kindIcon: Record<string, string> = {
         repair: '🔧', ammo: '📦', accessory_add: '💻', armor_up: '🛡️',
+        compound_swap: '🔄',
       };
       const rows = requests.length === 0
         ? '<div style="color:#666;padding:12px;text-align:center;font-size:12px;">No pending requests.</div>'

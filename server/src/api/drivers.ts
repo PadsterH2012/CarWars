@@ -474,6 +474,32 @@ driversRouter.post('/requests/:id/approve', async (req: AuthRequest, res) => {
             r.cost, vid,
           ],
         );
+      } else if (r.kind === 'compound_swap') {
+        // Remove step + add step in one go. Net cost already precomputed by
+        // the generator; we still re-validate capacity after both edits.
+        const remove = payload.remove as { type: string; mountId?: string };
+        const add    = payload.add    as { type: string; accessoryId?: string; bindToFirstMount?: boolean; cost?: number };
+        let newLoadout = { ...loadout };
+        if (remove.type === 'weapon' && remove.mountId) {
+          newLoadout = { ...newLoadout, mounts: (newLoadout.mounts ?? []).filter(m => m.id !== remove.mountId) };
+        }
+        if (add.type === 'accessory' && add.accessoryId) {
+          const accessories = [...(newLoadout.accessories ?? [])];
+          const boundMountId = add.bindToFirstMount ? newLoadout.mounts?.[0]?.id : undefined;
+          accessories.push({ id: add.accessoryId, ...(boundMountId ? { boundMountId } : {}) });
+          newLoadout = { ...newLoadout, accessories };
+        }
+        const cap = computeCapacity(newLoadout);
+        if (isInvalid(cap)) {
+          await client.query('ROLLBACK');
+          return res.status(400).json({
+            error: `Compound swap would still exceed capacity (${cap.errors.join('; ')}).`,
+          });
+        }
+        await client.query(
+          `UPDATE vehicles SET loadout = $1, value = value + $2 WHERE id = $3`,
+          [JSON.stringify(newLoadout), r.cost, vid],
+        );
       } else if (r.kind === 'accessory_add') {
         const accessoryId = payload.accessoryId as string;
         const bindToFirstMount = !!payload.bindToFirstMount;

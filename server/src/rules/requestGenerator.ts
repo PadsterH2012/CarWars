@@ -33,10 +33,43 @@ interface VehicleRow {
 }
 
 export interface GeneratedRequest {
-  kind: 'repair' | 'ammo' | 'armor_up' | 'accessory_add';
+  kind: 'repair' | 'ammo' | 'armor_up' | 'accessory_add' | 'compound_swap';
   description: string;
   payload: Record<string, unknown>;
-  cost: number;
+  cost: number;  // net cost (install minus trade-in refund for compound)
+}
+
+// 50% trade-in rate — matches the workshop's WORKSHOP_TRADE_IN constant
+const TRADE_IN = 0.5;
+
+// Find the cheapest removable weapon mount that, when dropped, would let the
+// proposed accessory fit within the body's spaces/weight budget. Returns the
+// mount or null if no single removal works.
+function findRemovableForFit(
+  loadout: VehicleLoadout,
+  accessoryToAdd: string,
+): { mountId: string; weaponId: string; refund: number } | null {
+  const accDef = ACCESSORY_INDEX[accessoryToAdd];
+  if (!accDef) return null;
+  const mounts = loadout.mounts ?? [];
+  // Sort cheapest-weapon-first so drivers prefer dropping the least valuable rig
+  const candidates = mounts
+    .filter(m => m.weaponId)
+    .map(m => ({ mount: m, weapon: WEAPONS.find(w => w.id === m.weaponId) }))
+    .filter(c => c.weapon)
+    .sort((a, b) => (a.weapon!.cost ?? 0) - (b.weapon!.cost ?? 0));
+  for (const c of candidates) {
+    const trimmedMounts = mounts.filter(mm => mm.id !== c.mount.id);
+    const trimmedAccessories = [...(loadout.accessories ?? [])];
+    const boundMountId = accDef.bindable ? trimmedMounts[0]?.id : undefined;
+    trimmedAccessories.push({ id: accessoryToAdd, ...(boundMountId ? { boundMountId } : {}) });
+    const proposed = { ...loadout, mounts: trimmedMounts, accessories: trimmedAccessories };
+    if (!isInvalid(computeCapacity(proposed))) {
+      const refund = Math.floor((c.weapon!.cost + (c.weapon!.ammoCost ?? 0) * c.mount.ammo) * TRADE_IN);
+      return { mountId: c.mount.id, weaponId: c.weapon!.id, refund };
+    }
+  }
+  return null;
 }
 
 const ARMOR_MUL: Record<string, number> = {
@@ -99,31 +132,49 @@ export function generateRequestForDriver(driver: Driver, vehicle: VehicleRow | n
     }
   }
 
-  // 3. Accessory — skilled drivers without a targeting computer
+  // 3. Accessory — skilled drivers without a targeting computer. If the
+  // straight install won't fit, try to find a weapon to drop and propose a
+  // compound swap instead. Drivers with high loyalty suggest the cheapest
+  // tradeoff; low loyalty doesn't offer alternatives.
   const accessories = loadout.accessories ?? [];
   const hasComputer = accessories.some(a => {
     const def = ACCESSORY_INDEX[a.id];
     return def?.category === 'computer';
   });
   if (!hasComputer && driver.skill >= 3 && Math.random() < 0.15 * (driver.skill / 6)) {
-    // Pick computer scaled by skill: low-skill asks for SWC, high-skill asks for HRC
     const pickId = driver.skill >= 4 ? 'hrc' : 'swc';
     const def = ACCESSORY_INDEX[pickId];
     if (def) {
-      // Only ask if it would actually fit — otherwise the approval would
-      // reject and the request would just annoy the player.
       const boundMountId = def.bindable ? loadout.mounts?.[0]?.id : undefined;
-      const proposed = {
+      const straightProposed = {
         ...loadout,
         accessories: [...accessories, { id: pickId, ...(boundMountId ? { boundMountId } : {}) }],
       };
-      if (!isInvalid(computeCapacity(proposed))) {
+      if (!isInvalid(computeCapacity(straightProposed))) {
         return {
           kind: 'accessory_add',
           description: `${driver.name} is asking for a ${def.name} — '${def.description}'`,
           payload: { vehicleId: vehicle.id, accessoryId: pickId, bindToFirstMount: def.bindable },
           cost: def.cost,
         };
+      }
+      // Straight install busts capacity — see if trading in a weapon would help
+      if (driver.loyalty >= 4) {
+        const tradeIn = findRemovableForFit(loadout, pickId);
+        if (tradeIn) {
+          const net = def.cost - tradeIn.refund;
+          const wepName = WEAPONS.find(w => w.id === tradeIn.weaponId)?.name ?? tradeIn.weaponId;
+          return {
+            kind: 'compound_swap',
+            description: `${driver.name} wants a ${def.name} — offers to drop the ${wepName} to make room (trade-in $${tradeIn.refund.toLocaleString()}, net $${net.toLocaleString()})`,
+            payload: {
+              vehicleId: vehicle.id,
+              remove: { type: 'weapon', mountId: tradeIn.mountId, refund: tradeIn.refund },
+              add: { type: 'accessory', accessoryId: pickId, bindToFirstMount: def.bindable, cost: def.cost },
+            },
+            cost: net,
+          };
+        }
       }
     }
   }
