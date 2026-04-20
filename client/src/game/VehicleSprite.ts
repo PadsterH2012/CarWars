@@ -147,7 +147,19 @@ export function buildVehicleSprite(
     backgroundColor: '#001a11', padding: { x: 3, y: 1 },
   }).setOrigin(0.5).setVisible(false).setName('order');
 
-  const children = [fireGlow, bodySprite, ...weaponLayers, barFront, barBack, barLeft, barRight, label, orderLabel];
+  // Sidecar overlay — small pod + 3rd wheel to the right of the cycle body,
+  // only when the loadout has hasSidecar flagged. Tinted with the team colour.
+  const sidecarLayers: Phaser.GameObjects.GameObject[] = [];
+  if (v.stats.loadout?.hasSidecar) {
+    const podW = Math.max(6, dims.w * 0.7);
+    const podH = Math.round(dims.h * 0.55);
+    const podX = dims.w / 2 + podW / 2 + 1;
+    const pod = scene.add.rectangle(podX, 0, podW, podH, opts.teamColor).setStrokeStyle(1, 0x111111).setName('sidecar-pod');
+    const wheel = scene.add.rectangle(podX + podW / 2 + 1, podH * 0.2, 3, podH * 0.45, 0x000000).setStrokeStyle(0.5, 0xffffff).setName('sidecar-wheel');
+    sidecarLayers.push(pod, wheel);
+  }
+
+  const children = [fireGlow, bodySprite, ...sidecarLayers, ...weaponLayers, barFront, barBack, barLeft, barRight, label, orderLabel];
   const container = scene.add.container(0, 0, children).setDepth(2);
   // Store dims for update-time calcs
   (container as Phaser.GameObjects.Container & { bodyDims?: BodyDims }).bodyDims = dims;

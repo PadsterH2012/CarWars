@@ -78,6 +78,10 @@ export interface VehicleLoadout {
   armorType?: ArmorType;
   powerPlantType?: PowerPlantType;
   hasRamplate?: boolean;  // when true, vehicle can push pushable wreckage aside on collision
+  // Rigid sidecar attachment — only valid on medium/heavy cycles per the
+  // Compendium. Adds bonus spaces + load + a third wheel, and lets the cycle
+  // host side-mounted weapons at the cost of some maneuverability.
+  hasSidecar?: boolean;
 }
 
 export interface DamageState {

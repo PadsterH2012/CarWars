@@ -4,6 +4,7 @@ import { POWER_PLANTS } from './data/power-plants';
 import { TIRES } from './data/tires';
 import { WEAPONS } from './data/weapons';
 import { TURRETS, TURRET_TIER_RANK } from './data/turrets';
+import { SIDECAR, sidecarAllowedFor } from './data/sidecars';
 
 export interface CapacityReport {
   spacesUsed: number;
@@ -43,6 +44,13 @@ export function computeCapacity(loadout: VehicleLoadout): CapacityReport {
   const plant = POWER_PLANTS.find(p => p.id === loadout.powerPlantType);
   const tire = TIRES.find(t => t.id === (loadout.tireType ?? 'standard'));
 
+  // Sidecar — when attached it adds its own weight to load AND grants bonus
+  // spaces + load capacity (pod has its own cargo room). Only valid on
+  // eligible cycle bodies; anything else triggers a validation error below.
+  const hasSidecar = !!loadout.hasSidecar;
+  const spacesMax = body.spaces + (hasSidecar ? SIDECAR.bonusSpaces : 0);
+  const loadMax   = body.maxLoad + (hasSidecar ? SIDECAR.bonusLoad   : 0);
+
   // Spaces: power plant + weapons + turret rings. Armor/tires don't consume spaces.
   let spacesUsed = plant?.spaces ?? 0;
   for (const m of loadout.mounts ?? []) {
@@ -68,12 +76,16 @@ export function computeCapacity(loadout: VehicleLoadout): CapacityReport {
       if (t) loadWeight += t.weight;
     }
   }
+  if (hasSidecar) loadWeight += SIDECAR.weight;
 
   const errors: string[] = [];
-  const overSpaces = spacesUsed > body.spaces;
-  const overWeight = loadWeight > body.maxLoad;
-  if (overSpaces) errors.push(`Over spaces: ${spacesUsed} / ${body.spaces}`);
-  if (overWeight) errors.push(`Over weight: ${Math.round(loadWeight)} / ${body.maxLoad} lbs`);
+  const overSpaces = spacesUsed > spacesMax;
+  const overWeight = loadWeight > loadMax;
+  if (overSpaces) errors.push(`Over spaces: ${spacesUsed} / ${spacesMax}`);
+  if (overWeight) errors.push(`Over weight: ${Math.round(loadWeight)} / ${loadMax} lbs`);
+  if (hasSidecar && !sidecarAllowedFor(bodyType)) {
+    errors.push(`${body.name} cannot mount a sidecar (medium or heavy cycles only)`);
+  }
 
   // Turret-specific validation. A turret mount must declare its size; the
   // chosen turret must fit the body (bodies.maxTurretSize); and the weapon
@@ -103,9 +115,9 @@ export function computeCapacity(loadout: VehicleLoadout): CapacityReport {
 
   return {
     spacesUsed: Math.round(spacesUsed),
-    spacesMax: body.spaces,
+    spacesMax,
     loadWeight: Math.round(loadWeight),
-    loadMax: body.maxLoad,
+    loadMax,
     overSpaces,
     overWeight,
     errors,

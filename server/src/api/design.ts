@@ -7,6 +7,7 @@ import { TIRES } from '../rules/data/tires';
 import { WEAPONS } from '../rules/data/weapons';
 import { deriveStats } from '../rules/vehicle';
 import { computeCapacity } from '../rules/capacity';
+import { SIDECAR } from '../rules/data/sidecars';
 
 // Armor type cost and weight multipliers (Compendium 2E, p.40)
 // costMul applies to armorCostPerPt, wtMul applies to armorWtPerPt
@@ -94,6 +95,7 @@ designRouter.post('/', (req, res) => {
     tireType: (tireType ?? 'standard') as TireType,
     armorType: (armorType ?? 'ablative') as ArmorType,
     powerPlantType: powerPlantType as PowerPlantType,
+    hasSidecar: !!req.body.hasSidecar,
   };
 
   try {
@@ -108,7 +110,8 @@ designRouter.post('/', (req, res) => {
     const armorMul = ARMOR_TYPE_MULS[loadout.armorType ?? 'ablative'] ?? ARMOR_TYPE_MULS.ablative;
     const totalCost = body.price + plant.cost + tire.costPerTire * tireCount
       + armorPts * body.armorCostPerPt * armorMul.costMul
-      + suspCost + weaponCost;
+      + suspCost + weaponCost
+      + (loadout.hasSidecar ? SIDECAR.cost : 0);
 
     const capacity = computeCapacity(loadout);
     return res.json({

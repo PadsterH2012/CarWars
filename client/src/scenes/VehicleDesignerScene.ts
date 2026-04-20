@@ -42,6 +42,11 @@ interface TireDef  { id: string; name: string; weightPerTire: number; hcModifier
 interface TurretDef { id: TurretSize; name: string; cost: number; weight: number; spaces: number; maxWeaponSpaces: number; }
 type ArmorMuls = Record<string, { costMul: number; wtMul: number }>;
 
+interface SidecarDef {
+  cost: number; weight: number; bonusSpaces: number; bonusLoad: number;
+  allowedBodies: string[];
+}
+
 interface DesignCatalog {
   bodies: BodyDef[];
   plants: PlantDef[];
@@ -49,6 +54,7 @@ interface DesignCatalog {
   turrets: TurretDef[];
   armors: ArmorMuls;
   weapons: WeaponDef[];
+  sidecar: SidecarDef;
 }
 
 const TURRET_RANK: Record<TurretSize, number> = { small: 1, standard: 2, heavy: 3 };
@@ -92,6 +98,7 @@ export class VehicleDesignerScene extends Phaser.Scene {
   private armorType = 'ablative';
   private mounts: MountConfig[] = [{ id: 'm0', arc: 'front', weaponId: 'mg', ammo: 50 }];
   private armor: Record<Face, number> = { front: 20, back: 15, left: 15, right: 15 };
+  private hasSidecar = false;
 
   // UI state
   private mode: Mode = 'simple';
@@ -125,6 +132,7 @@ export class VehicleDesignerScene extends Phaser.Scene {
     this.armorType = 'ablative';
     this.mounts = [{ id: 'm0', arc: 'front', weaponId: 'mg', ammo: 50 }];
     this.armor = { front: 20, back: 15, left: 15, right: 15 };
+    this.hasSidecar = false;
     this.activeTab = 'body';
     this.selectedFace = 'front';
     this.stats = null;
@@ -210,6 +218,7 @@ export class VehicleDesignerScene extends Phaser.Scene {
           right: l.armor.right ?? this.armor.right,
         };
       }
+      this.hasSidecar = !!l.hasSidecar;
     } catch { /* keep defaults */ }
   }
 
@@ -279,6 +288,15 @@ export class VehicleDesignerScene extends Phaser.Scene {
       case 'add-weapon':
         this.addWeapon(value!);
         return;
+      case 'toggle-sidecar':
+        if (!this.sidecarAllowedForBody()) {
+          this.flashStatus(`Sidecar requires a medium or heavy cycle`, '#ff4444');
+          this.rebuild();
+          return;
+        }
+        this.hasSidecar = !this.hasSidecar;
+        this.markDirty();
+        return;
       case 'cycle-arc':
         this.cycleArc(value!);
         return;
@@ -315,7 +333,15 @@ export class VehicleDesignerScene extends Phaser.Scene {
     if (!BODY_TYPES.find(b => b.id === id)) return;
     this.bodyType = id;
     this.syncPowerPlantToBody();
+    // Sidecars are only valid on specific cycle frames — if the new body isn't
+    // eligible, silently detach the sidecar so capacity validation passes.
+    if (this.hasSidecar && !this.sidecarAllowedForBody()) this.hasSidecar = false;
     this.markDirty();
+  }
+
+  private sidecarAllowedForBody(): boolean {
+    const allowed = this.catalog?.sidecar.allowedBodies ?? [];
+    return allowed.includes(this.bodyType);
   }
 
   private syncPowerPlantToBody(): void {
@@ -622,7 +648,7 @@ export class VehicleDesignerScene extends Phaser.Scene {
   }
 
   private renderSimpleOptionsForTab(tab: Tab): string {
-    if (tab === 'body')       return this.renderOptionList('BODY TYPE', BODY_TYPES, this.bodyType, 'body');
+    if (tab === 'body')       return this.renderOptionList('BODY TYPE', BODY_TYPES, this.bodyType, 'body') + this.renderSidecarBlock();
     if (tab === 'engine')     return this.renderEnginePanel();
     if (tab === 'suspension') return this.renderOptionList('SUSPENSION', SUSPENSIONS, this.suspensionType, 'suspension');
     if (tab === 'tires')      return this.renderOptionList('TIRES', TIRE_TYPES, this.tireType, 'tires', id => this.canFitTire(id));
@@ -810,6 +836,30 @@ export class VehicleDesignerScene extends Phaser.Scene {
       </div>`;
   }
 
+  private renderSidecarBlock(): string {
+    const sc = this.catalog?.sidecar;
+    if (!sc) return '';
+    const eligible = this.sidecarAllowedForBody();
+    const on = this.hasSidecar;
+    const tip = eligible
+      ? (on ? 'detach sidecar' : `+${sc.bonusSpaces} spc / +${sc.bonusLoad} lbs load · ${sc.weight} lbs · $${sc.cost}`)
+      : `sidecars only fit medium or heavy cycles`;
+    const style = eligible
+      ? (on ? 'color:#00ff88;background:#002211;border:1px solid #00ff88;' : '')
+      : 'opacity:0.4;cursor:not-allowed;pointer-events:none;';
+    return `
+      <div style="margin-top:14px;padding-top:10px;border-top:1px solid #2a2a44;">
+        <h3>SIDECAR</h3>
+        <button class="opt" data-action="toggle-sidecar" style="width:100%;padding:8px;${style}" title="${esc(tip)}">
+          ${on ? '✓ Sidecar attached' : eligible ? 'Attach Sidecar' : 'Sidecar — requires med/hvy cycle'}
+        </button>
+        <div style="margin-top:8px;font-size:10px;color:#666;line-height:1.5;">
+          Cost: $${sc.cost.toLocaleString()} · +${sc.bonusSpaces} spaces · +${sc.bonusLoad} lb load<br>
+          Adds a 3rd wheel and a side-mounted pod; weapons on the right arc live in the sidecar.
+        </div>
+      </div>`;
+  }
+
   private renderCapacityBlock(): string {
     const c = this.stats?.capacity;
     if (!c) return '';
@@ -886,6 +936,7 @@ export class VehicleDesignerScene extends Phaser.Scene {
             return `<button class="opt" style="${style}" data-action="add-mount" data-value="turret" title="${esc(tip)}">+ turret${disabled ? ' ✕' : ''}</button>`;
           })()}
         </div>
+        ${this.renderSidecarBlock()}
       </div>`;
   }
 
@@ -1102,6 +1153,23 @@ export class VehicleDesignerScene extends Phaser.Scene {
       <text x="${cx}" y="${cy - halfH - 26}" text-anchor="middle" fill="#ffcc88" font-size="9" font-family="monospace" letter-spacing="2">FRONT</text>
       <text x="${cx}" y="${cy + halfH + 30}" text-anchor="middle" fill="#ccaa66" font-size="9" font-family="monospace" letter-spacing="2">BACK</text>`;
 
+    // Sidecar pod + third wheel drawn to the right of the main body when
+    // the loadout has hasSidecar. Tinted with the gang primary via CSS fill.
+    const primaryHex = `#${this.gangPrimaryColour.toString(16).padStart(6, '0')}`;
+    const sidecarSvg = this.hasSidecar ? (() => {
+      const podW = bodyW * 0.55;
+      const podH = bodyH * 0.5;
+      const podX = cx + halfW + 8;
+      const podY = cy - podH / 2;
+      return `
+        <rect x="${podX}" y="${podY}" width="${podW}" height="${podH}" rx="6"
+              fill="${primaryHex}" stroke="#333" stroke-width="1.5"/>
+        <rect x="${podX + podW / 2 - 6}" y="${podY + podH * 0.55}" width="12" height="${podH * 0.35}" rx="3"
+              fill="#000" stroke="#fff" stroke-width="1"/>
+        <text x="${podX + podW / 2}" y="${podY + podH * 0.35}" text-anchor="middle"
+              fill="#fff" font-size="9" font-family="monospace" font-weight="bold">SIDE</text>`;
+    })() : '';
+
     // The PNG is drawn neutral-grey by generate-sprites.ts so the tint filter
     // can recolour it to the gang primary. image-rendering: pixelated keeps
     // the stylised look sharp when scaled up.
@@ -1117,6 +1185,7 @@ export class VehicleDesignerScene extends Phaser.Scene {
           </filter>
         </defs>
         ${wheels}
+        ${sidecarSvg}
         <image href="/sprites/bodies/${esc(this.bodyType)}.png"
                x="${cx - halfW}" y="${cy - halfH}"
                width="${bodyW}" height="${bodyH}"
@@ -1294,6 +1363,7 @@ export class VehicleDesignerScene extends Phaser.Scene {
       suspensionType: this.suspensionType,
       tireType:       this.tireType,
       armorType:      this.armorType,
+      hasSidecar:     this.hasSidecar,
     };
   }
 
