@@ -47,7 +47,12 @@ export const BODIES: BodyDef[] = [
   // Trike (3-wheeled cycle — uses subHC but has 3 tires) — small turret only
   { id: 'trike',         name: 'Trike',         price: 350,  baseWeight: 500,  maxLoad: 1600,  spaces: 6,  armorCostPerPt: 11, armorWtPerPt: 5,  baseHC: 3, isCycle: true,  tireCount: 3, maxTurretSize: 'small', surfaces: CYCLE_SURFACES },
   // Heavy vehicles
-  { id: 'truck',         name: 'Truck',         price: 1500, baseWeight: 3000, maxLoad: 8000,  spaces: 10, armorCostPerPt: 35, armorWtPerPt: 16, baseHC: 1, isCycle: false, maxTurretSize: 'heavy',    surfaces: CAR_SURFACES },
+  // Truck — bumped from the strict tractor-cab numbers (10 spaces / 8000 lb)
+  // so it can actually build the Compendium sample trucks (Wolverine, Economy)
+  // and so it's visibly bigger than a pickup/van at a glance. If we later
+  // want a tight tractor for trailer-towing we can split this into Tractor +
+  // Heavy Truck variants.
+  { id: 'truck',         name: 'Truck',         price: 1500, baseWeight: 3000, maxLoad: 12000, spaces: 20, armorCostPerPt: 35, armorWtPerPt: 16, baseHC: 1, isCycle: false, maxTurretSize: 'heavy',    surfaces: CAR_SURFACES },
   { id: 'trailer',       name: 'Trailer',       price: 500,  baseWeight: 1500, maxLoad: 14000, spaces: 30, armorCostPerPt: 25, armorWtPerPt: 12, baseHC: 1, isCycle: false, maxTurretSize: 'heavy',    surfaces: TRAILER_SURFACES },
   // Bus — 40' passenger coach (Busnought reference): 10 tires, heavy turrets,
   // tonnes of space and load for passengers + gunners.
