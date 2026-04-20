@@ -2,19 +2,29 @@ import { Router } from 'express';
 import { getDb } from '../db/client';
 import { requireAuth, AuthRequest } from './middleware';
 import { WEAPONS } from '../rules/data/weapons';
+import { BODIES } from '../rules/data/bodies';
+import { TIRES } from '../rules/data/tires';
+import { POWER_PLANTS } from '../rules/data/power-plants';
 import type { VehicleLoadout, DamageState, ArmorDistribution } from '@carwars/shared';
 
 export const economyRouter = Router();
 economyRouter.use(requireAuth);
 
-const ARMOR_REPAIR_COST  = 100;  // per point (ablative base)
-const ENGINE_REPAIR_COST = 500;
-const TIRE_REPAIR_COST   = 150;  // per blown tire
+// Per Compendium: armor / tire / engine repair = the same per-point or
+// per-component cost as the original build. Previously hardcoded flat rates
+// ($100/armor pt, $150/tire, $500/engine) made repair vastly more expensive
+// than the build itself for cheap vehicles — a Compact Sprocket would run
+// up an $8,800 armor bill on a $5k car.
 
 // Repair cost multiplier matches build cost multiplier for each armor type
 const ARMOR_REPAIR_MUL: Record<string, number> = {
   ablative: 1, metal: 1, fireproof: 2, laser_reflective: 2, lr_fireproof: 4, radarproof: 2,
 };
+
+// Floor for engine repair when no power-plant cost data is available
+const ENGINE_REPAIR_FALLBACK = 500;
+// Floor for tire repair when no tire-cost data is available
+const TIRE_REPAIR_FALLBACK   = 50;
 
 economyRouter.post('/repair', async (req: AuthRequest, res) => {
   const { vehicleId } = req.body;
@@ -44,18 +54,33 @@ economyRouter.post('/repair', async (req: AuthRequest, res) => {
   let cost = 0;
   const armorMul = ARMOR_REPAIR_MUL[origLoadout.armorType ?? 'ablative'] ?? 1;
 
+  // Look up the body — repair-per-armour-point uses the body's own
+  // armorCostPerPt (the same value the build pipeline uses to charge for
+  // armour install). Falls back to a small flat rate for legacy loadouts
+  // without a bodyType set.
+  const body = BODIES.find(b => b.id === origLoadout.bodyType);
+  const armorCostPerPt = body?.armorCostPerPt ?? 10;
+
   // Armor repair
   const locations: (keyof ArmorDistribution)[] = ['front', 'back', 'left', 'right', 'top', 'underbody'];
   for (const loc of locations) {
     const deficit = (origLoadout.armor[loc] ?? 0) - (damage.armor[loc] ?? 0);
-    if (deficit > 0) cost += deficit * ARMOR_REPAIR_COST * armorMul;
+    if (deficit > 0) cost += deficit * armorCostPerPt * armorMul;
   }
 
-  // Engine repair
-  if (damage.engineDamaged) cost += ENGINE_REPAIR_COST;
+  // Engine repair — half the engine's install cost (Compendium guideline)
+  if (damage.engineDamaged) {
+    const plant = POWER_PLANTS.find(p => p.id === origLoadout.powerPlantType);
+    cost += Math.round((plant?.cost ?? ENGINE_REPAIR_FALLBACK) / 2);
+  }
 
-  // Tire repair
-  cost += (damage.tiresBlown?.length ?? 0) * TIRE_REPAIR_COST;
+  // Tire repair — full replacement cost per blown tire, matching the
+  // installed tire type. Falls back to a small flat for legacy loadouts.
+  if ((damage.tiresBlown?.length ?? 0) > 0) {
+    const tire = TIRES.find(t => t.id === origLoadout.tireType);
+    const perTire = tire?.costPerTire ?? TIRE_REPAIR_FALLBACK;
+    cost += (damage.tiresBlown?.length ?? 0) * perTire;
+  }
 
   // Ammo resupply
   for (const origMount of origLoadout.mounts ?? []) {

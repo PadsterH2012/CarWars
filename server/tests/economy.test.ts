@@ -104,7 +104,8 @@ describe('economy', () => {
       .send({ vehicleId });
 
     expect(res.status).toBe(200);
-    expect(res.body.cost).toBe(300); // 2 tires × $150
+    // Legacy loadout (no tireType) — falls back to TIRE_REPAIR_FALLBACK = $50/tire
+    expect(res.body.cost).toBe(100); // 2 tires × $50 fallback (real tireType uses tire.costPerTire, e.g. $50 standard / $1000 plasticore)
     const vRes = await db.query(`SELECT damage_state FROM vehicles WHERE id = $1`, [vehicleId]);
     expect(vRes.rows[0].damage_state.tiresBlown).toEqual([]);
   });
