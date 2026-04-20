@@ -541,6 +541,26 @@ SET loadout = jsonb_set(
 WHERE id = 'desperado'
   AND loadout #>> '{mounts,2,turretSize}' = 'heavy';
 
+-- Hire-list candidates — transient pool of drivers offering their services.
+-- Regenerated on demand; expired rows are ignored (pool-refresh endpoint
+-- deletes them). Optional vehicle_stock_id lets a candidate bring their own
+-- rig in a package deal (discount applied to the stock vehicle's base cost).
+CREATE TABLE IF NOT EXISTS hire_candidates (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  player_id UUID NOT NULL REFERENCES players(id) ON DELETE CASCADE,
+  name TEXT NOT NULL,
+  skill INTEGER NOT NULL,
+  aggression INTEGER NOT NULL DEFAULT 3,
+  loyalty INTEGER NOT NULL DEFAULT 5,
+  hire_cost INTEGER NOT NULL,
+  vehicle_stock_id TEXT REFERENCES stock_vehicles(id),
+  vehicle_discount_pct INTEGER NOT NULL DEFAULT 0,
+  blurb TEXT NOT NULL DEFAULT '',
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  expires_at TIMESTAMPTZ NOT NULL DEFAULT NOW() + INTERVAL '15 minutes'
+);
+CREATE INDEX IF NOT EXISTS idx_hire_candidates_player ON hire_candidates(player_id, expires_at);
+
 -- Indexes for frequent foreign key lookups
 CREATE INDEX IF NOT EXISTS idx_vehicles_player_id ON vehicles(player_id);
 CREATE INDEX IF NOT EXISTS idx_vehicles_gang_id ON vehicles(gang_id);

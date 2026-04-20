@@ -206,7 +206,7 @@ export class GarageScene extends Phaser.Scene {
     add(this.add.text(crewX, 130, 'CREW', {
       color: '#aaa', fontSize: '13px', fontFamily: 'monospace', fontStyle: 'bold'
     }));
-    const hireBtn = this.add.text(crewX + 80, 130, '[HIRE DRIVER $500]', {
+    const hireBtn = this.add.text(crewX + 80, 130, '[HIRE DRIVERS...]', {
       color: '#88ff88', fontSize: '12px', fontFamily: 'monospace',
       backgroundColor: '#002211', padding: { x: 6, y: 3 },
     }).setInteractive();
@@ -556,20 +556,132 @@ export class GarageScene extends Phaser.Scene {
   }
 
   private async hireDriver(): Promise<void> {
-    const name = prompt('Driver name?');
-    if (!name) return;
+    // Opens a DOM-overlay modal listing generated candidates. Pool auto-
+    // generates on first fetch. Clicking [HIRE] on a candidate closes the
+    // modal and restarts the garage to reflect the new driver (and vehicle
+    // if package deal).
+    await this.showHireModal();
+  }
+
+  private async showHireModal(): Promise<void> {
     const host = window.location.hostname;
-    const res = await fetch(`http://${host}:3001/api/drivers`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${this.token}` },
-      body: JSON.stringify({ name: name.trim().slice(0, 64) }),
+    const overlay = document.createElement('div');
+    Object.assign(overlay.style, {
+      position: 'fixed', inset: '0', zIndex: '200',
+      background: 'rgba(0,0,0,0.82)',
+      display: 'flex', alignItems: 'center', justifyContent: 'center',
+      fontFamily: "'Courier New', monospace",
     });
-    if (res.ok) {
-      this.scene.restart({ token: this.token });
-    } else {
-      const body = await res.json().catch(() => ({}));
-      alert(body.error ?? 'Hire failed');
-    }
+    const panel = document.createElement('div');
+    Object.assign(panel.style, {
+      background: '#0f0f22', border: '2px solid #4466aa', color: '#ccc',
+      padding: '20px', width: 'min(900px, 92vw)', maxHeight: '88vh',
+      overflow: 'auto', boxShadow: '0 10px 40px rgba(0,0,0,0.6)',
+    });
+    overlay.appendChild(panel);
+    document.body.appendChild(overlay);
+
+    const escHtml = (s: string): string =>
+      s.replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c] as string));
+
+    const render = (candidates: any[]): void => {
+      const cards = candidates.map(c => {
+        const hasPkg = !!c.vehicle_stock_id;
+        const pkgCost = hasPkg
+          ? Math.round(c.vehicle_cost * (1 - c.vehicle_discount_pct / 100))
+          : 0;
+        const total = c.hire_cost + pkgCost;
+        const stars = '★'.repeat(c.skill) + '☆'.repeat(Math.max(0, 6 - c.skill));
+        const affordable = this.gang && this.gang.treasury >= total;
+        return `
+          <div style="background:#11112a;border:1px solid #2a2a44;padding:14px;display:grid;grid-template-rows:auto auto 1fr auto;gap:8px;min-height:220px;">
+            <div style="display:flex;justify-content:space-between;align-items:baseline;">
+              <div style="color:#00ff88;font-size:14px;font-weight:bold;">${escHtml(c.name)}</div>
+              <div style="color:#ffcc00;font-size:10px;letter-spacing:2px;">SKILL ${c.skill}</div>
+            </div>
+            <div style="color:#888;font-size:11px;">${stars} · aggro ${c.aggression} · loyalty ${c.loyalty}</div>
+            <div style="color:#aac;font-size:11px;line-height:1.4;">${escHtml(c.blurb)}</div>
+            ${hasPkg ? `
+              <div style="background:#1a2a11;border-left:3px solid #88ccff;padding:8px;font-size:11px;color:#aaccff;">
+                🚗 Package deal: brings <b>${escHtml(c.vehicle_name)}</b> (Div ${c.vehicle_division})<br>
+                <span style="color:#ffcc00;">-${c.vehicle_discount_pct}% off</span> $${pkgCost.toLocaleString()}
+              </div>
+            ` : ''}
+            <div style="display:flex;justify-content:space-between;align-items:center;padding-top:8px;border-top:1px dotted #2a2a44;">
+              <span style="color:#ffcc00;font-size:14px;font-weight:bold;">$${total.toLocaleString()}</span>
+              <button data-candidate-id="${c.id}"
+                      style="padding:6px 16px;font-family:inherit;font-size:12px;background:${affordable ? '#003322' : '#221122'};color:${affordable ? '#00ff88' : '#888'};border:1px solid ${affordable ? '#00ff88' : '#444'};cursor:${affordable ? 'pointer' : 'not-allowed'};"
+                      ${affordable ? '' : 'disabled'}>
+                ${affordable ? '[HIRE]' : '[NO FUNDS]'}
+              </button>
+            </div>
+          </div>`;
+      }).join('');
+
+      panel.textContent = '';
+      const range = document.createRange();
+      range.selectNodeContents(panel);
+      const html = `
+        <style>
+          .hire-grid { display:grid; grid-template-columns: repeat(auto-fill, minmax(250px, 1fr)); gap:12px; }
+        </style>
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:14px;">
+          <h2 style="margin:0;color:#ff4444;letter-spacing:2px;">HIRE DRIVERS</h2>
+          <div style="font-size:11px;color:#888;">Treasury <b style="color:#ffcc00;">$${this.gang?.treasury.toLocaleString() ?? 0}</b></div>
+        </div>
+        <div class="hire-grid">${cards}</div>
+        <div style="margin-top:16px;display:flex;justify-content:space-between;align-items:center;padding-top:12px;border-top:1px solid #2a2a44;">
+          <button data-action="close" style="padding:8px 18px;font-family:inherit;font-size:12px;background:transparent;color:#888;border:1px solid #444;cursor:pointer;">[ CLOSE ]</button>
+          <button data-action="refresh" style="padding:8px 18px;font-family:inherit;font-size:12px;background:#332200;color:#ffaa00;border:1px solid #664400;cursor:pointer;">[ REFRESH POOL ($100) ]</button>
+        </div>`;
+      panel.appendChild(range.createContextualFragment(html));
+    };
+
+    const loadPool = async (): Promise<void> => {
+      panel.textContent = 'Loading candidates\u2026';
+      const r = await fetch(`http://${host}:3001/api/drivers/candidates`, {
+        headers: { Authorization: `Bearer ${this.token}` },
+      });
+      render(r.ok ? await r.json() : []);
+    };
+
+    const close = (): void => { overlay.remove(); };
+
+    panel.addEventListener('click', async (e) => {
+      const t = e.target as HTMLElement;
+      const btn = t.closest<HTMLElement>('[data-action],[data-candidate-id]');
+      if (!btn) return;
+      if (btn.dataset.action === 'close') { close(); return; }
+      if (btn.dataset.action === 'refresh') {
+        const r = await fetch(`http://${host}:3001/api/drivers/candidates/refresh`, {
+          method: 'POST',
+          headers: { Authorization: `Bearer ${this.token}` },
+        });
+        if (r.ok) await loadPool();
+        else alert((await r.json().catch(() => ({}))).error ?? 'Refresh failed');
+        return;
+      }
+      const id = btn.dataset.candidateId;
+      if (id) {
+        const r = await fetch(`http://${host}:3001/api/drivers/candidates/${id}/hire`, {
+          method: 'POST',
+          headers: { Authorization: `Bearer ${this.token}` },
+        });
+        if (r.ok) {
+          close();
+          this.scene.restart({ token: this.token });
+        } else {
+          const body = await r.json().catch(() => ({}));
+          alert(body.error ?? 'Hire failed');
+        }
+      }
+    });
+
+    overlay.addEventListener('click', (e) => {
+      if (e.target === overlay) close();
+    });
+
+    await loadPool();
   }
 
   private showAssignDriverMenu(driver: Driver): void {
