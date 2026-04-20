@@ -194,19 +194,19 @@ ON CONFLICT (id) DO NOTHING;
 -- favour lasers, Rust Raiders the cheap MG/VMG rigs, Executioners pair
 -- precision lasers with turrets, Apostles chase the ram-plate Omega-20.
 UPDATE rival_gangs SET lineup = $$
-  {"5":["sprocket"],"10":["mg3","guardian"],"15":["gatling"],"20":["omega_20","desperado"],"25":["firedrake"],"30":["stormy_weather"]}
+  {"5":["sprocket","santa_cruz"],"10":["mg3","guardian","boomer"],"15":["gatling","army_surplus"],"20":["omega_20","desperado","army_surplus"],"25":["firedrake"],"30":["stormy_weather"],"40":["kali","skylark"]}
 $$ WHERE id = 'iron_wolves';
 UPDATE rival_gangs SET lineup = $$
-  {"5":["lo_beam"],"10":["guardian"],"15":["gatling"],"20":["desperado"],"25":["firedrake"],"30":["stormy_weather"]}
+  {"5":["lo_beam","speedball"],"10":["guardian","cheetah"],"15":["gatling"],"20":["desperado"],"25":["firedrake"],"30":["stormy_weather"],"40":["skylark","kali"]}
 $$ WHERE id = 'neon_samurai';
 UPDATE rival_gangs SET lineup = $$
-  {"5":["sprocket","lo_beam"],"10":["mg3"],"15":["gatling","volcano"],"20":["desperado"],"25":["firedrake"],"30":["stormy_weather"]}
+  {"5":["sprocket","lo_beam","speedball","santa_cruz"],"10":["mg3","boomer"],"15":["gatling","volcano","army_surplus"],"20":["desperado","army_surplus"],"25":["firedrake"],"30":["stormy_weather"],"40":["kali"]}
 $$ WHERE id = 'rust_raiders';
 UPDATE rival_gangs SET lineup = $$
-  {"5":["lo_beam"],"10":["guardian"],"15":["volcano"],"20":["desperado"],"25":["firedrake"],"30":["stormy_weather"]}
+  {"5":["lo_beam","fire_imp"],"10":["guardian","cheetah"],"15":["volcano"],"20":["desperado"],"25":["firedrake"],"30":["stormy_weather"],"40":["skylark","kali"]}
 $$ WHERE id = 'executioners';
 UPDATE rival_gangs SET lineup = $$
-  {"5":["sprocket"],"10":["mg3","guardian"],"15":["gatling","volcano"],"20":["omega_20"],"25":["firedrake"],"30":["stormy_weather"]}
+  {"5":["sprocket","tri_rock"],"10":["mg3","guardian","boomer"],"15":["gatling","volcano"],"20":["omega_20","army_surplus"],"25":["firedrake"],"30":["stormy_weather"],"40":["omega_40","skylark"]}
 $$ WHERE id = 'highway_apostles';
 
 -- Trigger: keep gangs.treasury in sync with players.money so existing money-update
@@ -290,7 +290,7 @@ INSERT INTO stock_vehicles (id, name, division, description, loadout, cost, weig
 
   ('desperado', 'Desperado', 20,
    'Turreted heavy laser, MG front, oil jet back — a flexible all-rounder.',
-   $${"bodyType":"sedan","chassisType":"heavy","suspensionType":"heavy","powerPlantType":"elec_large","tireType":"puncture_resistant","armorType":"ablative","armor":{"front":30,"back":25,"left":25,"right":25,"top":7,"underbody":7},"mounts":[{"id":"m0","arc":"front","weaponId":"mg","ammo":20},{"id":"m1","arc":"back","weaponId":"oj","ammo":5},{"id":"m2","arc":"turret","turretSize":"heavy","weaponId":"hl","ammo":0}],"tires":[{"id":"t0","blown":false},{"id":"t1","blown":false},{"id":"t2","blown":false},{"id":"t3","blown":false}],"totalCost":19950,"chassisId":"mid","engineId":"large","suspensionId":"heavy"}$$,
+   $${"bodyType":"sedan","chassisType":"heavy","suspensionType":"heavy","powerPlantType":"elec_large","tireType":"puncture_resistant","armorType":"ablative","armor":{"front":30,"back":25,"left":25,"right":25,"top":7,"underbody":7},"mounts":[{"id":"m0","arc":"front","weaponId":"mg","ammo":20},{"id":"m1","arc":"back","weaponId":"oj","ammo":5},{"id":"m2","arc":"turret","turretSize":"standard","weaponId":"hl","ammo":0}],"tires":[{"id":"t0","blown":false},{"id":"t1","blown":false},{"id":"t2","blown":false},{"id":"t3","blown":false}],"totalCost":19950,"chassisId":"mid","engineId":"large","suspensionId":"heavy"}$$,
    19950, 5600, 'aada_v3'),
 
   ('omega_20', 'Omega-20', 20,
@@ -306,8 +306,75 @@ INSERT INTO stock_vehicles (id, name, division, description, loadout, cost, weig
   ('stormy_weather', 'Stormy Weather', 30,
    'Luxury cruiser: heavy laser front, side MGs, oil slick tail.',
    $${"bodyType":"luxury","chassisType":"heavy","suspensionType":"heavy","powerPlantType":"elec_super","tireType":"puncture_resistant","armorType":"ablative","armor":{"front":40,"back":30,"left":30,"right":30,"top":9,"underbody":9},"mounts":[{"id":"m0","arc":"front","weaponId":"hl","ammo":0},{"id":"m1","arc":"left","weaponId":"mg","ammo":20},{"id":"m2","arc":"right","weaponId":"mg","ammo":20},{"id":"m3","arc":"back","weaponId":"oj","ammo":5}],"tires":[{"id":"t0","blown":false},{"id":"t1","blown":false},{"id":"t2","blown":false},{"id":"t3","blown":false}],"totalCost":29940,"chassisId":"mid","engineId":"super","suspensionId":"heavy"}$$,
-   29940, 7000, 'aada_v3')
+   29940, 7000, 'aada_v3'),
+
+  -- Phase 4 batch 1: 10 additional AADA Vol 3 designs (cycles, trikes, a
+  -- Div 10 blast cannon, a Div 10 racer, Div 20 armoured brute, and three
+  -- Div 40 heavies).
+  ('speedball', 'Speedball', 5,
+   'Offence-minded med cycle: linked front MGs and a 112 mph top speed.',
+   $${"bodyType":"med_cycle","chassisType":"standard","suspensionType":"light","powerPlantType":"cyc_elec_small","tireType":"standard","armorType":"ablative","armor":{"front":13,"back":12,"left":0,"right":0},"mounts":[{"id":"m0","arc":"front","weaponId":"mg","ammo":20},{"id":"m1","arc":"front","weaponId":"mg","ammo":20}],"tires":[{"id":"t0","blown":false},{"id":"t1","blown":false}],"totalCost":4991,"chassisId":"mid","engineId":"small","suspensionId":"light"}$$,
+   4991, 1097, 'aada_v3'),
+
+  ('fire_imp', 'Fire Imp', 5,
+   'Shogun Cycles gas burner with a rear-facing light flamer and fireproof armour.',
+   $${"bodyType":"hvy_cycle","chassisType":"standard","suspensionType":"heavy","powerPlantType":"cyc_gas_small","tireType":"heavy_duty","armorType":"fireproof","armor":{"front":21,"back":20,"left":0,"right":0},"mounts":[{"id":"m0","arc":"back","weaponId":"lft","ammo":8}],"tires":[{"id":"t0","blown":false},{"id":"t1","blown":false}],"totalCost":4883,"chassisId":"mid","engineId":"small","suspensionId":"heavy"}$$,
+   4883, 1088, 'aada_v3'),
+
+  ('tri_rock', 'Tri-Rock', 5,
+   'Sloped-armour light trike with 2 micromissile launchers right + a medium rocket back.',
+   $${"bodyType":"trike","chassisType":"standard","suspensionType":"improved","powerPlantType":"cyc_elec_medium","tireType":"heavy_duty","armorType":"ablative","armor":{"front":17,"back":17,"left":6,"right":25},"mounts":[{"id":"m0","arc":"right","weaponId":"mml","ammo":5},{"id":"m1","arc":"right","weaponId":"mml","ammo":5},{"id":"m2","arc":"back","weaponId":"mr","ammo":1}],"tires":[{"id":"t0","blown":false},{"id":"t1","blown":false},{"id":"t2","blown":false}],"totalCost":4880,"chassisId":"mid","engineId":"medium","suspensionId":"improved"}$$,
+   4880, 2345, 'aada_v3'),
+
+  ('santa_cruz', 'Santa Cruz', 5,
+   'No-frills Crane Industries combat cycle: MG front, minedropper tail, PR tires.',
+   $${"bodyType":"hvy_cycle","chassisType":"heavy","suspensionType":"heavy","powerPlantType":"cyc_elec_large","tireType":"puncture_resistant","armorType":"ablative","armor":{"front":15,"back":14,"left":0,"right":0},"mounts":[{"id":"m0","arc":"front","weaponId":"mg","ammo":20},{"id":"m1","arc":"back","weaponId":"sd","ammo":10}],"tires":[{"id":"t0","blown":false},{"id":"t1","blown":false}],"totalCost":5948,"chassisId":"mid","engineId":"large","suspensionId":"heavy"}$$,
+   5948, 1299, 'aada_v3'),
+
+  ('boomer', 'Boomer', 10,
+   'Hendricks Blast Cannon up front with a bumper-trigger surprise for rammers.',
+   $${"bodyType":"mid_sized","chassisType":"light","suspensionType":"light","powerPlantType":"elec_medium","tireType":"heavy_duty","armorType":"ablative","armor":{"front":26,"back":25,"left":20,"right":20,"top":5,"underbody":10},"mounts":[{"id":"m0","arc":"front","weaponId":"bc","ammo":8}],"tires":[{"id":"t0","blown":false},{"id":"t1","blown":false},{"id":"t2","blown":false},{"id":"t3","blown":false}],"totalCost":9990,"chassisId":"mid","engineId":"medium","suspensionId":"light"}$$,
+   9990, 4210, 'aada_v3'),
+
+  ('cheetah', 'Cheetah', 10,
+   'Light-frame sedan racer: sport power plant, PR tires, single MG front.',
+   $${"bodyType":"sedan","chassisType":"light","suspensionType":"improved","powerPlantType":"elec_sport","tireType":"puncture_resistant","armorType":"ablative","armor":{"front":18,"back":18,"left":14,"right":14,"top":5,"underbody":5},"mounts":[{"id":"m0","arc":"front","weaponId":"mg","ammo":20}],"tires":[{"id":"t0","blown":false},{"id":"t1","blown":false},{"id":"t2","blown":false},{"id":"t3","blown":false}],"totalCost":9880,"chassisId":"mid","engineId":"super","suspensionId":"improved"}$$,
+   9880, 3800, 'aada_v3'),
+
+  ('army_surplus', 'Army Surplus', 20,
+   'Armoured-personnel-carrier mid-size: linked RRs front, spikedropper back, heavy plating.',
+   $${"bodyType":"mid_sized","chassisType":"heavy","suspensionType":"heavy","powerPlantType":"elec_large","tireType":"puncture_resistant","armorType":"ablative","armor":{"front":45,"back":34,"left":35,"right":35,"top":10,"underbody":11},"mounts":[{"id":"m0","arc":"front","weaponId":"rr","ammo":10},{"id":"m1","arc":"front","weaponId":"rr","ammo":10},{"id":"m2","arc":"back","weaponId":"sd","ammo":10}],"tires":[{"id":"t0","blown":false},{"id":"t1","blown":false},{"id":"t2","blown":false},{"id":"t3","blown":false}],"totalCost":19950,"chassisId":"mid","engineId":"large","suspensionId":"heavy"}$$,
+   19950, 5276, 'aada_v3'),
+
+  ('kali', 'Kali', 40,
+   'Multi-armed Imperial luxury: 2 ATGs front + MML back + 2 HRs + heavy armour.',
+   $${"bodyType":"luxury","chassisType":"extra_heavy","suspensionType":"heavy","powerPlantType":"gas_300","tireType":"plasticore","armorType":"ablative","armor":{"front":40,"back":30,"left":28,"right":28,"top":8,"underbody":12},"mounts":[{"id":"m0","arc":"front","weaponId":"atg","ammo":10},{"id":"m1","arc":"front","weaponId":"atg","ammo":10},{"id":"m2","arc":"back","weaponId":"mml","ammo":5},{"id":"m3","arc":"right","weaponId":"hr","ammo":1},{"id":"m4","arc":"left","weaponId":"hr","ammo":1}],"tires":[{"id":"t0","blown":false},{"id":"t1","blown":false},{"id":"t2","blown":false},{"id":"t3","blown":false}],"totalCost":39237,"chassisId":"mid","engineId":"super","suspensionId":"heavy"}$$,
+   39237, 6531, 'aada_v3'),
+
+  ('omega_40', 'Omega-40', 40,
+   'Sabre Motors ramplate cruiser: fireproof sedan with rocket launcher front + oil back.',
+   $${"bodyType":"sedan","chassisType":"extra_heavy","suspensionType":"heavy","powerPlantType":"gas_300","tireType":"puncture_resistant","armorType":"fireproof","hasRamplate":true,"armor":{"front":60,"back":60,"left":55,"right":55,"top":25,"underbody":25},"mounts":[{"id":"m0","arc":"front","weaponId":"rl","ammo":5},{"id":"m1","arc":"back","weaponId":"oj","ammo":5}],"tires":[{"id":"t0","blown":false},{"id":"t1","blown":false},{"id":"t2","blown":false},{"id":"t3","blown":false}],"totalCost":39770,"chassisId":"mid","engineId":"super","suspensionId":"heavy"}$$,
+   39770, 6120, 'aada_v3'),
+
+  ('skylark', 'Skylark', 40,
+   'Turreted heavy laser + 2 linked heavy rockets up front. Heavy armour all around.',
+   $${"bodyType":"luxury","chassisType":"extra_heavy","suspensionType":"heavy","powerPlantType":"gas_200","tireType":"solid","armorType":"ablative","hasRamplate":true,"armor":{"front":50,"back":45,"left":40,"right":40,"top":15,"underbody":15},"mounts":[{"id":"m0","arc":"front","weaponId":"hr","ammo":1},{"id":"m1","arc":"front","weaponId":"hr","ammo":1},{"id":"m2","arc":"turret","turretSize":"standard","weaponId":"hl","ammo":0}],"tires":[{"id":"t0","blown":false},{"id":"t1","blown":false},{"id":"t2","blown":false},{"id":"t3","blown":false}],"totalCost":39655,"chassisId":"mid","engineId":"large","suspensionId":"heavy"}$$,
+   39655, 6560, 'aada_v3')
 ON CONFLICT (id) DO NOTHING;
+
+-- Fix-up for any previously seeded desperado rows that used an invalid
+-- heavy turret on a sedan chassis (sedan maxTurretSize = 'standard').
+-- The INSERT above uses ON CONFLICT DO NOTHING so existing rows are
+-- untouched; this UPDATE normalises them.
+UPDATE stock_vehicles
+SET loadout = jsonb_set(
+  loadout,
+  '{mounts,2,turretSize}',
+  '"standard"'::jsonb,
+  false
+)
+WHERE id = 'desperado'
+  AND loadout #>> '{mounts,2,turretSize}' = 'heavy';
 
 -- Indexes for frequent foreign key lookups
 CREATE INDEX IF NOT EXISTS idx_vehicles_player_id ON vehicles(player_id);

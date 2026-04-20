@@ -2,6 +2,8 @@ import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import request from 'supertest';
 import { createApp } from '../src/app';
 import { getDb, closeDb } from '../src/db/client';
+import { deriveStats } from '../src/rules/vehicle';
+import { computeCapacity, isInvalid } from '../src/rules/capacity';
 
 let app: ReturnType<typeof createApp>;
 let token: string;
@@ -77,5 +79,27 @@ describe('stock vehicles', () => {
       .set('Authorization', `Bearer ${token}`)
       .send({});
     expect(res.status).toBe(404);
+  });
+
+  // Regression guard: every seeded stock design must pass deriveStats +
+  // computeCapacity with no errors. Catches broken seeds before they ship.
+  it('every seeded stock design passes validation', async () => {
+    const db = getDb();
+    const res = await db.query<{ id: string; name: string; loadout: any }>(
+      `SELECT id, name, loadout FROM stock_vehicles ORDER BY division, cost`
+    );
+    const failures: string[] = [];
+    for (const row of res.rows) {
+      try {
+        deriveStats('validate', row.name, row.loadout);
+        const cap = computeCapacity(row.loadout);
+        if (isInvalid(cap)) {
+          failures.push(`${row.id} (${row.name}): ${cap.errors.join('; ')}`);
+        }
+      } catch (e: any) {
+        failures.push(`${row.id} (${row.name}): ${e.message}`);
+      }
+    }
+    expect(failures, failures.join('\n')).toEqual([]);
   });
 });
