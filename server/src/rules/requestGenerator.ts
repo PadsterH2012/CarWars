@@ -14,6 +14,7 @@ import type { VehicleLoadout, DamageState } from '@carwars/shared';
 import { BODIES } from './data/bodies';
 import { WEAPONS } from './data/weapons';
 import { ACCESSORY_INDEX } from './data/accessories';
+import { computeCapacity, isInvalid } from './capacity';
 
 interface Driver {
   id: string;
@@ -109,12 +110,21 @@ export function generateRequestForDriver(driver: Driver, vehicle: VehicleRow | n
     const pickId = driver.skill >= 4 ? 'hrc' : 'swc';
     const def = ACCESSORY_INDEX[pickId];
     if (def) {
-      return {
-        kind: 'accessory_add',
-        description: `${driver.name} is asking for a ${def.name} — '${def.description}'`,
-        payload: { vehicleId: vehicle.id, accessoryId: pickId, bindToFirstMount: def.bindable },
-        cost: def.cost,
+      // Only ask if it would actually fit — otherwise the approval would
+      // reject and the request would just annoy the player.
+      const boundMountId = def.bindable ? loadout.mounts?.[0]?.id : undefined;
+      const proposed = {
+        ...loadout,
+        accessories: [...accessories, { id: pickId, ...(boundMountId ? { boundMountId } : {}) }],
       };
+      if (!isInvalid(computeCapacity(proposed))) {
+        return {
+          kind: 'accessory_add',
+          description: `${driver.name} is asking for a ${def.name} — '${def.description}'`,
+          payload: { vehicleId: vehicle.id, accessoryId: pickId, bindToFirstMount: def.bindable },
+          cost: def.cost,
+        };
+      }
     }
   }
 
@@ -124,12 +134,19 @@ export function generateRequestForDriver(driver: Driver, vehicle: VehicleRow | n
     if (body) {
       const bumpPts = 5;
       const mul = ARMOR_MUL[orig.armorType ?? 'ablative'] ?? 1;
-      return {
-        kind: 'armor_up',
-        description: `${driver.name} wants +${bumpPts} front armour — 'I want more'`,
-        payload: { vehicleId: vehicle.id, face: 'front', delta: bumpPts },
-        cost: bumpPts * body.armorCostPerPt * mul,
+      const face = 'front';
+      const proposedOrig = {
+        ...orig,
+        armor: { ...orig.armor, [face]: ((orig.armor as Record<string, number>)[face] ?? 0) + bumpPts },
       };
+      if (!isInvalid(computeCapacity(proposedOrig))) {
+        return {
+          kind: 'armor_up',
+          description: `${driver.name} wants +${bumpPts} front armour — 'I want more'`,
+          payload: { vehicleId: vehicle.id, face, delta: bumpPts },
+          cost: bumpPts * body.armorCostPerPt * mul,
+        };
+      }
     }
   }
 

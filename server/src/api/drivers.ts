@@ -3,6 +3,7 @@ import { getDb } from '../db/client';
 import { requireAuth, AuthRequest } from './middleware';
 import { generateCandidatePool } from '../rules/driverGenerator';
 import { generateRequestForDriver } from '../rules/requestGenerator';
+import { computeCapacity, isInvalid } from '../rules/capacity';
 
 export const driversRouter = Router();
 driversRouter.use(requireAuth);
@@ -454,12 +455,21 @@ driversRouter.post('/requests/:id/approve', async (req: AuthRequest, res) => {
         const delta = payload.delta as number;
         const newOrigArmor = { ...orig.armor, [face]: (orig.armor[face] ?? 0) + delta };
         const newArmor    = { ...ds.armor,   [face]: (ds.armor[face]   ?? 0) + delta };
+        const proposedOrig = { ...orig, armor: newOrigArmor };
+        // Capacity guard — extra armour adds weight, may exceed load budget
+        const cap = computeCapacity(proposedOrig);
+        if (isInvalid(cap)) {
+          await client.query('ROLLBACK');
+          return res.status(400).json({
+            error: `Would exceed capacity (${cap.errors.join('; ')}). Dismiss the request and bump armour manually after freeing up space.`,
+          });
+        }
         await client.query(
           `UPDATE vehicles
              SET original_loadout = $1, damage_state = $2, value = value + $3
              WHERE id = $4`,
           [
-            JSON.stringify({ ...orig, armor: newOrigArmor }),
+            JSON.stringify(proposedOrig),
             JSON.stringify({ ...ds, armor: newArmor }),
             r.cost, vid,
           ],
@@ -470,9 +480,20 @@ driversRouter.post('/requests/:id/approve', async (req: AuthRequest, res) => {
         const accessories = [...(loadout.accessories ?? [])];
         const boundMountId = bindToFirstMount ? (loadout.mounts?.[0]?.id ?? undefined) : undefined;
         accessories.push({ id: accessoryId, ...(boundMountId ? { boundMountId } : {}) });
+        const proposed = { ...loadout, accessories };
+        // Capacity guard — approving the request can't push the vehicle
+        // over its spaces/weight budget. If it would, reject with a clear
+        // error so the player can dismiss the request and reshuffle manually.
+        const cap = computeCapacity(proposed);
+        if (isInvalid(cap)) {
+          await client.query('ROLLBACK');
+          return res.status(400).json({
+            error: `Would exceed capacity (${cap.errors.join('; ')}). Dismiss the request and install the accessory manually after freeing up space.`,
+          });
+        }
         await client.query(
           `UPDATE vehicles SET loadout = $1, value = value + $2 WHERE id = $3`,
-          [JSON.stringify({ ...loadout, accessories }), r.cost, vid],
+          [JSON.stringify(proposed), r.cost, vid],
         );
       }
     }
