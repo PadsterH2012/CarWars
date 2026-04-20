@@ -1,13 +1,13 @@
 import Phaser from 'phaser';
 import {
   BODY_TYPES, SUSPENSIONS, TIRE_TYPES, ARMOR_TYPES, WEAPONS, ARCS,
-  type MountConfig, type ArcType, type TurretSize,
+  type MountConfig, type ArcType, type TurretSize, type AccessoryConfig,
 } from '../ui/DesignerUI';
 import { bindFullscreenToggle } from '../ui/responsive';
 
 type Mode = 'simple' | 'datasheet';
 type Face = 'front' | 'back' | 'left' | 'right';
-type Tab = 'body' | 'engine' | 'armor' | 'weapons' | 'tires' | 'suspension';
+type Tab = 'body' | 'engine' | 'armor' | 'weapons' | 'tires' | 'suspension' | 'accessories';
 
 interface WeaponDef {
   id: string; name: string; category: string; cost: number;
@@ -47,6 +47,13 @@ interface SidecarDef {
   allowedBodies: string[];
 }
 
+interface AccessoryDef {
+  id: string; name: string; category: string;
+  cost: number; weight: number; spaces: number;
+  description: string; bindable?: boolean;
+  effects: Record<string, unknown>;
+}
+
 interface DesignCatalog {
   bodies: BodyDef[];
   plants: PlantDef[];
@@ -55,6 +62,7 @@ interface DesignCatalog {
   armors: ArmorMuls;
   weapons: WeaponDef[];
   sidecar: SidecarDef;
+  accessories: AccessoryDef[];
 }
 
 const TURRET_RANK: Record<TurretSize, number> = { small: 1, standard: 2, heavy: 3 };
@@ -99,6 +107,7 @@ export class VehicleDesignerScene extends Phaser.Scene {
   private mounts: MountConfig[] = [{ id: 'm0', arc: 'front', weaponId: 'mg', ammo: 50 }];
   private armor: Record<Face, number> = { front: 20, back: 15, left: 15, right: 15 };
   private hasSidecar = false;
+  private accessories: AccessoryConfig[] = [];
 
   // UI state
   private mode: Mode = 'simple';
@@ -133,6 +142,7 @@ export class VehicleDesignerScene extends Phaser.Scene {
     this.mounts = [{ id: 'm0', arc: 'front', weaponId: 'mg', ammo: 50 }];
     this.armor = { front: 20, back: 15, left: 15, right: 15 };
     this.hasSidecar = false;
+    this.accessories = [];
     this.activeTab = 'body';
     this.selectedFace = 'front';
     this.stats = null;
@@ -219,6 +229,7 @@ export class VehicleDesignerScene extends Phaser.Scene {
         };
       }
       this.hasSidecar = !!l.hasSidecar;
+      if (Array.isArray(l.accessories)) this.accessories = l.accessories;
     } catch { /* keep defaults */ }
   }
 
@@ -312,8 +323,71 @@ export class VehicleDesignerScene extends Phaser.Scene {
       case 'remove-mount':
         this.removeMount(value!);
         return;
+      case 'add-accessory':
+        this.addAccessory(value!);
+        return;
+      case 'remove-accessory':
+        this.removeAccessory(value!);
+        return;
+      case 'link-mount':
+        this.toggleLinkMount(value!);
+        return;
     }
   };
+
+  private addAccessory(id: string): void {
+    const def = this.catalog?.accessories.find(a => a.id === id);
+    if (!def) return;
+    if (def.bindable) {
+      const firstMount = this.mounts.find(m => m.weaponId);
+      if (!firstMount) {
+        this.flashStatus(`${def.name} needs a weapon mount to bind to`, '#ff4444');
+        this.rebuild();
+        return;
+      }
+      this.accessories.push({ id, boundMountId: firstMount.id });
+    } else {
+      this.accessories.push({ id });
+    }
+    this.markDirty();
+  }
+
+  private removeAccessory(idAndIdx: string): void {
+    // value format: "accId:index"
+    const [id, idxStr] = idAndIdx.split(':');
+    const idx = parseInt(idxStr, 10);
+    if (Number.isFinite(idx) && this.accessories[idx]?.id === id) {
+      this.accessories.splice(idx, 1);
+    } else {
+      // Fallback: remove first match
+      const i = this.accessories.findIndex(a => a.id === id);
+      if (i >= 0) this.accessories.splice(i, 1);
+    }
+    this.markDirty();
+  }
+
+  // Linked weapons: clicking the link button cycles a mount through three
+  // states relative to its neighbour with the same weapon: unlinked → linked
+  // to neighbour → unlinked. We use a deterministic group id per pair.
+  private toggleLinkMount(mountId: string): void {
+    const mount = this.mounts.find(m => m.id === mountId);
+    if (!mount) return;
+    if (mount.linkGroup) {
+      delete mount.linkGroup;
+    } else {
+      // Find another mount with the same weapon (and not already in a group) to link with
+      const partner = this.mounts.find(m => m.id !== mountId && m.weaponId === mount.weaponId && !m.linkGroup);
+      if (!partner) {
+        this.flashStatus(`Need another ${mount.weaponId?.toUpperCase()} mount to link with`, '#ffaa00');
+        this.rebuild();
+        return;
+      }
+      const groupId = `lg${Date.now()}`;
+      mount.linkGroup = groupId;
+      partner.linkGroup = groupId;
+    }
+    this.markDirty();
+  }
 
   // ── State mutators ───────────────────────────────────────────────────────
 
@@ -614,12 +688,13 @@ export class VehicleDesignerScene extends Phaser.Scene {
   private renderSimple(): string {
     const tab = this.activeTab;
     const tabs: Array<{ id: Tab; label: string; badge?: string }> = [
-      { id: 'body',       label: 'Body' },
-      { id: 'engine',     label: 'Engine' },
-      { id: 'armor',      label: 'Armor' },
-      { id: 'weapons',    label: 'Weapons', badge: `${this.mounts.length}` },
-      { id: 'tires',      label: 'Tires' },
-      { id: 'suspension', label: 'Suspension' },
+      { id: 'body',        label: 'Body' },
+      { id: 'engine',      label: 'Engine' },
+      { id: 'armor',       label: 'Armor' },
+      { id: 'weapons',     label: 'Weapons', badge: `${this.mounts.length}` },
+      { id: 'tires',       label: 'Tires' },
+      { id: 'suspension',  label: 'Suspension' },
+      { id: 'accessories', label: 'Accessories', badge: `${this.accessories.length}` },
     ];
     const tabStrip = `
       <div class="cw-tabs">
@@ -654,7 +729,54 @@ export class VehicleDesignerScene extends Phaser.Scene {
     if (tab === 'tires')      return this.renderOptionList('TIRES', TIRE_TYPES, this.tireType, 'tires', id => this.canFitTire(id));
     if (tab === 'armor')      return this.renderArmorPanel();
     if (tab === 'weapons')    return this.renderWeaponsPanel();
+    if (tab === 'accessories') return this.renderAccessoriesPanel();
     return '';
+  }
+
+  private renderAccessoriesPanel(): string {
+    const cat = this.catalog?.accessories ?? [];
+    const groups: Record<string, AccessoryDef[]> = {};
+    for (const a of cat) (groups[a.category] ??= []).push(a);
+
+    const installedSection = this.accessories.length
+      ? `<div style="margin-bottom:12px;">
+           ${this.accessories.map((a, i) => {
+             const def = cat.find(d => d.id === a.id);
+             const bound = a.boundMountId ? ` ▸ mount ${esc(a.boundMountId.slice(0, 6))}` : '';
+             return `
+               <div style="display:flex;justify-content:space-between;align-items:center;padding:5px 0;border-bottom:1px dotted #2a2a44;font-size:11px;">
+                 <span style="color:#00ff88;">✓ ${esc(def?.name ?? a.id)}${bound}</span>
+                 <button class="opt" style="padding:2px 8px;font-size:10px;color:#ff6666;" data-action="remove-accessory" data-value="${esc(a.id)}:${i}">×</button>
+               </div>`;
+           }).join('')}
+         </div>`
+      : '<div style="color:#666;font-size:11px;padding:8px 2px;">No accessories installed.</div>';
+
+    const catLabels: Record<string, string> = {
+      computer: 'COMPUTERS', driver: 'DRIVER AUG', brakes: 'BRAKES',
+      aero: 'AERO / HANDLING', safety: 'SAFETY', sensor: 'SENSORS', utility: 'UTILITY',
+    };
+    const catalogSection = Object.entries(groups).map(([catKey, items]) => `
+      <div style="margin-top:14px;">
+        <div style="font-size:10px;color:#aac;letter-spacing:2px;margin-bottom:4px;">${catLabels[catKey] ?? catKey.toUpperCase()}</div>
+        ${items.map(a => `
+          <button class="opt" style="display:block;width:100%;text-align:left;margin-bottom:3px;padding:6px 8px;font-size:11px;"
+                  data-action="add-accessory" data-value="${esc(a.id)}"
+                  title="${esc(a.description)}">
+            <span style="color:#cccccc;">${esc(a.name)}</span>
+            <span style="float:right;color:#ffcc00;">$${a.cost.toLocaleString()}</span>
+            <div style="font-size:9px;color:#666;clear:both;">${a.spaces} spc · ${a.weight} lb${a.bindable ? ' · bound to mount' : ''}</div>
+          </button>
+        `).join('')}
+      </div>`).join('');
+
+    return `
+      <div class="cw-panel">
+        <h3>INSTALLED (${this.accessories.length})</h3>
+        ${installedSection}
+        <h3>ADD ACCESSORY</h3>
+        ${catalogSection}
+      </div>`;
   }
 
   private renderOptionList(
@@ -786,13 +908,17 @@ export class VehicleDesignerScene extends Phaser.Scene {
         const arcLabel = m.arc === 'turret' && m.turretSize
           ? `T·${m.turretSize[0]}`
           : m.arc.charAt(0).toUpperCase();
+        const linked = !!m.linkGroup;
         return `
-          <div style="display:grid;grid-template-columns:20px 1fr 44px 30px;gap:4px;align-items:center;padding:4px 0;border-bottom:1px dotted #2a2a44;font-size:11px;">
+          <div style="display:grid;grid-template-columns:20px 1fr 44px 36px 30px;gap:4px;align-items:center;padding:4px 0;border-bottom:1px dotted #2a2a44;font-size:11px;">
             <span style="color:#556;">${idx + 1}</span>
-            <span style="color:#ccc;">${esc(wep?.name ?? m.weaponId ?? '(empty)')}</span>
+            <span style="color:#ccc;">${esc(wep?.name ?? m.weaponId ?? '(empty)')}${linked ? ' <span style="color:#88ccff;">⛓</span>' : ''}</span>
             <button class="opt" style="padding:3px 6px;font-size:10px;color:#ffcc00;border-color:#664400;background:#332200;"
                     data-action="cycle-arc" data-value="${m.id}"
                     title="cycle arc">▸${arcLabel}</button>
+            <button class="opt" style="padding:3px 6px;font-size:10px;${linked ? 'color:#88ccff;border-color:#446688;background:#112233;' : 'color:#888;'}"
+                    data-action="link-mount" data-value="${m.id}"
+                    title="${linked ? 'unlink' : 'link with another mount of same weapon'}">${linked ? '⛓' : 'link'}</button>
             <button class="opt" style="padding:3px 6px;font-size:10px;color:#ff6666;"
                     data-action="remove-mount" data-value="${m.id}"
                     title="remove mount">×</button>
@@ -1364,6 +1490,7 @@ export class VehicleDesignerScene extends Phaser.Scene {
       tireType:       this.tireType,
       armorType:      this.armorType,
       hasSidecar:     this.hasSidecar,
+      accessories:    this.accessories,
     };
   }
 

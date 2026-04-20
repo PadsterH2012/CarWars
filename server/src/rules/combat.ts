@@ -114,6 +114,7 @@ export function resolveToHit(
   weapon: WeaponDef,
   distance: number,
   attackerSkill: number = 3,
+  accessoryBonus: number = 0,  // negative = easier hit (HRC, SWC, targeting laser)
 ): ToHitResult {
   // Dropped weapons are not aimed — they are never resolved through this function
   if (weapon.category === 'dropped') {
@@ -151,6 +152,9 @@ export function resolveToHit(
 
   // Driver skill modifier — applied last so it shows up clearly in the modifier field
   targetNumber += skillToHitModifier(attackerSkill);
+
+  // Targeting computer / cyberlink modifiers from installed accessories
+  targetNumber += accessoryBonus;
 
   const roll = roll2d6();
   const hit = roll >= targetNumber;

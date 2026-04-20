@@ -59,6 +59,18 @@ export interface WeaponMount {
   // Determines the turret structure's own cost, weight, and space footprint
   // as well as the maximum weapon size it can hold.
   turretSize?: TurretSize;
+  // Optional weapon-link tag. Mounts sharing the same linkGroup id fire as
+  // one action with one to-hit roll (Compendium "linked weapons" rule).
+  linkGroup?: string;
+}
+
+// One installed accessory on a vehicle. The id references a static catalog
+// entry (server/src/rules/data/accessories.ts) where cost / spaces / weight /
+// effects live. Optional `boundMountId` lets per-weapon accessories (Single
+// Weapon Computer, Targeting Laser) bind to a specific mount.
+export interface AccessoryConfig {
+  id: string;
+  boundMountId?: string;
 }
 
 export interface VehicleLoadout {
@@ -82,6 +94,8 @@ export interface VehicleLoadout {
   // Compendium. Adds bonus spaces + load + a third wheel, and lets the cycle
   // host side-mounted weapons at the cost of some maneuverability.
   hasSidecar?: boolean;
+  // Installed accessories (computers, brakes, autopilot, etc.).
+  accessories?: AccessoryConfig[];
 }
 
 export interface DamageState {

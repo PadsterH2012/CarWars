@@ -8,6 +8,7 @@ import { WEAPONS } from '../rules/data/weapons';
 import { deriveStats } from '../rules/vehicle';
 import { computeCapacity } from '../rules/capacity';
 import { SIDECAR } from '../rules/data/sidecars';
+import { ACCESSORY_INDEX } from '../rules/data/accessories';
 
 // Armor type cost and weight multipliers (Compendium 2E, p.40)
 // costMul applies to armorCostPerPt, wtMul applies to armorWtPerPt
@@ -96,6 +97,7 @@ designRouter.post('/', (req, res) => {
     armorType: (armorType ?? 'ablative') as ArmorType,
     powerPlantType: powerPlantType as PowerPlantType,
     hasSidecar: !!req.body.hasSidecar,
+    accessories: Array.isArray(req.body.accessories) ? req.body.accessories : [],
   };
 
   try {
@@ -108,10 +110,15 @@ designRouter.post('/', (req, res) => {
       return w ? sum + w.cost + w.ammoCost * m.ammo : sum;
     }, 0);
     const armorMul = ARMOR_TYPE_MULS[loadout.armorType ?? 'ablative'] ?? ARMOR_TYPE_MULS.ablative;
+    const accessoryCost = (loadout.accessories ?? []).reduce((s, a) => {
+      const def = ACCESSORY_INDEX[a.id];
+      return def ? s + def.cost : s;
+    }, 0);
     const totalCost = body.price + plant.cost + tire.costPerTire * tireCount
       + armorPts * body.armorCostPerPt * armorMul.costMul
       + suspCost + weaponCost
-      + (loadout.hasSidecar ? SIDECAR.cost : 0);
+      + (loadout.hasSidecar ? SIDECAR.cost : 0)
+      + accessoryCost;
 
     const capacity = computeCapacity(loadout);
     return res.json({

@@ -5,6 +5,7 @@ import { TIRES } from './data/tires';
 import { WEAPONS } from './data/weapons';
 import { TURRETS, TURRET_TIER_RANK } from './data/turrets';
 import { SIDECAR, sidecarAllowedFor } from './data/sidecars';
+import { ACCESSORY_INDEX } from './data/accessories';
 
 export interface CapacityReport {
   spacesUsed: number;
@@ -78,6 +79,15 @@ export function computeCapacity(loadout: VehicleLoadout): CapacityReport {
   }
   if (hasSidecar) loadWeight += SIDECAR.weight;
 
+  // Accessories: each installed accessory consumes its declared spaces +
+  // weight. Unknown ids are silently ignored so legacy loadouts don't break.
+  for (const a of loadout.accessories ?? []) {
+    const def = ACCESSORY_INDEX[a.id];
+    if (!def) continue;
+    spacesUsed += def.spaces;
+    loadWeight += def.weight;
+  }
+
   const errors: string[] = [];
   const overSpaces = spacesUsed > spacesMax;
   const overWeight = loadWeight > loadMax;
@@ -85,6 +95,20 @@ export function computeCapacity(loadout: VehicleLoadout): CapacityReport {
   if (overWeight) errors.push(`Over weight: ${Math.round(loadWeight)} / ${loadMax} lbs`);
   if (hasSidecar && !sidecarAllowedFor(bodyType)) {
     errors.push(`${body.name} cannot mount a sidecar (medium or heavy cycles only)`);
+  }
+
+  // Accessory validation: bindable accessories (SWC/HRSWC/Targeting Laser)
+  // must point at a real mount on this loadout.
+  const mountIds = new Set((loadout.mounts ?? []).map(m => m.id));
+  for (const a of loadout.accessories ?? []) {
+    const def = ACCESSORY_INDEX[a.id];
+    if (!def) {
+      errors.push(`Unknown accessory ${a.id}`);
+      continue;
+    }
+    if (def.bindable && (!a.boundMountId || !mountIds.has(a.boundMountId))) {
+      errors.push(`${def.name} must be bound to a valid mount`);
+    }
   }
 
   // Turret-specific validation. A turret mount must declare its size; the

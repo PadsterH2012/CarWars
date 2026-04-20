@@ -5,6 +5,7 @@ import { TIRES } from '../rules/data/tires';
 import { WEAPONS } from '../rules/data/weapons';
 import { TURRETS } from '../rules/data/turrets';
 import { SIDECAR, SIDECAR_ALLOWED_BODIES } from '../rules/data/sidecars';
+import { ACCESSORIES } from '../rules/data/accessories';
 
 // Aggregate design catalog — read-only, powers the client's fit-check greying
 // of engine / tire / armor-type pickers. No auth required.
@@ -37,6 +38,7 @@ catalogRouter.get('/', (_req, res) => {
       bonusLoad: SIDECAR.bonusLoad,
       allowedBodies: Array.from(SIDECAR_ALLOWED_BODIES),
     },
+    accessories: ACCESSORIES,
     plants: POWER_PLANTS.map(p => ({
       id: p.id, name: p.name, cycleOnly: p.cycleOnly,
       spaces: p.spaces, weight: p.weight,

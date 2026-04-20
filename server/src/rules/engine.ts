@@ -1,6 +1,7 @@
 import type { ZoneState, VehicleState, HazardObject, DamageState, ArmorLocation, ArenaMap, CombatEvent, WreckageObject, WreckageCause, WreckageState } from '@carwars/shared';
 import { computeMovement, classifyManeuver, resolveControlTable, computeSpinAngle, resolveCollision } from './movement';
 import { resolveToHit, resolveDamage, isWeaponInArc, hasLineOfSight, roll2d6, rollDamage, getAttackLocation } from './combat';
+import { accessoryToHitBonus, accessorySkillBonus } from './accessoryEffects';
 import { WEAPONS } from './data/weapons';
 import { resolveWallCollisions } from './collision';
 
@@ -359,24 +360,35 @@ export function createTurnEngine(initialState: ZoneState, map?: ArenaMap, opts: 
         if (!weapon) return;
 
         // Find a mount on the attacker with this weapon and ammo remaining
-        const mountIndex = attacker.stats.loadout?.mounts.findIndex(
+        const allMounts = attacker.stats.loadout?.mounts ?? [];
+        const mountIndex = allMounts.findIndex(
           m => m.weaponId === input.fireWeapon && m.ammo > 0
-        ) ?? -1;
+        );
         if (mountIndex === -1) return;
-        const mount = attacker.stats.loadout!.mounts[mountIndex];
+        const mount = allMounts[mountIndex];
+
+        // Linked weapons: if the firing mount has a linkGroup, every mount in
+        // that group with the same weapon + ammo fires as one action with a
+        // single to-hit roll and summed damage (Compendium rule).
+        const firingMounts = mount.linkGroup
+          ? allMounts.filter(m => m.linkGroup === mount.linkGroup && m.weaponId === mount.weaponId && m.ammo > 0)
+          : [mount];
 
         // Handle dropped weapons (oil, mine) — place hazard at attacker's position
         if (weapon.category === 'dropped') {
           if (!ammoUpdates.has(attacker.id)) ammoUpdates.set(attacker.id, new Map());
-          ammoUpdates.get(attacker.id)!.set(mount.id, mount.ammo - 1);
-          const hazId = `${weapon.id}-${attacker.id}-${state.tick}`;
-          state = {
-            ...state,
-            hazardObjects: [
-              ...state.hazardObjects,
-              { id: hazId, type: weapon.id as 'oil' | 'mine', position: { ...attacker.position }, ownerId: attacker.id }
-            ]
-          };
+          // Linked dropped weapons each drop a hazard
+          for (const fm of firingMounts) {
+            ammoUpdates.get(attacker.id)!.set(fm.id, fm.ammo - 1);
+            const hazId = `${weapon.id}-${attacker.id}-${state.tick}-${fm.id}`;
+            state = {
+              ...state,
+              hazardObjects: [
+                ...state.hazardObjects,
+                { id: hazId, type: weapon.id as 'oil' | 'mine', position: { ...attacker.position }, ownerId: attacker.id }
+              ]
+            };
+          }
           return;
         }
 
@@ -400,8 +412,10 @@ export function createTurnEngine(initialState: ZoneState, map?: ArenaMap, opts: 
           const distance = Math.sqrt(dx * dx + dy * dy);
           if (distance > weapon.longRange) return;
 
-          const attackerSkill = opts.getDriverSkill?.(attacker.id) ?? 3;
-          const toHit = resolveToHit(attacker, target, weapon, distance, attackerSkill);
+          const baseSkill = opts.getDriverSkill?.(attacker.id) ?? 3;
+          const attackerSkill = baseSkill + accessorySkillBonus(attacker.stats.loadout);
+          const accBonus = accessoryToHitBonus(attacker.stats.loadout, mount);
+          const toHit = resolveToHit(attacker, target, weapon, distance, attackerSkill, accBonus);
           const distStr = distance.toFixed(1);
           if (!toHit.hit) {
             console.log(`[t${state.tick}] MISS  ${attacker.id} → ${target.id} (${weapon.id}, dist=${distStr})`);
@@ -414,8 +428,14 @@ export function createTurnEngine(initialState: ZoneState, map?: ArenaMap, opts: 
             return;
           }
 
-          // damageDice === 0 means fixed-damage weapon (e.g. legacy entries); fall back to flat damage field
-          const rolledDamage = weapon.damageDice > 0 ? rollDamage(weapon.damageDice, weapon.damageMod) : (weapon.damage ?? 1);
+          // damageDice === 0 means fixed-damage weapon (e.g. legacy entries); fall back to flat damage field.
+          // Linked weapons: each firing mount rolls its own damage and the
+          // total is summed against the same hit location (single to-hit).
+          const rolledDamage = firingMounts.reduce((sum) => {
+            const mw = WEAPONS.find(w => w.id === mount.weaponId);
+            if (!mw) return sum;
+            return sum + (mw.damageDice > 0 ? rollDamage(mw.damageDice, mw.damageMod) : (mw.damage ?? 1));
+          }, 0);
           const damageResult = resolveDamage(target, toHit.location, rolledDamage);
           const currentDamage = damageUpdates.get(target.id) ?? { ...target.stats.damageState };
           const newArmor = { ...currentDamage.armor };
@@ -451,9 +471,11 @@ export function createTurnEngine(initialState: ZoneState, map?: ArenaMap, opts: 
           lastDamager.set(target.id, attacker.id);
         });
 
-        // Decrement ammo once per tick per firing vehicle
+        // Decrement ammo on every firing mount (linked or single)
         if (!ammoUpdates.has(attacker.id)) ammoUpdates.set(attacker.id, new Map());
-        ammoUpdates.get(attacker.id)!.set(mount.id, mount.ammo - 1);
+        for (const fm of firingMounts) {
+          ammoUpdates.get(attacker.id)!.set(fm.id, fm.ammo - 1);
+        }
       });
 
       // Resolve hazard object triggers (oil slicks, mines)

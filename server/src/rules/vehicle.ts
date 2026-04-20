@@ -6,6 +6,7 @@ import { POWER_PLANTS } from './data/power-plants';
 import { SUSPENSIONS } from './data/suspensions';
 import { TIRES } from './data/tires';
 import { WEAPONS } from './data/weapons';
+import { accessoryHcBonus, accessoryTopSpeedMul } from './accessoryEffects';
 
 const ARMOR_WT_MUL: Record<string, number> = {
   ablative: 1, metal: 2, fireproof: 1, laser_reflective: 1, lr_fireproof: 1, radarproof: 1,
@@ -73,7 +74,13 @@ export function deriveStats(id: string, name: string, loadout: VehicleLoadout): 
     const isSub = body.isCycle || loadout.bodyType === 'subcompact';
     handlingClass = isSub ? suspension.subHC : isVanSize ? suspension.vanHC : suspension.carHC;
     handlingClass += tire.hcModifier;
+    // Accessory HC bonus (Spoiler, Active Suspension, etc.)
+    handlingClass += accessoryHcBonus(loadout);
     handlingClass = Math.max(1, Math.min(6, handlingClass));
+
+    // Accessory top-speed multiplier (Streamlining, etc.)
+    const speedMul = accessoryTopSpeedMul(loadout);
+    if (speedMul !== 1) maxSpeed = Math.round((maxSpeed * speedMul) / 2.5) * 2.5;
 
   } else {
     // === Legacy path (existing test vehicles without bodyType) ===

@@ -8,6 +8,12 @@ export interface MountConfig {
   weaponId: string | null;
   ammo: number;
   turretSize?: TurretSize;
+  linkGroup?: string;
+}
+
+export interface AccessoryConfig {
+  id: string;
+  boundMountId?: string;
 }
 
 export const BODY_TYPES = [
