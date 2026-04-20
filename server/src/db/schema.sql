@@ -215,6 +215,76 @@ FOR EACH ROW
 WHEN (OLD.reputation IS DISTINCT FROM NEW.reputation)
 EXECUTE FUNCTION sync_gang_reputation();
 
+-- Stock vehicles — pre-designed blueprints from published AADA Vehicle Guides.
+-- Players purchase instances of these; the purchase copies `loadout` into a new
+-- row in `vehicles` and debits the treasury. Rivals may also field stock designs.
+CREATE TABLE IF NOT EXISTS stock_vehicles (
+  id TEXT PRIMARY KEY,
+  name TEXT NOT NULL,
+  division INTEGER NOT NULL,
+  description TEXT NOT NULL DEFAULT '',
+  loadout JSONB NOT NULL,
+  cost INTEGER NOT NULL,
+  weight INTEGER NOT NULL,
+  source TEXT NOT NULL DEFAULT 'aada_v3'
+);
+CREATE INDEX IF NOT EXISTS idx_stock_vehicles_division ON stock_vehicles(division);
+
+-- Seed 10 hand-curated vehicles inspired by AADA Vehicle Guide Vol 3. Loadouts
+-- map AADA stats onto our Compendium catalog (body/plant/tires/etc. IDs match
+-- server/src/rules/data/*). ON CONFLICT DO NOTHING keeps existing rows.
+INSERT INTO stock_vehicles (id, name, division, description, loadout, cost, weight, source) VALUES
+  ('sprocket', 'Sprocket', 5,
+   'Vanilla workhorse: load up the Vulcan and take on all comers. Poor handling, solid firepower.',
+   $${"bodyType":"compact","chassisType":"light","suspensionType":"light","powerPlantType":"elec_medium","tireType":"heavy_duty","armorType":"ablative","armor":{"front":20,"back":16,"left":12,"right":12,"top":4,"underbody":4},"mounts":[{"id":"m0","arc":"front","weaponId":"vmg","ammo":20}],"tires":[{"id":"t0","blown":false},{"id":"t1","blown":false},{"id":"t2","blown":false},{"id":"t3","blown":false}],"totalCost":4994,"chassisId":"mid","engineId":"medium","suspensionId":"light"}$$,
+   4994, 3118, 'aada_v3'),
+
+  ('lo_beam', 'Lo-Beam', 5,
+   'Subcompact laser platform. Pop the LL out when you move up divisions.',
+   $${"bodyType":"subcompact","chassisType":"heavy","suspensionType":"light","powerPlantType":"elec_small","tireType":"standard","armorType":"ablative","armor":{"front":20,"back":16,"left":15,"right":15,"top":4,"underbody":4},"mounts":[{"id":"m0","arc":"front","weaponId":"ll","ammo":0}],"tires":[{"id":"t0","blown":false},{"id":"t1","blown":false},{"id":"t2","blown":false},{"id":"t3","blown":false}],"totalCost":4994,"chassisId":"mid","engineId":"small","suspensionId":"light"}$$,
+   4994, 2340, 'aada_v3'),
+
+  ('mg3', 'MG3', 10,
+   'Triple-MG deterrent. Front, left and right guns put out constant area fire.',
+   $${"bodyType":"mid_sized","chassisType":"standard","suspensionType":"standard","powerPlantType":"elec_medium","tireType":"puncture_resistant","armorType":"ablative","armor":{"front":25,"back":20,"left":15,"right":15,"top":5,"underbody":5},"mounts":[{"id":"m0","arc":"front","weaponId":"mg","ammo":20},{"id":"m1","arc":"left","weaponId":"mg","ammo":20},{"id":"m2","arc":"right","weaponId":"mg","ammo":20}],"tires":[{"id":"t0","blown":false},{"id":"t1","blown":false},{"id":"t2","blown":false},{"id":"t3","blown":false}],"totalCost":9850,"chassisId":"mid","engineId":"medium","suspensionId":"standard"}$$,
+   9850, 4100, 'aada_v3'),
+
+  ('guardian', 'Guardian', 10,
+   'Defensive pillar: heavy frame, turreted light laser, recoilless rifle up front.',
+   $${"bodyType":"compact","chassisType":"heavy","suspensionType":"heavy","powerPlantType":"elec_medium","tireType":"puncture_resistant","armorType":"ablative","armor":{"front":30,"back":25,"left":20,"right":20,"top":6,"underbody":6},"mounts":[{"id":"m0","arc":"front","weaponId":"rr","ammo":10},{"id":"m1","arc":"turret","turretSize":"standard","weaponId":"ll","ammo":0}],"tires":[{"id":"t0","blown":false},{"id":"t1","blown":false},{"id":"t2","blown":false},{"id":"t3","blown":false}],"totalCost":9960,"chassisId":"mid","engineId":"medium","suspensionId":"heavy"}$$,
+   9960, 4050, 'aada_v3'),
+
+  ('gatling', 'Gatling', 15,
+   'Mid-sized gun platform: vulcan up front, standard MG covering the rear.',
+   $${"bodyType":"mid_sized","chassisType":"standard","suspensionType":"standard","powerPlantType":"elec_large","tireType":"puncture_resistant","armorType":"ablative","armor":{"front":30,"back":25,"left":20,"right":20,"top":6,"underbody":6},"mounts":[{"id":"m0","arc":"front","weaponId":"vmg","ammo":20},{"id":"m1","arc":"back","weaponId":"mg","ammo":20}],"tires":[{"id":"t0","blown":false},{"id":"t1","blown":false},{"id":"t2","blown":false},{"id":"t3","blown":false}],"totalCost":14820,"chassisId":"mid","engineId":"large","suspensionId":"standard"}$$,
+   14820, 4800, 'aada_v3'),
+
+  ('volcano', 'Volcano', 15,
+   'Rocket saturation — 2 heavy rockets front, 1 heavy rocket back. Makes noise.',
+   $${"bodyType":"sedan","chassisType":"standard","suspensionType":"improved","powerPlantType":"elec_large","tireType":"puncture_resistant","armorType":"ablative","armor":{"front":25,"back":25,"left":20,"right":20,"top":6,"underbody":6},"mounts":[{"id":"m0","arc":"front","weaponId":"hr","ammo":1},{"id":"m1","arc":"front","weaponId":"hr","ammo":1},{"id":"m2","arc":"back","weaponId":"hr","ammo":1}],"tires":[{"id":"t0","blown":false},{"id":"t1","blown":false},{"id":"t2","blown":false},{"id":"t3","blown":false}],"totalCost":14980,"chassisId":"mid","engineId":"large","suspensionId":"improved"}$$,
+   14980, 5000, 'aada_v3'),
+
+  ('desperado', 'Desperado', 20,
+   'Turreted heavy laser, MG front, oil jet back — a flexible all-rounder.',
+   $${"bodyType":"sedan","chassisType":"heavy","suspensionType":"heavy","powerPlantType":"elec_large","tireType":"puncture_resistant","armorType":"ablative","armor":{"front":30,"back":25,"left":25,"right":25,"top":7,"underbody":7},"mounts":[{"id":"m0","arc":"front","weaponId":"mg","ammo":20},{"id":"m1","arc":"back","weaponId":"oj","ammo":5},{"id":"m2","arc":"turret","turretSize":"heavy","weaponId":"hl","ammo":0}],"tires":[{"id":"t0","blown":false},{"id":"t1","blown":false},{"id":"t2","blown":false},{"id":"t3","blown":false}],"totalCost":19950,"chassisId":"mid","engineId":"large","suspensionId":"heavy"}$$,
+   19950, 5600, 'aada_v3'),
+
+  ('omega_20', 'Omega-20', 20,
+   'Sabre Motors ram car. Heavy armor, autocannon front, built to bury opponents.',
+   $${"bodyType":"compact","chassisType":"extra_heavy","suspensionType":"improved","powerPlantType":"elec_large","tireType":"puncture_resistant","armorType":"metal","hasRamplate":true,"armor":{"front":40,"back":25,"left":25,"right":25,"top":6,"underbody":6},"mounts":[{"id":"m0","arc":"front","weaponId":"ac","ammo":10}],"tires":[{"id":"t0","blown":false},{"id":"t1","blown":false},{"id":"t2","blown":false},{"id":"t3","blown":false}],"totalCost":19920,"chassisId":"mid","engineId":"large","suspensionId":"improved"}$$,
+   19920, 5700, 'aada_v3'),
+
+  ('firedrake', 'Firedrake', 25,
+   'Medium laser turret paired with a flamer front — denies close approaches.',
+   $${"bodyType":"sedan","chassisType":"heavy","suspensionType":"heavy","powerPlantType":"elec_super","tireType":"puncture_resistant","armorType":"fireproof","armor":{"front":35,"back":30,"left":30,"right":30,"top":8,"underbody":8},"mounts":[{"id":"m0","arc":"front","weaponId":"ft","ammo":20},{"id":"m1","arc":"turret","turretSize":"standard","weaponId":"ml","ammo":0}],"tires":[{"id":"t0","blown":false},{"id":"t1","blown":false},{"id":"t2","blown":false},{"id":"t3","blown":false}],"totalCost":24870,"chassisId":"mid","engineId":"super","suspensionId":"heavy"}$$,
+   24870, 6400, 'aada_v3'),
+
+  ('stormy_weather', 'Stormy Weather', 30,
+   'Luxury cruiser: heavy laser front, side MGs, oil slick tail.',
+   $${"bodyType":"luxury","chassisType":"heavy","suspensionType":"heavy","powerPlantType":"elec_super","tireType":"puncture_resistant","armorType":"ablative","armor":{"front":40,"back":30,"left":30,"right":30,"top":9,"underbody":9},"mounts":[{"id":"m0","arc":"front","weaponId":"hl","ammo":0},{"id":"m1","arc":"left","weaponId":"mg","ammo":20},{"id":"m2","arc":"right","weaponId":"mg","ammo":20},{"id":"m3","arc":"back","weaponId":"oj","ammo":5}],"tires":[{"id":"t0","blown":false},{"id":"t1","blown":false},{"id":"t2","blown":false},{"id":"t3","blown":false}],"totalCost":29940,"chassisId":"mid","engineId":"super","suspensionId":"heavy"}$$,
+   29940, 7000, 'aada_v3')
+ON CONFLICT (id) DO NOTHING;
+
 -- Indexes for frequent foreign key lookups
 CREATE INDEX IF NOT EXISTS idx_vehicles_player_id ON vehicles(player_id);
 CREATE INDEX IF NOT EXISTS idx_vehicles_gang_id ON vehicles(gang_id);
