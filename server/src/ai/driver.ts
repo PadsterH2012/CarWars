@@ -504,42 +504,75 @@ export function computeAiInput(
     }
   }
 
-  // ── Friendly avoidance overlay ───────────────────────────────────────────
-  // Squadmates are soft obstacles: if a friendly is directly ahead within a
-  // short radius, nudge the heading around them and shed speed. Doesn't trigger
-  // on enemies — those are handled by the tactical engine above. Uses
-  // `allVehicles` when plumbed through (from zone-runner) so we see the whole
-  // state including stationary squadmates.
+  // ── Proximity avoidance overlay ──────────────────────────────────────────
+  // Keep a minimum gap from other vehicles so AI squadmates don't pile up
+  // next to the player (and get caught by ammo cook-off blasts on kills).
+  // Two tiers:
+  //   - Friendly within 5 units (any direction) — soft avoid, minimum bubble
+  //   - Any vehicle looking like it's about to explode (low armour+low hp)
+  //     within blast radius ×2 — strong avoid regardless of which side
+  //
+  // Rationale: BLAST_RADIUS is 2 units. Allowing squadmates to drift within
+  // 2-3 units guarantees blast-chain deaths. 5 units keeps everyone outside
+  // the 2-unit cook-off radius with headroom for momentum.
   if (allVehicles && allVehicles.length > 1 && desiredSpeed > 0) {
-    const FRIEND_AVOID_RANGE = 4;   // world units; start nudging inside this
-    const FRIEND_AVOID_ARC   = 45;  // degrees off the current facing
-    let nearestFriend: VehicleState | null = null;
-    let nearestDist = Infinity;
+    const FRIEND_AVOID_RANGE  = 5;   // 360° soft bubble around friendlies
+    const BLAST_HAZARD_RANGE  = 5;   // steer clear of low-hp vehicles at this range
+    const LOW_HP_FRACTION     = 0.30;
+
+    const healthOf = (v: VehicleState): number => {
+      const ds = v.stats.damageState;
+      const orig = v.stats.loadout?.armor ?? {};
+      const faces: (keyof typeof ds.armor)[] = ['front', 'back', 'left', 'right', 'top', 'underbody'];
+      let origTotal = 0, curTotal = 0;
+      for (const f of faces) {
+        origTotal += (orig as Record<string, number>)[f] ?? 0;
+        curTotal  += (ds.armor as Record<string, number>)[f] ?? 0;
+      }
+      return origTotal > 0 ? curTotal / origTotal : 1;
+    };
+
+    let bestAvoidTarget: VehicleState | null = null;
+    let bestUrgency = 0;
+    let bestDist = Infinity;
+
     for (const v of allVehicles) {
       if (v.id === self.id) continue;
-      if (v.playerId !== self.playerId) continue;
       if (v.stats.damageState.destroyed) continue;
       const d = dist2d(self.position, v.position);
-      if (d >= FRIEND_AVOID_RANGE) continue;
-      // Is this friend ahead of us within the arc?
-      const toFriend = bearingTo(self.position, v.position);
-      const turnToFriend = Math.abs(shortestTurn(self.facing, toFriend));
-      if (turnToFriend > FRIEND_AVOID_ARC) continue;
-      if (d < nearestDist) { nearestDist = d; nearestFriend = v; }
+      let urgency = 0;
+
+      if (v.playerId === self.playerId && d < FRIEND_AVOID_RANGE) {
+        // Friendly in the bubble — urgency scales linearly to 1 at 0 units
+        urgency = 1 - d / FRIEND_AVOID_RANGE;
+      }
+      // Any vehicle (friend OR foe) looking ready to pop — avoid its blast
+      const hp = healthOf(v);
+      if (hp < LOW_HP_FRACTION && d < BLAST_HAZARD_RANGE) {
+        const blastUrgency = 1 - d / BLAST_HAZARD_RANGE;
+        urgency = Math.max(urgency, blastUrgency * 1.2);  // blast hazard trumps squad spacing
+      }
+
+      if (urgency > bestUrgency || (urgency === bestUrgency && d < bestDist)) {
+        bestUrgency = urgency;
+        bestDist = d;
+        bestAvoidTarget = v;
+      }
     }
-    if (nearestFriend) {
-      // Steer away by 60°+ off the friend's bearing, on the side opposite to
-      // where they are relative to the current facing.
-      const toFriend = bearingTo(self.position, nearestFriend.position);
-      const side = shortestTurn(self.facing, toFriend) >= 0 ? -1 : 1;  // turn opposite
-      const avoidHeading = (self.facing + side * 60 + 360) % 360;
-      const urgency = 1 - (nearestDist / FRIEND_AVOID_RANGE);
+
+    if (bestAvoidTarget && bestUrgency > 0.05) {
+      const toTarget = bearingTo(self.position, bestAvoidTarget.position);
+      // Turn AWAY from the target by ~135° — strong enough to open a lane
+      const side = shortestTurn(self.facing, toTarget) >= 0 ? -1 : 1;
+      const avoidHeading = (self.facing + side * 90 + 360) % 360;
       const tactTurn  = shortestTurn(self.facing, desiredFacing);
       const avoidTurn = shortestTurn(self.facing, avoidHeading);
+      const urgency = Math.min(1, bestUrgency);
       desiredFacing = (self.facing + tactTurn * (1 - urgency) + avoidTurn * urgency + 360) % 360;
-      desiredSpeed  = Math.floor(desiredSpeed * (1 - urgency * 0.6));  // shed speed when close
+      desiredSpeed  = Math.floor(desiredSpeed * (1 - urgency * 0.7));
       if (urgency >= 0.5) {
-        console.log(`[FRIEND] ${self.id.padEnd(10)} avoid ${nearestFriend.id.padEnd(10)} dist=${nearestDist.toFixed(1)} urgency=${urgency.toFixed(2)}`);
+        const reason = bestAvoidTarget.playerId === self.playerId ? 'squad-bubble' : 'blast-hazard';
+        console.log(`[AVOID] ${self.id.padEnd(10)} ${reason} ${bestAvoidTarget.id.padEnd(10)} dist=${bestDist.toFixed(1)} urgency=${urgency.toFixed(2)}`);
       }
     }
   }
