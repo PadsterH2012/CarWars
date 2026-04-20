@@ -282,7 +282,14 @@ export class GarageScene extends Phaser.Scene {
     buildBtn.on('pointerdown', () => this.scene.start('VehicleDesignerScene', { token: this.token }));
     add(buildBtn);
 
-    const jobsBtn = this.add.text(leftX + 300, navY, '[JOB BOARD]', {
+    const shopBtn = this.add.text(leftX + 230, navY, '[STOCK SHOP]', {
+      color: '#aaffcc', fontSize: '16px', fontFamily: 'monospace',
+      backgroundColor: '#113322', padding: { x: 8, y: 4 }
+    }).setInteractive();
+    shopBtn.on('pointerdown', () => this.scene.start('ShopScene', { token: this.token }));
+    add(shopBtn);
+
+    const jobsBtn = this.add.text(leftX + 450, navY, '[JOB BOARD]', {
       color: '#ffaaaa', fontSize: '16px', fontFamily: 'monospace',
       backgroundColor: '#331111', padding: { x: 8, y: 4 }
     }).setInteractive();
