@@ -350,10 +350,13 @@ export function computeAiInput(
   if (ds.positionHistory.length > POS_HISTORY_LEN) ds.positionHistory.shift();
 
   // Stuck detection — two layers:
-  //   Fast: moved < 0.1 this tick → increment
-  //   Robust: net distance travelled over the last 15 ticks < 3 units means the
-  //           vehicle is bouncing-but-not-progressing (wall pin). We force stuckTicks
-  //           to at least 5 so the escape logic kicks in.
+  //   Fast: moved < 0.1 this tick → increment (catches short outright pins)
+  //   Robust: position spread over 15 ticks is tiny compared to how fast the
+  //           vehicle is CURRENTLY moving. That's the wall-pin signature:
+  //           engine says "speed 60" but the car's stuck against geometry so
+  //           its actual displacement is 0. A sniper legitimately circling at
+  //           slow speed (e.g. 40 mph × 15 ticks = 1.7 units straight-line)
+  //           has a tiny spread too but that's NORMAL, not stuck.
   const moved = dist2d(self.position, { x: ds.lastX, y: ds.lastY });
   ds.stuckTicks = moved < 0.1 ? ds.stuckTicks + 1 : 0;
   if (ds.positionHistory.length >= 15) {
@@ -365,10 +368,13 @@ export function computeAiInput(
         if (d2 > maxSpread) maxSpread = d2;
       }
     }
-    // Threshold 2 (was 3) — a straight-line drive over 15 ticks covers ~3.3
-    // units so the old 3-unit threshold triggered false positives on any
-    // modest arcing. Genuine wall-pin oscillations produce spreads of 1-2.
-    if (maxSpread < 2) ds.stuckTicks = Math.max(ds.stuckTicks, 5);
+    // Expected straight-line travel for current speed: |speed| * 15 / 360.
+    // Genuine stuck = actual spread is < 30% of expected. Low-speed sniping
+    // circling is fine because expected is also small (no false positive).
+    const expected = (Math.abs(self.speed) * 15) / 360;
+    if (expected > 1 && maxSpread < expected * 0.3) {
+      ds.stuckTicks = Math.max(ds.stuckTicks, 5);
+    }
   }
   ds.lastX = self.position.x;
   ds.lastY = self.position.y;
