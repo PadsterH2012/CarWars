@@ -10,16 +10,20 @@ import type { VehicleLoadout, DamageState, ArmorDistribution } from '@carwars/sh
 export const economyRouter = Router();
 economyRouter.use(requireAuth);
 
-// Per Compendium: armor / tire / engine repair = the same per-point or
-// per-component cost as the original build. Previously hardcoded flat rates
-// ($100/armor pt, $150/tire, $500/engine) made repair vastly more expensive
-// than the build itself for cheap vehicles — a Compact Sprocket would run
-// up an $8,800 armor bill on a $5k car.
+// Per Compendium 2E (Repair table):
+//   Armor  → 50% of install per point   (patching, not replacing)
+//   Engine → 50% of engine cost         (already modelled below)
+//   Tires  → 100% of install per tire   (blown tires are REPLACED, not patched)
+// Previously armor was charged at full install cost, which made a Div 5 win
+// barely cover repair on its own car — the Compendium half-rate is what
+// restores the break-even between winnings and repair bills.
 
-// Repair cost multiplier matches build cost multiplier for each armor type
-const ARMOR_REPAIR_MUL: Record<string, number> = {
+// Base build multiplier per armor type (same as the install table)
+const ARMOR_BUILD_MUL: Record<string, number> = {
   ablative: 1, metal: 1, fireproof: 2, laser_reflective: 2, lr_fireproof: 4, radarproof: 2,
 };
+// Compendium repair rate — patching armor is 50% of install cost
+const ARMOR_REPAIR_FRACTION = 0.5;
 
 // Floor for engine repair when no power-plant cost data is available
 const ENGINE_REPAIR_FALLBACK = 500;
@@ -40,7 +44,7 @@ interface RepairQuote {
 
 // Pure function — compute the breakdown without touching the DB.
 function computeRepairQuote(loadout: VehicleLoadout, origLoadout: VehicleLoadout, damage: DamageState): RepairQuote {
-  const armorMul = ARMOR_REPAIR_MUL[origLoadout.armorType ?? 'ablative'] ?? 1;
+  const armorMul = ARMOR_BUILD_MUL[origLoadout.armorType ?? 'ablative'] ?? 1;
   const body = BODIES.find(b => b.id === origLoadout.bodyType);
   const armorCostPerPt = body?.armorCostPerPt ?? 10;
 
@@ -50,7 +54,8 @@ function computeRepairQuote(loadout: VehicleLoadout, origLoadout: VehicleLoadout
     const deficit = (origLoadout.armor[loc] ?? 0) - (damage.armor[loc] ?? 0);
     if (deficit > 0) armorPts += deficit;
   }
-  const armorCost = armorPts * armorCostPerPt * armorMul;
+  // Armor repair = 50% of install cost per point (Compendium Repair table)
+  const armorCost = Math.round(armorPts * armorCostPerPt * armorMul * ARMOR_REPAIR_FRACTION);
 
   const tireCount = damage.tiresBlown?.length ?? 0;
   const tire = TIRES.find(t => t.id === origLoadout.tireType);
