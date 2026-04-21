@@ -4,7 +4,7 @@ import { bindFullscreenToggle, onLayout } from '../ui/responsive';
 import { preloadVehicleSprites, bodySpriteKey } from '../game/VehicleSprite';
 
 interface Vehicle { id: string; name: string; value: number; damage_state: any; loadout: any; in_arena?: boolean; }
-interface Driver { id: string; name: string; skill: number; xp: number; assigned_vehicle_id: string | null; alive: boolean; }
+interface Driver { id: string; name: string; skill: number; xp: number; assigned_vehicle_id: string | null; alive: boolean; title?: string; xpToNext?: number; }
 interface Gang { id: string; name: string; primary_colour: number; secondary_colour: number; emblem_id: EmblemId; treasury: number; reputation: number; }
 interface DriverRequest {
   id: string; kind: string; description: string; cost: number;
@@ -243,7 +243,10 @@ export class GarageScene extends Phaser.Scene {
         add(this.add.text(crewX, y, d.name, {
           color: '#ffffff', fontSize: '13px', fontFamily: 'monospace'
         }));
-        add(this.add.text(crewX, y + 16, `skill ${d.skill} | ${d.xp} XP`, {
+        const titleLine = d.title
+          ? `${d.title} · sk${d.skill} · ${d.xp} PP${d.xpToNext ? ` (${d.xpToNext} to next)` : ''}`
+          : `skill ${d.skill} | ${d.xp} XP`;
+        add(this.add.text(crewX, y + 16, titleLine, {
           color: '#888', fontSize: '10px', fontFamily: 'monospace'
         }));
         const assignStr = assignedVehicle ? `▶ ${assignedVehicle.name}` : 'unassigned';
@@ -320,20 +323,132 @@ export class GarageScene extends Phaser.Scene {
   }
 
   private async repairVehicle(vehicleId: string): Promise<void> {
+    await this.showRepairModal(vehicleId);
+  }
+
+  private async showRepairModal(vehicleId: string): Promise<void> {
     const host = window.location.hostname;
-    const res = await fetch(`http://${host}:3001/api/economy/repair`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${this.token}` },
-      body: JSON.stringify({ vehicleId })
+    const quoteRes = await fetch(`http://${host}:3001/api/economy/repair/quote?vehicleId=${vehicleId}`, {
+      headers: { Authorization: `Bearer ${this.token}` },
     });
-    const body = await res.json();
-    if (res.ok) {
-      this.scene.restart({ token: this.token });
-    } else {
-      this.add.text(this.scale.width / 2, this.scale.height - 40, body.error ?? 'Repair failed', {
-        color: '#ff4444', fontSize: '14px', fontFamily: 'monospace'
-      }).setOrigin(0.5);
+    if (!quoteRes.ok) {
+      const body = await quoteRes.json().catch(() => ({}));
+      alert(body.error ?? 'Could not fetch repair quote');
+      return;
     }
+    const quote = await quoteRes.json();
+    if (quote.total === 0) {
+      alert('Vehicle is in pristine condition — nothing to repair.');
+      return;
+    }
+
+    const overlay = document.createElement('div');
+    Object.assign(overlay.style, {
+      position: 'fixed', inset: '0', zIndex: '200',
+      background: 'rgba(0,0,0,0.82)',
+      display: 'flex', alignItems: 'center', justifyContent: 'center',
+      fontFamily: "'Courier New', monospace",
+    });
+    const panel = document.createElement('div');
+    Object.assign(panel.style, {
+      background: '#0f0f22', border: '2px solid #ffcc00', color: '#ccc',
+      padding: '20px', width: 'min(540px, 92vw)',
+      boxShadow: '0 10px 40px rgba(0,0,0,0.6)',
+    });
+    overlay.appendChild(panel);
+    document.body.appendChild(overlay);
+
+    const esc = (s: string): string =>
+      s.replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c] as string));
+
+    const row = (label: string, detail: string, cost: number, key: string): string => `
+      <label style="display:grid;grid-template-columns:20px 1fr auto;gap:10px;align-items:center;padding:8px 0;border-bottom:1px dotted #2a2a44;cursor:${cost > 0 ? 'pointer' : 'default'};">
+        <input type="checkbox" name="part" value="${key}" ${cost > 0 ? 'checked' : 'disabled'} style="cursor:inherit;"/>
+        <div>
+          <div style="color:#ccc;font-size:12px;">${esc(label)}</div>
+          ${detail ? `<div style="color:#888;font-size:10px;">${esc(detail)}</div>` : ''}
+        </div>
+        <span style="color:${cost > 0 ? '#ffcc00' : '#555'};font-size:12px;font-weight:bold;">${cost > 0 ? '$' + cost.toLocaleString() : '—'}</span>
+      </label>`;
+
+    const aff = (n: number): boolean => !!this.gang && this.gang.treasury >= n;
+    const render = (): void => {
+      panel.textContent = '';
+      const range = document.createRange();
+      range.selectNodeContents(panel);
+      const html = `
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:14px;">
+          <h2 style="margin:0;color:#ffcc00;letter-spacing:2px;">REPAIR BREAKDOWN</h2>
+          <div style="font-size:11px;color:#888;">Treasury <b style="color:#ffcc00;">$${this.gang?.treasury.toLocaleString() ?? 0}</b></div>
+        </div>
+        <div style="margin-bottom:10px;font-size:11px;color:#aac;">Uncheck items to leave them damaged — only pay for what you want fixed.</div>
+        ${row('Armour', `${quote.armor.pts} pts missing`, quote.armor.cost, 'armor')}
+        ${row('Tires',  quote.tires.count > 0 ? `${quote.tires.count} blown × $${quote.tires.eachCost} each` : 'none blown', quote.tires.cost, 'tires')}
+        ${row('Engine', quote.engine.damaged ? 'damaged (half install cost)' : 'no damage', quote.engine.cost, 'engine')}
+        ${row('Ammo refill', quote.ammo.rounds > 0 ? `${quote.ammo.rounds} rounds across ${quote.ammo.byMount.length} mount(s)` : 'full load', quote.ammo.cost, 'ammo')}
+        <div style="display:flex;justify-content:space-between;align-items:center;padding:12px 0 4px;border-top:1px solid #2a2a44;margin-top:8px;">
+          <span style="color:#ccc;font-size:13px;">TOTAL SELECTED</span>
+          <span id="repair-total" style="color:#ffcc00;font-size:16px;font-weight:bold;">$${quote.total.toLocaleString()}</span>
+        </div>
+        <div style="display:flex;justify-content:space-between;margin-top:14px;gap:8px;">
+          <button data-action="cancel" style="padding:8px 18px;font-family:inherit;font-size:12px;background:transparent;color:#888;border:1px solid #444;cursor:pointer;">[ CANCEL ]</button>
+          <button data-action="repair" id="btn-repair" style="padding:8px 22px;font-family:inherit;font-size:13px;background:${aff(quote.total) ? '#332200' : '#221100'};color:${aff(quote.total) ? '#ffcc00' : '#555'};border:1px solid ${aff(quote.total) ? '#ffcc00' : '#555'};cursor:${aff(quote.total) ? 'pointer' : 'not-allowed'};">${aff(quote.total) ? '[ REPAIR ]' : '[ NO FUNDS ]'}</button>
+        </div>`;
+      panel.appendChild(range.createContextualFragment(html));
+    };
+
+    const selectedTotal = (): { parts: string[]; total: number } => {
+      const checks = Array.from(panel.querySelectorAll<HTMLInputElement>('input[name="part"]:checked'));
+      const parts = checks.map(c => c.value);
+      let total = 0;
+      if (parts.includes('armor'))  total += quote.armor.cost;
+      if (parts.includes('tires'))  total += quote.tires.cost;
+      if (parts.includes('engine')) total += quote.engine.cost;
+      if (parts.includes('ammo'))   total += quote.ammo.cost;
+      return { parts, total };
+    };
+
+    panel.addEventListener('change', () => {
+      const { total } = selectedTotal();
+      const totalEl = panel.querySelector('#repair-total');
+      const btn = panel.querySelector<HTMLButtonElement>('#btn-repair');
+      if (totalEl) totalEl.textContent = '$' + total.toLocaleString();
+      if (btn) {
+        const ok = aff(total) && total > 0;
+        btn.disabled = !ok;
+        btn.style.cursor = ok ? 'pointer' : 'not-allowed';
+        btn.style.background = ok ? '#332200' : '#221100';
+        btn.style.color = ok ? '#ffcc00' : '#555';
+        btn.style.borderColor = ok ? '#ffcc00' : '#555';
+        btn.textContent = total === 0 ? '[ NOTHING SELECTED ]' : (ok ? '[ REPAIR ]' : '[ NO FUNDS ]');
+      }
+    });
+
+    panel.addEventListener('click', async (e) => {
+      const btn = (e.target as HTMLElement).closest<HTMLElement>('[data-action]');
+      if (!btn) return;
+      if (btn.dataset.action === 'cancel') { overlay.remove(); return; }
+      if (btn.dataset.action === 'repair') {
+        const { parts, total } = selectedTotal();
+        if (total === 0) return;
+        const r = await fetch(`http://${host}:3001/api/economy/repair`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${this.token}` },
+          body: JSON.stringify({ vehicleId, parts }),
+        });
+        if (r.ok) {
+          overlay.remove();
+          this.scene.restart({ token: this.token });
+        } else {
+          const body = await r.json().catch(() => ({}));
+          alert(body.error ?? 'Repair failed');
+        }
+      }
+    });
+
+    overlay.addEventListener('click', (e) => { if (e.target === overlay) overlay.remove(); });
+
+    render();
   }
 
   private showSquadModal(primaryId: string): void {

@@ -22,6 +22,10 @@ export class ZoneRunner {
   // Vehicles where the human has opted into AI autopilot
   private autopilotVehicles = new Set<string>();
   private vehicleSkills = new Map<string, number>(); // vehicleId → driver skill
+  // Per-match combat stats per vehicle — accumulated from every tick's
+  // combatEvents. Feeds the prestige-point award at zone-end so drivers are
+  // credited for damage dealt + hits soaked, not just kills.
+  private matchStats = new Map<string, { damageDealt: number; hitsTaken: number }>();
   private squadOrders = new Map<string, SquadOrder>(); // vehicleId → current order (commander mode)
   private pausedBy: WebSocket | null = null;   // the client that initiated the pause; only they can unpause
   private rival: RivalInfo | null = null;      // rival gang for this match, if set by handler
@@ -141,6 +145,10 @@ export class ZoneRunner {
     return this.engine;
   }
 
+  getMatchStats(vehicleId: string): { damageDealt: number; hitsTaken: number } {
+    return this.matchStats.get(vehicleId) ?? { damageDealt: 0, hitsTaken: 0 };
+  }
+
   private start(): void {
     this.interval = setInterval(() => this.tick(), TICK_MS);
   }
@@ -243,6 +251,19 @@ export class ZoneRunner {
     this.humanInputThisTick.clear();
 
     const newState = this.engine.resolveTick();
+
+    // Accumulate per-vehicle combat stats — used by the prestige-point
+    // award at zone-end (server/src/ws/handler.ts).
+    for (const ev of newState.combatEvents ?? []) {
+      if (!ev.hit) continue;
+      const dmg = ev.damage ?? 0;
+      const a = this.matchStats.get(ev.attackerId) ?? { damageDealt: 0, hitsTaken: 0 };
+      a.damageDealt += dmg;
+      this.matchStats.set(ev.attackerId, a);
+      const t = this.matchStats.get(ev.targetId) ?? { damageDealt: 0, hitsTaken: 0 };
+      t.hitsTaken += 1;
+      this.matchStats.set(ev.targetId, t);
+    }
 
     // Vehicle state summary every 10 ticks
     if (newState.tick % 10 === 0) {

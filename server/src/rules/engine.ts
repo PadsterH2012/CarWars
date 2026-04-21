@@ -520,6 +520,29 @@ export function createTurnEngine(initialState: ZoneState, map?: ArenaMap, opts: 
 
       remainingHazards = remainingHazards.filter(h => !triggeredMines.has(h.id));
 
+      // Chain ignition — any vehicle within 2 units of a burning wreck
+      // catches fire. Applies before the fire-damage pass so the newly
+      // ignited vehicle burns on the same tick. Fire extinguisher accessory
+      // grants immunity (future-proofed via hasFireExtinguisher helper).
+      const CHAIN_IGNITION_RADIUS = 2;
+      const burningWrecks = (state.wreckage ?? []).filter(w => w.state === 'burning');
+      if (burningWrecks.length > 0) {
+        newVehicles.forEach(vehicle => {
+          const cur = damageUpdates.get(vehicle.id) ?? { ...vehicle.stats.damageState };
+          if (cur.onFire) return;
+          if (cur.destroyed) return;
+          for (const w of burningWrecks) {
+            const dx = vehicle.position.x - w.position.x;
+            const dy = vehicle.position.y - w.position.y;
+            if (Math.hypot(dx, dy) <= CHAIN_IGNITION_RADIUS) {
+              damageUpdates.set(vehicle.id, { ...cur, onFire: true });
+              console.log(`[t${state.tick}] CHAIN ${vehicle.id} → on fire (adjacent to burning wreck ${w.id})`);
+              break;
+            }
+          }
+        });
+      }
+
       // Apply fire damage to burning vehicles (Car Wars: 1 armor point per tick from a random facing)
       newVehicles.forEach(vehicle => {
         const alreadyOnFire = damageUpdates.get(vehicle.id)?.onFire ?? vehicle.stats.damageState.onFire;

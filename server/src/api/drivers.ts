@@ -4,6 +4,7 @@ import { requireAuth, AuthRequest } from './middleware';
 import { generateCandidatePool } from '../rules/driverGenerator';
 import { generateRequestForDriver } from '../rules/requestGenerator';
 import { computeCapacity, isInvalid } from '../rules/capacity';
+import { driverTitleFromXp, xpToNextTitle } from '../rules/driverTitle';
 
 export const driversRouter = Router();
 driversRouter.use(requireAuth);
@@ -64,7 +65,15 @@ driversRouter.get('/', async (req: AuthRequest, res) => {
      FROM drivers WHERE player_id = $1`,
     [req.playerId]
   );
-  return res.json(result.rows);
+  // Decorate each driver with a Compendium-style title + xp-to-next so the
+  // client can show 'Rick Steele — Veteran (250 PP to Expert)' without the
+  // UI having to duplicate the thresholds.
+  const rows = result.rows.map(d => ({
+    ...d,
+    title: driverTitleFromXp(d.xp),
+    xpToNext: xpToNextTitle(d.xp),
+  }));
+  return res.json(rows);
 });
 
 // XP threshold for each skill level: skill N → N+1 requires N * 100 XP

@@ -444,17 +444,18 @@ async function handleMessage(ws: WebSocket, raw: string): Promise<void> {
             } finally {
               client.release();
             }
-            // After prize transaction commits, fan XP out across every squad driver.
-            // Each driver earns 10 × kills landed by their car + 20 if their car survived.
-            // Solo 4-kill survival = 60 XP ≈ previous 50 XP baseline; squad splits naturally.
+            // Fan prestige points out to every squad driver after the prize
+            // transaction commits. Compendium formula:
+            //   PP = 5 × damage-dealt + 5 × hits-taken + (winning? 10 : 0)
+            // Damage/hits are accumulated across the whole match by the
+            // runner (matchStats). Previously 10/kill + 20/survive — flat,
+            // under-rewarding damage + tanking.
             const winnerWs = [...clientPlayers.entries()].find(([, pid]) => pid === winnerId)?.[0];
             const winningSquad = (winnerWs ? clientSquads.get(winnerWs) : null) ?? (winnerVehicleId ? [winnerVehicleId] : []);
             if (winningSquad.length > 0) {
-              const zoneState = runner.getEngine().getState();
               for (const vid of winningSquad) {
-                const survived = !!zoneState.vehicles.find(v => v.id === vid);
-                const kills = (zoneState.wreckage ?? []).filter(w => w.killedByVehicleId === vid).length;
-                const xp = 10 * kills + (survived ? 20 : 0);
+                const stats = runner.getMatchStats(vid);
+                const xp = 5 * stats.damageDealt + 5 * stats.hitsTaken + 10;
                 if (xp <= 0) continue;
                 const dRes = await db.query(
                   `SELECT id FROM drivers WHERE assigned_vehicle_id = $1 AND alive = TRUE LIMIT 1`,

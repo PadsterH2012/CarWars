@@ -26,8 +26,87 @@ const ENGINE_REPAIR_FALLBACK = 500;
 // Floor for tire repair when no tire-cost data is available
 const TIRE_REPAIR_FALLBACK   = 50;
 
+// Repair part ids supported by the partial-repair flow
+type RepairPart = 'armor' | 'tires' | 'engine' | 'ammo';
+const ALL_PARTS: RepairPart[] = ['armor', 'tires', 'engine', 'ammo'];
+
+interface RepairQuote {
+  armor: { pts: number; cost: number };
+  tires: { count: number; cost: number; eachCost: number };
+  engine: { damaged: boolean; cost: number };
+  ammo: { rounds: number; cost: number; byMount: Array<{ mountId: string; weaponId: string | null; shortage: number; cost: number }> };
+  total: number;
+}
+
+// Pure function — compute the breakdown without touching the DB.
+function computeRepairQuote(loadout: VehicleLoadout, origLoadout: VehicleLoadout, damage: DamageState): RepairQuote {
+  const armorMul = ARMOR_REPAIR_MUL[origLoadout.armorType ?? 'ablative'] ?? 1;
+  const body = BODIES.find(b => b.id === origLoadout.bodyType);
+  const armorCostPerPt = body?.armorCostPerPt ?? 10;
+
+  let armorPts = 0;
+  const locations: (keyof ArmorDistribution)[] = ['front', 'back', 'left', 'right', 'top', 'underbody'];
+  for (const loc of locations) {
+    const deficit = (origLoadout.armor[loc] ?? 0) - (damage.armor[loc] ?? 0);
+    if (deficit > 0) armorPts += deficit;
+  }
+  const armorCost = armorPts * armorCostPerPt * armorMul;
+
+  const tireCount = damage.tiresBlown?.length ?? 0;
+  const tire = TIRES.find(t => t.id === origLoadout.tireType);
+  const tireEach = tire?.costPerTire ?? TIRE_REPAIR_FALLBACK;
+  const tireCost = tireCount * tireEach;
+
+  const plant = POWER_PLANTS.find(p => p.id === origLoadout.powerPlantType);
+  const engineCost = damage.engineDamaged ? Math.round((plant?.cost ?? ENGINE_REPAIR_FALLBACK) / 2) : 0;
+
+  const byMount: Array<{ mountId: string; weaponId: string | null; shortage: number; cost: number }> = [];
+  let ammoRounds = 0, ammoCost = 0;
+  for (const origMount of origLoadout.mounts ?? []) {
+    const curMount = loadout.mounts?.find(m => m.id === origMount.id);
+    const shortage = origMount.ammo - (curMount?.ammo ?? 0);
+    if (shortage <= 0) continue;
+    const weaponDef = WEAPONS.find(w => w.id === origMount.weaponId);
+    if (!weaponDef) continue;
+    const cost = shortage * weaponDef.ammoCost;
+    byMount.push({ mountId: origMount.id, weaponId: origMount.weaponId, shortage, cost });
+    ammoRounds += shortage;
+    ammoCost   += cost;
+  }
+
+  return {
+    armor:  { pts: armorPts, cost: armorCost },
+    tires:  { count: tireCount, cost: tireCost, eachCost: tireEach },
+    engine: { damaged: !!damage.engineDamaged, cost: engineCost },
+    ammo:   { rounds: ammoRounds, cost: ammoCost, byMount },
+    total:  armorCost + tireCost + engineCost + ammoCost,
+  };
+}
+
+// GET /api/economy/repair/quote?vehicleId=X — itemised cost, no DB mutation
+economyRouter.get('/repair/quote', async (req: AuthRequest, res) => {
+  const vehicleId = req.query.vehicleId;
+  if (!vehicleId || typeof vehicleId !== 'string') return res.status(400).json({ error: 'vehicleId required' });
+  const db = getDb();
+  const vResult = await db.query(
+    `SELECT id, loadout, original_loadout, damage_state
+     FROM vehicles WHERE id = $1 AND player_id = $2`,
+    [vehicleId, req.playerId],
+  );
+  if (!vResult.rows.length) return res.status(403).json({ error: 'Vehicle not found' });
+  const loadout     = vResult.rows[0].loadout as VehicleLoadout;
+  const origLoadout = (vResult.rows[0].original_loadout ?? loadout) as VehicleLoadout;
+  const damage      = vResult.rows[0].damage_state as DamageState;
+  return res.json(computeRepairQuote(loadout, origLoadout, damage));
+});
+
 economyRouter.post('/repair', async (req: AuthRequest, res) => {
   const { vehicleId } = req.body;
+  // Optional `parts` filter — repair only the named categories. Defaults to
+  // everything. Invalid ids are ignored.
+  const parts: RepairPart[] = Array.isArray(req.body.parts) && req.body.parts.length
+    ? req.body.parts.filter((p: string): p is RepairPart => (ALL_PARTS as string[]).includes(p))
+    : ALL_PARTS.slice();
   if (!vehicleId) return res.status(400).json({ error: 'vehicleId required' });
 
   const db = getDb();
@@ -44,68 +123,33 @@ economyRouter.post('/repair', async (req: AuthRequest, res) => {
 
   const vehicle      = vResult.rows[0];
   const loadout      = vehicle.loadout as VehicleLoadout;
-  // original_loadout is set at creation time; NULL for vehicles created before this migration.
-  // The fallback to loadout means pre-migration vehicles see zero ammo shortage (no resupply charge),
-  // which is acceptable — they get a free first repair but subsequent repairs work correctly.
   const origLoadout  = (vehicle.original_loadout ?? loadout) as VehicleLoadout;
   const damage       = vehicle.damage_state as DamageState;
   const playerMoney  = pResult.rows[0].money as number;
 
-  let cost = 0;
-  const armorMul = ARMOR_REPAIR_MUL[origLoadout.armorType ?? 'ablative'] ?? 1;
+  const quote = computeRepairQuote(loadout, origLoadout, damage);
+  const doArmor  = parts.includes('armor');
+  const doTires  = parts.includes('tires');
+  const doEngine = parts.includes('engine');
+  const doAmmo   = parts.includes('ammo');
+  const cost = (doArmor ? quote.armor.cost : 0)
+             + (doTires ? quote.tires.cost : 0)
+             + (doEngine ? quote.engine.cost : 0)
+             + (doAmmo  ? quote.ammo.cost   : 0);
 
-  // Look up the body — repair-per-armour-point uses the body's own
-  // armorCostPerPt (the same value the build pipeline uses to charge for
-  // armour install). Falls back to a small flat rate for legacy loadouts
-  // without a bodyType set.
-  const body = BODIES.find(b => b.id === origLoadout.bodyType);
-  const armorCostPerPt = body?.armorCostPerPt ?? 10;
-
-  // Armor repair
-  const locations: (keyof ArmorDistribution)[] = ['front', 'back', 'left', 'right', 'top', 'underbody'];
-  for (const loc of locations) {
-    const deficit = (origLoadout.armor[loc] ?? 0) - (damage.armor[loc] ?? 0);
-    if (deficit > 0) cost += deficit * armorCostPerPt * armorMul;
-  }
-
-  // Engine repair — half the engine's install cost (Compendium guideline)
-  if (damage.engineDamaged) {
-    const plant = POWER_PLANTS.find(p => p.id === origLoadout.powerPlantType);
-    cost += Math.round((plant?.cost ?? ENGINE_REPAIR_FALLBACK) / 2);
-  }
-
-  // Tire repair — full replacement cost per blown tire, matching the
-  // installed tire type. Falls back to a small flat for legacy loadouts.
-  if ((damage.tiresBlown?.length ?? 0) > 0) {
-    const tire = TIRES.find(t => t.id === origLoadout.tireType);
-    const perTire = tire?.costPerTire ?? TIRE_REPAIR_FALLBACK;
-    cost += (damage.tiresBlown?.length ?? 0) * perTire;
-  }
-
-  // Ammo resupply
-  for (const origMount of origLoadout.mounts ?? []) {
-    const currentMount = loadout.mounts?.find(m => m.id === origMount.id);
-    const shortage = origMount.ammo - (currentMount?.ammo ?? 0);
-    if (shortage > 0) {
-      const weaponDef = WEAPONS.find(w => w.id === origMount.weaponId);
-      if (weaponDef) cost += shortage * weaponDef.ammoCost;
-    }
-  }
-
-  if (cost === 0) return res.json({ cost: 0, moneyRemaining: playerMoney });
+  if (cost === 0) return res.json({ cost: 0, moneyRemaining: playerMoney, parts });
   if (playerMoney < cost) return res.status(402).json({ error: 'Insufficient funds', cost });
 
-  // Build repaired states
+  // Build repaired states — each part only if it's in the filter
   const repairedDamage: DamageState = {
     ...damage,
-    armor: { ...origLoadout.armor },
-    engineDamaged: false,
-    tiresBlown: [],
+    armor: doArmor ? { ...origLoadout.armor } : { ...damage.armor },
+    engineDamaged: doEngine ? false : damage.engineDamaged,
+    tiresBlown:    doTires  ? []    : damage.tiresBlown,
     destroyed: false,
   };
-
-  // Restore ammo in loadout
   const restoredMounts = (loadout.mounts ?? []).map(m => {
+    if (!doAmmo) return m;
     const orig = (origLoadout.mounts ?? []).find(om => om.id === m.id);
     return orig ? { ...m, ammo: orig.ammo } : m;
   });
@@ -125,7 +169,7 @@ economyRouter.post('/repair', async (req: AuthRequest, res) => {
     await client.query(
       `INSERT INTO event_history (player_id, event_type, result, money_delta)
        VALUES ($1, 'repair', $2, $3)`,
-      [req.playerId, JSON.stringify({ vehicleId, cost }), -cost]
+      [req.playerId, JSON.stringify({ vehicleId, cost, parts }), -cost]
     );
     await client.query('COMMIT');
   } catch (e) {
@@ -135,7 +179,7 @@ economyRouter.post('/repair', async (req: AuthRequest, res) => {
     client.release();
   }
 
-  return res.json({ cost, moneyRemaining: playerMoney - cost });
+  return res.json({ cost, moneyRemaining: playerMoney - cost, parts });
 });
 
 economyRouter.post('/prize', async (req: AuthRequest, res) => {

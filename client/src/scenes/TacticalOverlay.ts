@@ -20,7 +20,12 @@ const MAP_SCALE = 6; // pixels per world unit in the overlay map
 export class TacticalOverlay extends Phaser.Scene {
   private cmdData!: InitData;
   private selectedSquadmate: string | null = null;
+  // Static chrome (walls, panel, title) — rebuilt on close, never during updates
   private cleanup: Phaser.GameObjects.GameObject[] = [];
+  // Dynamic items (vehicle dots, wreckage markers, click-catcher) — destroyed
+  // and redrawn on every live zone_state update so commander mode reflects
+  // current battlefield state instead of a stale snapshot.
+  private dynamicCleanup: Phaser.GameObjects.GameObject[] = [];
 
   constructor() { super({ key: 'TacticalOverlay' }); }
 
@@ -28,6 +33,16 @@ export class TacticalOverlay extends Phaser.Scene {
     this.cmdData = d;
     this.selectedSquadmate = null;
     this.cleanup = [];
+    this.dynamicCleanup = [];
+  }
+
+  // Called from ArenaScene each tick so the overlay stays in sync. Rebuilds
+  // only the dynamic layer; panel chrome + walls are untouched.
+  updateState(newState: ZoneState | null): void {
+    this.cmdData.zoneState = newState;
+    this.dynamicCleanup.forEach(o => o.destroy());
+    this.dynamicCleanup = [];
+    this.drawDynamic();
   }
 
   create(): void {
@@ -77,6 +92,7 @@ export class TacticalOverlay extends Phaser.Scene {
   private closeOverlay(): void {
     this.cmdData.onClose();
     this.cleanup.forEach(o => o.destroy());
+    this.dynamicCleanup.forEach(o => o.destroy());
     this.scene.stop();
   }
 
@@ -90,6 +106,9 @@ export class TacticalOverlay extends Phaser.Scene {
     this.time.delayedCall(1200, () => t.destroy());
   }
 
+  // drawTactical is now a one-shot: draws the static walls overlay, then
+  // defers the dynamic layer (vehicles + wreckage + click catcher) to
+  // drawDynamic, which is also called on every updateState.
   private drawTactical(): void {
     const state = this.cmdData.zoneState;
     if (!state) return;
@@ -105,11 +124,20 @@ export class TacticalOverlay extends Phaser.Scene {
     });
     this.cleanup.push(wallGfx);
 
+    this.drawDynamic();
+  }
+
+  private drawDynamic(): void {
+    const state = this.cmdData.zoneState;
+    if (!state) return;
+    const cx = this.scale.width / 2;
+    const cy = this.scale.height / 2;
+
     (state.wreckage ?? []).forEach(w => {
       const px = cx + w.position.x * MAP_SCALE;
       const py = cy + w.position.y * MAP_SCALE;
       const color = w.state === 'burning' ? 0xff6622 : w.state === 'smouldering' ? 0x664422 : 0x333333;
-      this.cleanup.push(this.add.circle(px, py, 4, color, 0.8));
+      this.dynamicCleanup.push(this.add.circle(px, py, 4, color, 0.8));
     });
 
     state.vehicles.forEach(v => {
@@ -121,12 +149,16 @@ export class TacticalOverlay extends Phaser.Scene {
       const py = cy + v.position.y * MAP_SCALE;
       const isMe = v.id === this.cmdData.myVehicleId;
       const color = isEnemy ? 0xff4444 : isMe ? 0x00ff88 : 0x66cc88;
+      // Highlight the selected squadmate with a brighter ring
+      const isSelected = this.selectedSquadmate === v.id;
 
-      const dot = this.add.circle(px, py, 7, color, 0.95).setStrokeStyle(1, 0xffffff).setInteractive();
+      const dot = this.add.circle(px, py, isSelected ? 9 : 7, color, 0.95)
+        .setStrokeStyle(isSelected ? 2 : 1, isSelected ? 0xffff88 : 0xffffff)
+        .setInteractive();
       const label = this.add.text(px + 10, py - 8, v.id.slice(0, 6), {
         color: '#ccc', fontSize: '10px', fontFamily: 'monospace'
       });
-      this.cleanup.push(dot, label);
+      this.dynamicCleanup.push(dot, label);
 
       dot.on('pointerdown', () => {
         if (isEnemy) {
@@ -137,6 +169,7 @@ export class TacticalOverlay extends Phaser.Scene {
         } else if (isSquad && !isMe) {
           this.selectedSquadmate = v.id;
           this.flashFeedback(`Selected: ${v.id.slice(0, 8)} — click target or press F/R/C`);
+          this.updateState(state);  // refresh so the selection ring draws
         }
       });
     });
@@ -149,6 +182,6 @@ export class TacticalOverlay extends Phaser.Scene {
       this.cmdData.sendOrder(this.selectedSquadmate, { type: 'move', x: worldX, y: worldY });
       this.flashFeedback(`${this.selectedSquadmate.slice(0, 8)}: MOVE to (${worldX.toFixed(0)}, ${worldY.toFixed(0)})`);
     });
-    this.cleanup.unshift(clickCatcher);
+    this.dynamicCleanup.unshift(clickCatcher);
   }
 }

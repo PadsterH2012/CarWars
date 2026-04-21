@@ -4,6 +4,7 @@ import type { ZoneState, CombatEvent } from '@carwars/shared';
 import arenaMapData from '../tilemaps/arena-1.json';
 import { preloadVehicleSprites, buildVehicleSprite, updateVehicleSprite, teamColorForVehicle } from '../game/VehicleSprite';
 import { bindFullscreenToggle, onLayout } from '../ui/responsive';
+import { paintEmblem, type EmblemId } from '../game/CoatOfArms';
 
 const PIXELS_PER_INCH = 32;
 const WORLD_CENTER_X = 640;
@@ -55,6 +56,9 @@ export class ArenaScene extends Phaser.Scene {
   private hudHelp!: Phaser.GameObjects.Text;
   private minimapLabel!: Phaser.GameObjects.Text;
   private combatLogHeading!: Phaser.GameObjects.Text;
+  // Rival banner — shown while a rival is active
+  private rivalBanner?: Phaser.GameObjects.Text;
+  private rivalEmblem?: Phaser.GameObjects.Image;
 
   constructor() {
     super({ key: 'ArenaScene' });
@@ -260,6 +264,13 @@ export class ArenaScene extends Phaser.Scene {
         this.clientSteer = msg.maxSteer;
       }
       if (msg.type === 'zone_state') {
+        // If the tactical overlay is open, mirror the new state to it so
+        // commander mode sees vehicles move in real time instead of a frozen
+        // one-shot snapshot from when the overlay was opened.
+        const tactical = this.scene.get('TacticalOverlay') as unknown as { updateState?: (s: import('@carwars/shared').ZoneState) => void } | null;
+        if (tactical && this.scene.isActive('TacticalOverlay') && typeof tactical.updateState === 'function') {
+          tactical.updateState(msg.state);
+        }
         // Render map walls once on first message (walls only present on join)
         if (msg.state.walls && msg.state.walls.length > 0 && this.mapWalls.length === 0) {
           this.mapWalls = msg.state.walls;
@@ -288,6 +299,7 @@ export class ArenaScene extends Phaser.Scene {
         // Persist the rival for this match; enemies will render in their colours
         // and the post-arena screen can show their banner + quote
         this.rival = msg.rival;
+        this.showRivalBanner(msg.rival);
       } else if (msg.type === 'zone_end') {
         this.showZoneEnd(msg.winnerId, msg.reason, msg.prize ?? 0, msg.jobPayout ?? 0, msg.salvage ?? 0, msg.wages ?? 0, msg.maintenance ?? 0, msg.rival, msg.rivalQuote);
       }
@@ -767,6 +779,47 @@ export class ArenaScene extends Phaser.Scene {
     });
   }
 
+  // Top-centre banner: 'vs. THE IRON WOLVES' in the rival's primary colour,
+  // with a small emblem to its left painted from the gang's palette.
+  private showRivalBanner(rival: import('@carwars/shared').RivalInfo): void {
+    const { width } = this.scale;
+    const cx = width / 2;
+    const color = '#' + rival.primary_colour.toString(16).padStart(6, '0');
+
+    if (!this.rivalBanner) {
+      this.rivalBanner = this.add.text(cx, 36, `vs. ${rival.name.toUpperCase()}`, {
+        color, fontSize: '18px', fontFamily: 'monospace', fontStyle: 'bold',
+        backgroundColor: '#000000aa', padding: { x: 10, y: 4 },
+      }).setOrigin(0.5).setScrollFactor(0).setDepth(25);
+    } else {
+      this.rivalBanner.setText(`vs. ${rival.name.toUpperCase()}`).setColor(color);
+    }
+
+    const emblemKey = `rival-emblem-${rival.id}`;
+    if (!this.textures.exists(emblemKey)) {
+      const canvas = document.createElement('canvas');
+      canvas.width = 28; canvas.height = 28;
+      paintEmblem(canvas, rival.emblem_id as EmblemId, rival.primary_colour, rival.secondary_colour);
+      this.textures.addCanvas(emblemKey, canvas);
+    }
+    if (!this.rivalEmblem) {
+      this.rivalEmblem = this.add.image(cx, 36, emblemKey)
+        .setOrigin(0.5).setScrollFactor(0).setDepth(26).setDisplaySize(24, 24);
+    } else {
+      this.rivalEmblem.setTexture(emblemKey);
+    }
+    this.positionRivalBanner();
+  }
+
+  private positionRivalBanner(): void {
+    if (!this.rivalBanner) return;
+    const cx = this.scale.width / 2;
+    // Put the emblem to the left of the text, separated by a small gap
+    this.rivalBanner.setPosition(cx, 36);
+    const textLeftEdge = this.rivalBanner.x - this.rivalBanner.displayWidth / 2;
+    this.rivalEmblem?.setPosition(textLeftEdge - 18, 36);
+  }
+
   private layoutHud(): void {
     const { width, height } = this.scale;
     // HUD that lives in the top-left stays put — just make sure the minimap label
@@ -775,6 +828,7 @@ export class ArenaScene extends Phaser.Scene {
     this.minimapLabel?.setPosition(width - MM_SIZE - 16, 4);
     this.combatLogHeading?.setPosition(16, height - 140);
     this.combatLogText?.setPosition(16, height - 122);
+    this.positionRivalBanner();
     // Resize the main camera viewport to match the new canvas size so world
     // rendering uses the full window.
     this.cameras.main.setSize(width, height);
