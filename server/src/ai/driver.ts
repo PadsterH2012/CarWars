@@ -1,6 +1,8 @@
 import type { VehicleState, ArenaMap, SquadOrder } from '@carwars/shared';
 import { WEAPONS } from '../rules/data/weapons';
 import type { AiContext } from './types';
+import { ContextRing } from './context-ring';
+import { writeWallDanger, writeVehicleDanger, writeWreckageDanger, writeGoalInterest } from './writers';
 
 export type { AiContext } from './types';
 
@@ -28,6 +30,7 @@ interface DriverState {
   reverseTicks: number;   // countdown of remaining ticks in an active reverse-out-of-wall manoeuvre
   inClose: boolean;       // hysteresis flag: true when inside closeRange dead-zone
   fireCooldown: number;   // ticks until next shot allowed (Car Wars: once per phase = 10 ticks)
+  ring: ContextRing;      // per-vehicle context ring — mutated in place each tick
 }
 const driverState = new Map<string, DriverState>();
 
@@ -51,6 +54,7 @@ function getState(vehicleId: string): DriverState {
       reverseTicks: 0,
       inClose: false,
       fireCooldown: 0,
+      ring: new ContextRing(),
     });
   }
   return driverState.get(vehicleId)!;
@@ -278,6 +282,17 @@ export function computeAiInput(
 
   const ds = getState(self.id);
 
+  // ── Context ring (Phase 2) ──────────────────────────────────────────────
+  // Reset + repopulate each tick. Danger writers run now; interest writers
+  // (tactic, survival, stuck escape) get populated by the downstream blocks
+  // as they compute their desired bearings. `ring.pick()` isn't yet wired
+  // into the steer source (T2.9 flips that switch), so this runs in
+  // parallel with the legacy logic without changing behaviour yet.
+  ds.ring.reset();
+  if (map) writeWallDanger(ds.ring, self.position, self.facing, map.walls, self.speed);
+  writeVehicleDanger(ds.ring, self, ctx.allVehicles);
+  writeWreckageDanger(ds.ring, self, ctx.wreckage);
+
   // Record current position in the ring buffer (last 20 ticks)
   ds.positionHistory.push({ x: self.position.x, y: self.position.y });
   if (ds.positionHistory.length > POS_HISTORY_LEN) ds.positionHistory.shift();
@@ -298,7 +313,10 @@ export function computeAiInput(
         if (d2 > maxSpread) maxSpread = d2;
       }
     }
-    if (maxSpread < 3) ds.stuckTicks = Math.max(ds.stuckTicks, 5);
+    // Threshold 2 (was 3) — a straight-line drive over 15 ticks covers ~3.3
+    // units so the old 3-unit threshold triggered false positives on any
+    // modest arcing. Genuine wall-pin oscillations produce spreads of 1-2.
+    if (maxSpread < 2) ds.stuckTicks = Math.max(ds.stuckTicks, 5);
   }
   ds.lastX = self.position.x;
   ds.lastY = self.position.y;
@@ -364,12 +382,17 @@ export function computeAiInput(
     }
 
     if (ds.reverseTicks > 0) {
-      // Reverse burst: keep facing roughly the current direction (we just want to
-      // back out). Slight steering toward the escape heading so we gain clearance.
-      const reverseFacingHint = (bearing + 180 + 360) % 360;  // back toward enemy side
+      // Reverse burst — speed is negative, so direction of actual motion is
+      // OPPOSITE the facing. To move AWAY from whatever's pinning us, keep
+      // facing TOWARD the current target bearing (typically the enemy, or
+      // whatever's blocking our goal) and reverse. Previous code set
+      // desiredFacing to bearing+180 and then drove in reverse, which
+      // cancelled out — the vehicle stayed pinned.
+      const reverseFacingHint = bearing;
       desiredFacing = reverseFacingHint;
       desiredSpeed = REVERSE_SPEED;
       ds.reverseTicks--;
+      ds.ring.writeInterest(reverseFacingHint, 1.0);
       console.log(`[AI] ${self.id.padEnd(10)} REVERSE×${ds.reverseTicks} — pos=(${self.position.x.toFixed(1)},${self.position.y.toFixed(1)}) spd=${desiredSpeed}`);
     } else {
       let escapeHeading: number;
@@ -411,6 +434,12 @@ export function computeAiInput(
       }
       desiredFacing = escapeHeading;
       desiredSpeed = escapeSpeed;
+      // Stuck recovery writes with maximum strength so it outscores every
+      // other interest writer. The ring's danger slots (walls / vehicles)
+      // still constrain direction — so escape aims toward the clearest
+      // heading near the escape direction rather than blindly driving
+      // into whatever the vehicle was pinned on.
+      ds.ring.writeInterest(escapeHeading, 1.0);
       console.log(`[AI] ${self.id.padEnd(10)} STUCK×${ds.stuckTicks} — escape heading=${escapeHeading.toFixed(0)}° pos=(${self.position.x.toFixed(1)},${self.position.y.toFixed(1)})${ds.stuckTicks >= 100 ? ' PANIC' : ''}`);
     }
   } else {
@@ -507,6 +536,22 @@ export function computeAiInput(
     }
   }
 
+  // Tactic goal → context ring interest. writeGoalInterest writes a wide
+  // arc (primary + 45° sidestep + 90° fallback) on a per-vehicle deterministic
+  // side, so when the primary bearing gets blocked by danger the ring has a
+  // committed next-best slot to pick rather than drifting between zero-
+  // interest candidates. Strength reflects tactic priority.
+  if (!isRecovering) {
+    const tacticInterest: Record<Tactic, number> = {
+      aggressive: 0.9,
+      flanking:   0.85,
+      snipe:      0.85,
+      orbit:      0.8,
+      evasive:    1.0,
+    };
+    writeGoalInterest(ds.ring, self, desiredFacing, tacticInterest[tactic]);
+  }
+
   // ── Survival overlay: vehicle safety overrides offensive positioning ──────
   // Runs every tick after tactic and wall logic. Blends protective heading in
   // based on how exposed the vehicle is. Disabled during stuck recovery
@@ -536,6 +581,12 @@ export function computeAiInput(
       const tactTurn     = shortestTurn(self.facing, desiredFacing);
       const safeTurn     = shortestTurn(self.facing, safeHeading);
       desiredFacing      = (self.facing + tactTurn * (1 - survivalUrgency) + safeTurn * survivalUrgency + 360) % 360;
+
+      // Also feed the ring: survival urgency directly becomes interest
+      // strength at the safe heading. When T2.9 flips the steer source,
+      // this write — combined with the wall/vehicle danger writes — lets
+      // the ring pick a direction that's both safe AND tactically sound.
+      ds.ring.writeInterest(safeHeading, survivalUrgency);
 
       // Open distance when hurt — don't let the enemy keep pounding at close range
       if (d < prefRange + 2 && survivalUrgency > 0.4) {
@@ -604,27 +655,13 @@ export function computeAiInput(
       }
     }
 
+    // Phase 2: the ring's writeVehicleDanger has already written danger around
+    // every nearby vehicle, so the ring will naturally steer away. This block
+    // now only handles SPEED modulation — reverse kick when extremely close,
+    // and gentler throttle when inside the bubble. No desiredFacing mutation.
     if (bestAvoidTarget && bestUrgency > 0.05) {
-      const toTarget = bearingTo(self.position, bestAvoidTarget.position);
-      // Deterministic side selection: pick a side based on a cheap hash of
-      // the vehicle id so two symmetric vehicles don't oscillate (one always
-      // goes right, the other always left). Without this, their 'turn away'
-      // directions flip each tick as positions swap, locking them in a dance.
-      const hash = [...self.id].reduce((h, c) => ((h << 5) - h + c.charCodeAt(0)) | 0, 0);
-      const side = (hash & 1) === 0 ? 1 : -1;
-      // Sharp 120° turn off the target bearing, not a softer 90° off own facing
-      const avoidHeading = (toTarget + side * 120 + 360) % 360;
       const urgency = Math.min(1, bestUrgency);
-      const tactTurn  = shortestTurn(self.facing, desiredFacing);
-      const avoidTurn = shortestTurn(self.facing, avoidHeading);
-      // At high urgency (<2.5 units — inside blast radius + buffer), abandon
-      // the tactical goal entirely and purely avoid. Tactical blend only
-      // applies in the outer half of the bubble.
       const hardOverride = urgency >= 0.6;
-      desiredFacing = hardOverride
-        ? (self.facing + avoidTurn + 360) % 360
-        : (self.facing + tactTurn * (1 - urgency) + avoidTurn * urgency + 360) % 360;
-      // Reverse kick when extremely close — nothing else creates gap fast enough
       if (bestDist < 1.5) {
         desiredSpeed = -20;
       } else {
@@ -637,38 +674,36 @@ export function computeAiInput(
     }
   }
 
-  // ── Wall avoidance overlay (final pass — cannot be overridden) ──────────
-  // Probes along both current facing AND desiredFacing to catch cases where the
-  // tactic or survival overlay just aimed us at a wall.
-  // Runs last so nothing can overwrite it.
+  // ── Wall proximity speed-brake ──────────────────────────────────────────
+  // The ring's wall-danger writer handles steering away; this block only
+  // trims throttle when a wall is imminent, so the AI doesn't blast into a
+  // turn at max speed. Facing changes happen via ring.pick().
   if (map && map.walls.length > 0 && desiredSpeed > 0) {
-    // More generous lookahead: at least 5 units, scales with speed
     const lookDist = Math.max(5, Math.min(12, desiredSpeed / 8));
-
-    // Check both current heading and desired heading — take the more urgent threat
-    const wCur  = lookAhead(self.position, self.facing,    map.walls, lookDist);
-    const wDes  = lookAhead(self.position, desiredFacing,  map.walls, lookDist);
-    const wall  = wCur.urgency >= wDes.urgency ? wCur : wDes;
-
+    const wall = lookAhead(self.position, self.facing, map.walls, lookDist);
     if (wall.urgency > 0) {
-      const avoidAngle   = 60 + 30 * wall.urgency;
-      const avoidHeading = (self.facing + wall.avoidDir * avoidAngle + 360) % 360;
-      const blendFactor  = Math.min(1, wall.urgency * 1.5);
-      const tactTurn     = shortestTurn(self.facing, desiredFacing);
-      const avoidTurn    = shortestTurn(self.facing, avoidHeading);
-      desiredFacing      = (self.facing + tactTurn * (1 - blendFactor) + avoidTurn * blendFactor + 360) % 360;
-      desiredSpeed       = Math.floor(desiredSpeed * (1 - wall.urgency * 0.5));
-      if (wall.urgency >= 0.5) {
-        console.log(`[WALL] ${self.id.padEnd(10)} urgency=${wall.urgency.toFixed(2)} avoid=${avoidHeading.toFixed(0)}° src=${wCur.urgency >= wDes.urgency ? 'facing' : 'desired'}`);
+      desiredSpeed = Math.floor(desiredSpeed * (1 - wall.urgency * 0.5));
+      if (wall.urgency >= 0.7) {
+        console.log(`[WALL] ${self.id.padEnd(10)} urgency=${wall.urgency.toFixed(2)} speed-brake`);
       }
     }
   }
 
-  // ── Steer toward desired facing ───────────────────────────────────────────
+  // ── Steer toward chosen bearing (Phase 2: ring.pick() is now authoritative) ─
+  // The ring reconciles every writer (tactic goal, survival, stuck escape,
+  // wall/vehicle/wreckage danger) in one place. max-not-sum means a later
+  // writer cannot silently invalidate an earlier one — it can only raise
+  // the bar. The legacy `desiredFacing` is kept as a fallback and for
+  // logging, but the actual steer now comes from the ring's chosen slot.
+  const picked = ds.ring.pick(self.facing);
+  const chosenBearing = picked.bearing;
+  if (Math.abs(shortestTurn(desiredFacing, chosenBearing)) > 15) {
+    console.log(`[RING] ${self.id.padEnd(10)} chose=${chosenBearing.toFixed(0).padStart(3)}° tactic=${desiredFacing.toFixed(0).padStart(3)}° danger=${picked.danger.toFixed(2)}`);
+  }
   // Higher skill = sharper turns; skill 1 = 50% of max turn rate, skill 6 = 100%
   const skillMul = 0.5 + (skill - 1) / 10;
   const maxTurnThisTick = Math.round(MAX_TURN * skillMul);
-  let steer = shortestTurn(self.facing, desiredFacing);
+  let steer = shortestTurn(self.facing, chosenBearing);
   // Proportional damping: within 12° of target, use at most 6° steer.
   // Prevents constant max-turn during small orbit corrections → reduces D-value accumulation.
   const absDiff = Math.abs(steer);
