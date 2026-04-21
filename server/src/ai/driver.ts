@@ -562,17 +562,33 @@ export function computeAiInput(
 
     if (bestAvoidTarget && bestUrgency > 0.05) {
       const toTarget = bearingTo(self.position, bestAvoidTarget.position);
-      // Turn AWAY from the target by ~135° — strong enough to open a lane
-      const side = shortestTurn(self.facing, toTarget) >= 0 ? -1 : 1;
-      const avoidHeading = (self.facing + side * 90 + 360) % 360;
+      // Deterministic side selection: pick a side based on a cheap hash of
+      // the vehicle id so two symmetric vehicles don't oscillate (one always
+      // goes right, the other always left). Without this, their 'turn away'
+      // directions flip each tick as positions swap, locking them in a dance.
+      const hash = [...self.id].reduce((h, c) => ((h << 5) - h + c.charCodeAt(0)) | 0, 0);
+      const side = (hash & 1) === 0 ? 1 : -1;
+      // Sharp 120° turn off the target bearing, not a softer 90° off own facing
+      const avoidHeading = (toTarget + side * 120 + 360) % 360;
+      const urgency = Math.min(1, bestUrgency);
       const tactTurn  = shortestTurn(self.facing, desiredFacing);
       const avoidTurn = shortestTurn(self.facing, avoidHeading);
-      const urgency = Math.min(1, bestUrgency);
-      desiredFacing = (self.facing + tactTurn * (1 - urgency) + avoidTurn * urgency + 360) % 360;
-      desiredSpeed  = Math.floor(desiredSpeed * (1 - urgency * 0.7));
+      // At high urgency (<2.5 units — inside blast radius + buffer), abandon
+      // the tactical goal entirely and purely avoid. Tactical blend only
+      // applies in the outer half of the bubble.
+      const hardOverride = urgency >= 0.6;
+      desiredFacing = hardOverride
+        ? (self.facing + avoidTurn + 360) % 360
+        : (self.facing + tactTurn * (1 - urgency) + avoidTurn * urgency + 360) % 360;
+      // Reverse kick when extremely close — nothing else creates gap fast enough
+      if (bestDist < 1.5) {
+        desiredSpeed = -20;
+      } else {
+        desiredSpeed = Math.floor(desiredSpeed * (1 - urgency * 0.85));
+      }
       if (urgency >= 0.5) {
         const reason = bestAvoidTarget.playerId === self.playerId ? 'squad-bubble' : 'blast-hazard';
-        console.log(`[AVOID] ${self.id.padEnd(10)} ${reason} ${bestAvoidTarget.id.padEnd(10)} dist=${bestDist.toFixed(1)} urgency=${urgency.toFixed(2)}`);
+        console.log(`[AVOID] ${self.id.padEnd(10)} ${reason} ${bestAvoidTarget.id.padEnd(10)} dist=${bestDist.toFixed(1)} urgency=${urgency.toFixed(2)}${hardOverride ? ' HARD' : ''}${bestDist < 1.5 ? ' REVERSE' : ''}`);
       }
     }
   }
