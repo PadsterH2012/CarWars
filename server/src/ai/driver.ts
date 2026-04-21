@@ -1,5 +1,8 @@
 import type { VehicleState, ArenaMap, SquadOrder } from '@carwars/shared';
 import { WEAPONS } from '../rules/data/weapons';
+import type { AiContext } from './types';
+
+export type { AiContext } from './types';
 
 export interface AiInput {
   speed: number;
@@ -220,13 +223,15 @@ function chooseTactic(
 
 export function computeAiInput(
   self: VehicleState,
-  others: VehicleState[],
-  skill: number,
-  map?: ArenaMap,
+  ctx: AiContext,
   order?: SquadOrder,
-  allVehicles?: VehicleState[],
 ): AiInput {
-  const enemies = others.filter(o => o.playerId !== self.playerId && !o.stats.damageState.destroyed);
+  const { skill, map, allVehicles } = ctx;
+  // Enemies derived from the full vehicle list — was the `others` argument
+  // but now lives on the context so all callers share one source of truth.
+  const enemies = allVehicles.filter(o =>
+    o.id !== self.id && o.playerId !== self.playerId && !o.stats.damageState.destroyed,
+  );
 
   // ── Commander-mode order handling ─────────────────────────────────────────
   // Short-circuit the full tactic engine for movement-focused orders (move/retreat/follow).
@@ -334,8 +339,11 @@ export function computeAiInput(
   const fireRange  = w?.longRange ?? 16;
   const closeRange = w?.shortRange ?? 6;
 
-  let desiredFacing: number;
-  let desiredSpeed: number;
+  // Initialised to safe defaults (hold facing, no throttle) so the definite-
+  // assignment checker is satisfied when the tactic switch is gated by
+  // !isRecovering — otherwise TS can't prove both branches assign them.
+  let desiredFacing: number = self.facing;
+  let desiredSpeed: number = 0;
 
   // ── Recovery: if stuck against a wall/building ───────────────────────────
   // When stuck transitions from 0→non-zero, kick off a reverse burst: back

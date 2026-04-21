@@ -233,21 +233,25 @@ export class ZoneRunner {
     }
 
     const state = this.engine.getState();
+    // Per-tick context shared across every AI vehicle this tick. Fields are
+    // read-only inside computeAiInput; Phase 2-4 will extend this bundle with
+    // pathfinder / squad state / influence maps without changing the caller
+    // shape at this layer.
+    const ctxBase = {
+      map: this.map,
+      allVehicles: state.vehicles,
+      wreckage: state.wreckage ?? [],
+      tick: state.tick,
+    };
     state.vehicles.forEach(vehicle => {
       if (vehicle.stats.damageState.destroyed) return;
       const isHuman = this.humanVehicles.has(vehicle.id);
       const hasAutopilot = this.autopilotVehicles.has(vehicle.id);
       const needsAi = !isHuman || hasAutopilot;
       if (needsAi && !this.humanInputThisTick.has(vehicle.id)) {
-        // Exclude same-playerId (squadmates) AND destroyed vehicles from the AI's
-        // enemy list. The engine's fire-resolution has its own friendly-fire guard
-        // as backup.
-        const enemies = state.vehicles.filter(v =>
-          v.playerId !== vehicle.playerId && !v.stats.damageState.destroyed
-        );
         const skill = this.vehicleSkills.get(vehicle.id) ?? 3;
         const order = this.squadOrders.get(vehicle.id);
-        const aiInput = computeAiInput(vehicle, enemies, skill, this.map, order, state.vehicles);
+        const aiInput = computeAiInput(vehicle, { ...ctxBase, skill }, order);
         this.engine.queueInput(vehicle.id, aiInput);
       }
     });

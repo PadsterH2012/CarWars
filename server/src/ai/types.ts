@@ -1,0 +1,21 @@
+import type { VehicleState, ArenaMap, WreckageObject } from '@carwars/shared';
+
+/**
+ * Per-tick inputs bundled for the AI. Phase 1 carries the minimum superset
+ * the current driver already uses (skill, map, allVehicles, wreckage, tick)
+ * — later phases extend this with:
+ *   - `pathfinder` (Phase 3) — A* + flow-field service
+ *   - `squadContext` (Phase 4) — shared squad brain state
+ *   - `influenceMaps` (Phase 4) — threat/ally/cover sampling
+ *
+ * Commander orders remain a per-vehicle 3rd argument to `computeAiInput`
+ * rather than living on the context — orders are per-agent, not per-tick.
+ * They will move into `squadContext` when Phase 4 lands.
+ */
+export interface AiContext {
+  skill: number;
+  map?: ArenaMap;
+  allVehicles: VehicleState[];
+  wreckage: WreckageObject[];
+  tick: number;
+}
