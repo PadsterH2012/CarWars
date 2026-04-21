@@ -31,6 +31,7 @@ interface DriverState {
   inClose: boolean;       // hysteresis flag: true when inside closeRange dead-zone
   fireCooldown: number;   // ticks until next shot allowed (Car Wars: once per phase = 10 ticks)
   ring: ContextRing;      // per-vehicle context ring — mutated in place each tick
+  ticksSinceLastFire: number;  // how long since this AI last pulled the trigger (for standoff-break)
 }
 const driverState = new Map<string, DriverState>();
 
@@ -55,6 +56,7 @@ function getState(vehicleId: string): DriverState {
       inClose: false,
       fireCooldown: 0,
       ring: new ContextRing(),
+      ticksSinceLastFire: 0,
     });
   }
   return driverState.get(vehicleId)!;
@@ -146,29 +148,75 @@ function facingToPresent(bearing: number, face: 'front' | 'back' | 'left' | 'rig
 
 // ── Weapon helpers ───────────────────────────────────────────────────────────
 
+type WeaponArc = 'front' | 'back' | 'left' | 'right' | 'turret';
+
 interface WeaponChoice {
   id: string;
   shortRange: number;
   longRange: number;
   preferredRange: number; // midpoint of range band
+  arc: WeaponArc;
+}
+
+// Offset in degrees between the vehicle's facing and the direction a weapon
+// in the given arc points. Positive values are clockwise (right). Turret is
+// modelled as 0 because it rotates freely.
+function arcOffset(arc: WeaponArc): number {
+  switch (arc) {
+    case 'front':  return 0;
+    case 'right':  return 90;
+    case 'back':   return 180;
+    case 'left':   return -90;
+    case 'turret': return 0;
+  }
+}
+
+// The compass bearing the weapon is currently pointing at, given the
+// vehicle's current facing. Used by both the tactic layer (to pick a
+// desiredFacing that lines the weapon up on the target) and the fire
+// decision (to check whether the target lies within the weapon's cone).
+function weaponBearing(self: VehicleState, arc: WeaponArc): number {
+  return (self.facing + arcOffset(arc) + 360) % 360;
+}
+
+// Given a target bearing and the weapon's arc, the facing the vehicle
+// needs to adopt so the weapon points at the target. Inverse of
+// weaponBearing. Turret is degenerate — any facing works, use the front
+// bearing so tactic logic that already orbits still feels natural.
+function faceForArc(targetBearing: number, arc: WeaponArc): number {
+  if (arc === 'turret') return targetBearing;
+  return (targetBearing - arcOffset(arc) + 360) % 360;
 }
 
 function pickWeapon(self: VehicleState): WeaponChoice | null {
   const mounts = self.stats.loadout?.mounts;
-  if (!mounts || mounts.length === 0) return { id: 'mg', shortRange: 6, longRange: 12, preferredRange: 9 };
+  if (!mounts || mounts.length === 0) return { id: 'mg', shortRange: 6, longRange: 12, preferredRange: 9, arc: 'front' };
+
+  // Arc-score prefers turret (fires anywhere) > front (natural charge) > side > back.
+  // Within equal arc-score, longest range wins.
+  const arcScore = (a: WeaponArc): number => a === 'turret' ? 3 : a === 'front' ? 2 : a === 'back' ? 0 : 1;
 
   const candidates: WeaponChoice[] = mounts
-    .filter(m => (m.arc === 'front' || m.arc === 'turret') && m.weaponId && m.ammo > 0)
+    .filter(m => m.arc && m.weaponId && m.ammo !== 0)  // ammo=0 for limited weapons; undefined/unlimited → keep
     .flatMap(m => {
       const def = WEAPONS.find(w => w.id === m.weaponId);
       if (!def) return [];
-      return [{ id: m.weaponId!, shortRange: def.shortRange, longRange: def.longRange, preferredRange: Math.floor((def.shortRange + def.longRange) / 2) }];
+      return [{
+        id: m.weaponId!,
+        shortRange: def.shortRange,
+        longRange: def.longRange,
+        preferredRange: Math.floor((def.shortRange + def.longRange) / 2),
+        arc: m.arc as WeaponArc,
+      }];
     });
 
   if (candidates.length === 0) return null;
 
-  // Prefer the weapon with longest effective range (gives most tactical flexibility)
-  return candidates.reduce((best, c) => c.longRange > best.longRange ? c : best);
+  return candidates.reduce((best, c) => {
+    const da = arcScore(c.arc) - arcScore(best.arc);
+    if (da !== 0) return da > 0 ? c : best;
+    return c.longRange > best.longRange ? c : best;
+  });
 }
 
 // ── Target selection ─────────────────────────────────────────────────────────
@@ -398,8 +446,15 @@ export function computeAiInput(
   // Choose tactic — don't flip-flop: hold for at least 15 ticks unless critical
   const forcedChange = armorFrac(self) < 0.2;
   ds.tacticTicks++;
-  if (forcedChange || ds.tacticTicks >= 15) {
+  // Standoff-break: if the AI hasn't pulled the trigger in 100+ ticks (10s),
+  // it's stuck in a snipe/orbit loop that can't resolve. Force-switch to
+  // aggressive to close the distance. Prevents the rare infinite-standoff
+  // timeout the bench harness caught (1/100 on open, 2/10 post-spawn-fix
+  // on truck-stop).
+  const standoffBreak = ds.ticksSinceLastFire > 100 && d > (w?.shortRange ?? 6);
+  if (forcedChange || ds.tacticTicks >= 15 || standoffBreak) {
     let newTactic = chooseTactic(self, target, d, skill, ds.tactic, ds.tacticTicks, w, ctx.aggression ?? 3);
+    if (standoffBreak) newTactic = 'aggressive';
     // Phase 4 — squad role biases tactic choice when the base picker is
     // indifferent. Flankers prefer flanking; supports prefer orbit (loiter
     // near rally); anchors prefer aggressive.
@@ -532,6 +587,15 @@ export function computeAiInput(
   // between "reverse 1 tick" and "forward 1 tick" and never break free. When
   // recovering, skip tactic entirely so the escape heading sticks long enough
   // to open a gap; SURV + AVOID overlays still run so safety wins when needed.
+  // Arc-aware orientation: the tactic layer computes a "desired weapon
+  // bearing" — i.e. where the weapon SHOULD point — and we translate that
+  // into a facing via the weapon's arc. For front-arc this is a no-op
+  // (facing == weapon bearing); for right-arc the vehicle orients 90° off
+  // so its side gun tracks the target; for back-arc the vehicle drives
+  // away while the rear gun covers the chase. Fixes the bench observation
+  // that right-arc and back-arc-only stock loadouts never land a shot.
+  const weaponArc: WeaponArc = w?.arc ?? 'front';
+
   if (!isRecovering) switch (tactic) {
     // ── Evasive: flee at max speed, present strongest armor face ──────────────
     case 'evasive': {
@@ -546,7 +610,10 @@ export function computeAiInput(
       // Target point: prefRange units behind enemy, offset 45° to one side
       const rearBearing = (target.facing + 180 + ds.orbitDir * 45 + 360) % 360;
       const flankPos = pointAt(target.position, rearBearing, prefRange);
-      desiredFacing = bearingTo(self.position, flankPos);
+      // Vehicle drives toward flankPos; weapon should point back at target
+      // once in position. Short-term, drive toward the flank; interest write
+      // below handles the weapon bearing for the fire layer.
+      desiredFacing = faceForArc(bearingTo(self.position, flankPos), weaponArc);
       desiredSpeed = self.stats.maxSpeed;
       break;
     }
@@ -554,19 +621,20 @@ export function computeAiInput(
     // ── Snipe: stay at long range, circle, fire only when well-aimed ──────────
     case 'snipe': {
       const snapRange = fireRange - 1;
+      let weaponTargetBearing: number;
       if (d < snapRange - 2) {
-        // Too close: strafe at an angle to open distance without reversing into walls
-        desiredFacing = (bearing + ds.orbitDir * 120 + 360) % 360;
+        // Too close: angle weapon 120° off target so we open range while
+        // still keeping the gun pointed roughly forward-of-motion
+        weaponTargetBearing = (bearing + ds.orbitDir * 120 + 360) % 360;
         desiredSpeed = Math.floor(self.stats.maxSpeed * 0.65);
       } else if (d > fireRange + 4) {
-        // Too far: close to max range — slight angle offset so approaches aren't identical
-        desiredFacing = (bearing + ds.orbitDir * Math.round(Math.abs(personalityAngleOffset) * 0.4) + 360) % 360;
+        weaponTargetBearing = (bearing + ds.orbitDir * Math.round(Math.abs(personalityAngleOffset) * 0.4) + 360) % 360;
         desiredSpeed = Math.floor(self.stats.maxSpeed * 0.8);
       } else {
-        // In snipe band: slow circle — 50° keeps target near front arc for firing
-        desiredFacing = (bearing + ds.orbitDir * (50 + personalityAngleOffset) + 360) % 360;
+        weaponTargetBearing = (bearing + ds.orbitDir * (50 + personalityAngleOffset) + 360) % 360;
         desiredSpeed = Math.max(10, Math.floor(self.stats.maxSpeed * 0.55));
       }
+      desiredFacing = faceForArc(weaponTargetBearing, weaponArc);
       break;
     }
 
@@ -574,14 +642,15 @@ export function computeAiInput(
     case 'orbit': {
       const best = strongestFace(self);
       if (d > prefRange + 4) {
-        desiredFacing = bearing;
+        desiredFacing = faceForArc(bearing, weaponArc);
         desiredSpeed = self.stats.maxSpeed;
       } else if (d < closeRange) {
-        desiredFacing = (bearing + 180) % 360;
+        desiredFacing = faceForArc((bearing + 180) % 360, weaponArc);
         desiredSpeed = Math.floor(self.stats.maxSpeed * 0.6);
       } else {
         const orbitAngle = 75 + personalityAngleOffset;
-        const orbitHeading = (bearing + ds.orbitDir * orbitAngle + 360) % 360;
+        const orbitWeaponBearing = (bearing + ds.orbitDir * orbitAngle + 360) % 360;
+        const orbitHeading = faceForArc(orbitWeaponBearing, weaponArc);
         const faceHeading  = facingToPresent(bearing, best);
         const turn = shortestTurn(self.facing, orbitHeading) * 0.6
                    + shortestTurn(self.facing, faceHeading)  * 0.4;
@@ -599,20 +668,41 @@ export function computeAiInput(
       if (d < closeRange - 1) ds.inClose = true;
       else if (d > closeRange + 1) ds.inClose = false;
 
+      let weaponTargetBearing: number;
       if (d > prefRange + 3) {
-        // Angle approach slightly — avoids all AIs charging the same straight line
-        desiredFacing = (bearing + ds.orbitDir * Math.round(Math.abs(personalityAngleOffset) * 0.3) + 360) % 360;
+        weaponTargetBearing = (bearing + ds.orbitDir * Math.round(Math.abs(personalityAngleOffset) * 0.3) + 360) % 360;
         desiredSpeed  = self.stats.maxSpeed;
       } else {
-        // Orbit at 35° — target stays in front 90° arc so MG can fire continuously.
-        // At close range (inClose) use the same angle but slow down to avoid collisions.
         const orbitAngle = 35 + personalityAngleOffset;
-        desiredFacing = (bearing + ds.orbitDir * orbitAngle + 360) % 360;
+        weaponTargetBearing = (bearing + ds.orbitDir * orbitAngle + 360) % 360;
         desiredSpeed  = ds.inClose
           ? Math.max(10, Math.floor(self.stats.maxSpeed * 0.4))
           : Math.max(15, Math.floor(self.stats.maxSpeed * 0.65));
       }
+      desiredFacing = faceForArc(weaponTargetBearing, weaponArc);
       break;
+    }
+  }
+
+  // Collision-avoidance brake when a non-squadmate is dangerously close.
+  // Bench showed that on small arenas vehicles rammed each other at 80+ mph
+  // before any weapon resolved — the fire cooldown is 10 ticks so you need
+  // at least 1 second of alive + in-arc to land a shot. Scaling speed down
+  // inside 3 units ensures an enemy doesn't close faster than the trigger
+  // can pull. Separate from the AVOID overlay which only handles squadmates.
+  if (!isRecovering && allVehicles && desiredSpeed > 0) {
+    let nearestEnemyDist = Infinity;
+    for (const v of allVehicles) {
+      if (v.id === self.id) continue;
+      if (v.playerId === self.playerId) continue;
+      if (v.stats.damageState.destroyed) continue;
+      const dd = dist2d(self.position, v.position);
+      if (dd < nearestEnemyDist) nearestEnemyDist = dd;
+    }
+    if (nearestEnemyDist < 3) {
+      desiredSpeed = Math.min(desiredSpeed, 15);
+    } else if (nearestEnemyDist < 5) {
+      desiredSpeed = Math.min(desiredSpeed, 30);
     }
   }
 
@@ -819,12 +909,19 @@ export function computeAiInput(
   // ── Fire decision ─────────────────────────────────────────────────────────
   // Car Wars: one shot per phase (= 10 ticks). Cooldown prevents ammo depletion in seconds.
   if (ds.fireCooldown > 0) ds.fireCooldown--;
-  const angleDiff = Math.abs(shortestTurn(self.facing, bearing));
+  // Fire check uses the WEAPON's bearing (facing + arc offset) rather than
+  // the vehicle's facing — a back-arc or side-arc weapon fires when its
+  // own cone covers the target, even though the vehicle itself isn't
+  // pointed at the target. This finally lets right-arc MMLs, back-arc
+  // flamers etc actually shoot in combat instead of only front weapons.
+  const wBearing = w ? weaponBearing(self, w.arc) : self.facing;
+  const angleDiff = Math.abs(shortestTurn(wBearing, bearing));
   const fireThreshold = tactic === 'snipe' ? 15 : 45;
   const weaponId = w?.id ?? null;
   const canFire = weaponId && d <= fireRange && angleDiff < fireThreshold && ds.fireCooldown === 0;
   const fireWeapon = canFire ? weaponId : null;
-  if (canFire) ds.fireCooldown = 10; // one shot per turn
+  if (canFire) { ds.fireCooldown = 10; ds.ticksSinceLastFire = 0; } // one shot per turn
+  else ds.ticksSinceLastFire++;
 
   const hp = Math.round(armorFrac(self) * 100);
   const fireStr = fireWeapon

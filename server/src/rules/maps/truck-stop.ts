@@ -138,11 +138,17 @@ export const truckStopMap: ArenaMap = {
     { x: -42, y: -22, w: 1.2, h: 1.2, type: 'rubble' },
     { x: -48, y: -28, w: 0.8, h: 0.8, type: 'blood_splat' },
   ],
+  // Spawn points re-laid-out 2026-04-21 — the original geometry put player
+  // and AI on a direct y-axis collision lane with no obstacle between, so
+  // the bench harness reported 100% mutual destruction across 100 matches.
+  // New layout: player team in opposite south corners (SE + SW), AI stays
+  // north. The main building (-6, 16.5, 36×18) now sits between the two
+  // sides, forcing squads to manoeuvre around instead of charging head-on.
   spawnPoints: [
-    { x:  -9, y:   3, facing:   0, team: 'player' },
-    { x:   0, y:   3, facing:   0, team: 'player' },
-    { x:   9, y:   3, facing:   0, team: 'player' },
-    { x:  18, y:   3, facing:   0, team: 'player' },
+    { x:  30, y:  30, facing: 315, team: 'player' },  // SE corner, facing NW toward arena
+    { x: -30, y:  30, facing:  45, team: 'player' },  // SW corner, facing NE toward arena
+    { x:  40, y:  25, facing: 315, team: 'player' },
+    { x: -40, y:  25, facing:  45, team: 'player' },
     { x: -21, y: -18, facing: 135, team: 'ai' },
     { x:   0, y: -21, facing: 180, team: 'ai' },
     { x:  45, y:   7.5, facing: 270, team: 'ai' },

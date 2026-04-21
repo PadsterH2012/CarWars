@@ -40,7 +40,13 @@ export function isWeaponInArc(attacker: VehicleState, target: VehicleState, moun
 
   const dx = target.position.x - attacker.position.x;
   const dy = target.position.y - attacker.position.y;
-  const mathAngle = Math.atan2(dy, dx) * 180 / Math.PI;
+  // Game coordinate: +y is south / screen-down, so north-bound vectors have
+  // negative dy. Flip dy before atan2 so the resulting math angle maps to
+  // the same compass convention the driver's bearingTo uses (bearing 0 =
+  // north, CW). Without the flip, the engine sees front-arc weapons as
+  // back-arc when the target is north of the attacker — fires silently
+  // dropped, bench harness reported 0 damage across 100+ matches.
+  const mathAngle = Math.atan2(-dy, dx) * 180 / Math.PI;
   const gameAngleToTarget = (90 - mathAngle + 360) % 360;
 
   // Angle relative to attacker's facing, in range -180 to +180

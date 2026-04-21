@@ -78,16 +78,15 @@ function makeVehicleAt(id: string, x: number, y: number, facing = 0): VehicleSta
   };
 }
 
-// Coordinate system: facing=0 is north. In math coords, north = +Y.
-// gameAngleToTarget = 0° means target is due north of attacker.
-// relAngle = gameAngleToTarget - attacker.facing (normalised to -180..+180)
-// front arc: relAngle in [-45, +45]  → target north of attacker when facing=0
-// back arc:  relAngle <= -135 or >= 135 → target south of attacker when facing=0
+// Coordinate system: facing=0 is north. Game uses Phaser-canvas convention
+// of +y = south (screen-down), so travelling north DECREASES y. This matches
+// computeMovement (facing 0 → dy < 0) and the driver's bearingTo/pointAt.
+// A target "north of" attacker therefore has a LOWER y value.
 describe('isWeaponInArc', () => {
   it('front arc: target directly in front is in arc', () => {
-    // Attacker at (0,0) facing 0 (north). Target due north at (0,10).
+    // Attacker at (0,0) facing 0 (north). Target due north at (0,-10).
     const a = makeVehicleAt('a', 0, 0, 0);
-    const t = makeVehicleAt('t', 0, 10, 0);
+    const t = makeVehicleAt('t', 0, -10, 0);
     expect(isWeaponInArc(a, t, makeMount('front'))).toBe(true);
   });
 
@@ -99,9 +98,9 @@ describe('isWeaponInArc', () => {
   });
 
   it('back arc: target directly behind is in arc', () => {
-    // Attacker facing north. Target due south at (0,-10) = 180° relative.
+    // Attacker facing north. Target due south at (0,10) = 180° relative.
     const a = makeVehicleAt('a', 0, 0, 0);
-    const t = makeVehicleAt('t', 0, -10, 0);
+    const t = makeVehicleAt('t', 0, 10, 0);
     expect(isWeaponInArc(a, t, makeMount('back'))).toBe(true);
   });
 
@@ -113,10 +112,10 @@ describe('isWeaponInArc', () => {
 
   it('front arc: target at exactly 45° is in arc (boundary inclusive)', () => {
     // 45° clockwise from north = northeast direction.
-    // In math coords: x = sin(45°) * r, y = cos(45°) * r
+    // With +y=south convention: x = sin(45°) * r, y = -cos(45°) * r
     const a = makeVehicleAt('a', 0, 0, 0);
     const r = 10;
-    const t = makeVehicleAt('t', Math.sin(Math.PI / 4) * r, Math.cos(Math.PI / 4) * r, 0);
+    const t = makeVehicleAt('t', Math.sin(Math.PI / 4) * r, -Math.cos(Math.PI / 4) * r, 0);
     expect(isWeaponInArc(a, t, makeMount('front'))).toBe(true);
   });
 

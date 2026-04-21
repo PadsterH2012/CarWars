@@ -114,6 +114,8 @@ interface MatchReport {
   survivors: { a: number; b: number };
   kills: { a: number; b: number };
   totalDamage: { a: number; b: number };
+  shotsFired: number;  // combat events emitted (hit or miss)
+  shotsHit: number;
   crashes: number;
   durationMs: number;
 }
@@ -205,6 +207,7 @@ async function runMatch(matchIndex: number): Promise<MatchReport> {
     mapId: MAP_ID, ticks: 0, outcome: 'timeout',
     survivors: { a: squadA.length, b: squadB.length },
     kills: { a: 0, b: 0 }, totalDamage: { a: 0, b: 0 },
+    shotsFired: 0, shotsHit: 0,
     crashes: 0, durationMs: 0,
   };
 
@@ -268,17 +271,15 @@ async function runMatch(matchIndex: number): Promise<MatchReport> {
 
     // Collect fire events for next tick's claim update + damage tracking
     for (const ev of newState.combatEvents ?? []) {
+      report.shotsFired++;
       fireEvents.push({
         attackerId: ev.attackerId, targetId: ev.targetId, fired: true, dps: ev.damage ?? 1,
       });
       if (!ev.hit) continue;
+      report.shotsHit++;
       const team = ev.attackerId.startsWith('a') ? 'a' : 'b';
       report.totalDamage[team] += ev.damage ?? 0;
-      if (ev.destroyed) {
-        const killedTeam = ev.targetId.startsWith('a') ? 'a' : 'b';
-        report.kills[team === killedTeam ? (team === 'a' ? 'b' : 'a') : team] += 0; // no-op
-        report.kills[team] += 1;
-      }
+      if (ev.destroyed) report.kills[team] += 1;
     }
 
     // End condition
@@ -308,7 +309,7 @@ async function main(): Promise<void> {
     process.stderr.write(
       `run ${String(i + 1).padStart(3)}/${RUNS}  map=${r.mapId.padEnd(12)}  ${r.outcome.padEnd(7)}  ticks=${String(r.ticks).padStart(4)} (${dur}s)  ` +
       `surv a=${r.survivors.a} b=${r.survivors.b}  dmg a=${String(r.totalDamage.a).padStart(3)} b=${String(r.totalDamage.b).padStart(3)}  ` +
-      `kills a=${r.kills.a} b=${r.kills.b}  crashes=${r.crashes}  wall=${wallMs}ms\n`,
+      `shots=${r.shotsHit}/${r.shotsFired}  kills a=${r.kills.a} b=${r.kills.b}  crashes=${r.crashes}  wall=${wallMs}ms\n`,
     );
   }
 
@@ -324,12 +325,18 @@ async function main(): Promise<void> {
 
   const totalCrashes = reports.reduce((s, r) => s + r.crashes, 0);
   const avgCrashes   = (totalCrashes / reports.length).toFixed(1);
+  const totalShots   = reports.reduce((s, r) => s + r.shotsFired, 0);
+  const totalHits    = reports.reduce((s, r) => s + r.shotsHit, 0);
+  const avgShots     = (totalShots / reports.length).toFixed(1);
+  const avgHits      = (totalHits / reports.length).toFixed(1);
+  const hitRate      = totalShots > 0 ? ((totalHits / totalShots) * 100).toFixed(0) : '-';
 
   console.error('\n— summary —');
   console.error(`outcomes   : team_a ${winA}  team_b ${winB}  mutual ${mutual}  timeout ${tmo}`);
   console.error(`avg ticks  : ${avgTicks} (${(avgTicks * 100 / 1000).toFixed(1)}s)`);
   console.error(`avg wall   : ${avgWall}ms`);
   console.error(`avg damage : ${avgDmgPerMatch} per match (weapon hits)`);
+  console.error(`avg shots  : ${avgShots} fired, ${avgHits} hit (${hitRate}% hit rate)`);
   console.error(`avg crashes: ${avgCrashes} per match`);
   if (tmo > 0) {
     console.error(`⚠ ${tmo} match(es) hit the ${MAX_TICKS}-tick cap — AI may be stuck`);
