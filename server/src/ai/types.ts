@@ -1,10 +1,12 @@
 import type { VehicleState, ArenaMap, WreckageObject } from '@carwars/shared';
+import type { Pathfinder } from './pathfinder';
 
 /**
  * Per-tick inputs bundled for the AI. Phase 1 carries the minimum superset
- * the current driver already uses (skill, map, allVehicles, wreckage, tick)
- * — later phases extend this with:
- *   - `pathfinder` (Phase 3) — A* + flow-field service
+ * the current driver already uses (skill, map, allVehicles, wreckage, tick).
+ * Phase 3 adds `pathfinder` so the tactic layer can ask "how do I reach this
+ * world position given the current wall + wreckage obstacles?" and feed the
+ * first waypoint back into the ring as interest. Later phases extend with:
  *   - `squadContext` (Phase 4) — shared squad brain state
  *   - `influenceMaps` (Phase 4) — threat/ally/cover sampling
  *
@@ -18,4 +20,5 @@ export interface AiContext {
   allVehicles: VehicleState[];
   wreckage: WreckageObject[];
   tick: number;
+  pathfinder?: Pathfinder;
 }

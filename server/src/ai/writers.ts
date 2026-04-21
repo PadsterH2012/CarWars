@@ -157,6 +157,43 @@ export function writeWreckageDanger(
   }
 }
 
+// ── Path writer ─────────────────────────────────────────────────────────────
+//
+// Takes an A*-smoothed path and writes interest at the bearing toward the
+// first useful waypoint. "Useful" = the first waypoint that's at least
+// LOOKAHEAD_MIN units ahead of the vehicle — skipping waypoints the vehicle
+// has already effectively passed. Strength should match the tactic's
+// interest priority (e.g. 0.9 for aggressive) so the ring's selection is
+// the same as a direct-line tactic when the path is straight, and only
+// differs when the path wraps around geometry.
+const PATH_LOOKAHEAD_MIN = 2;
+
+export function writePathInterest(
+  ring: ContextRing,
+  self: VehicleState,
+  path: Position[],
+  strength: number,
+): boolean {
+  if (path.length === 0) return false;
+  for (const waypoint of path) {
+    const d = dist2d(self.position, waypoint);
+    if (d < PATH_LOOKAHEAD_MIN) continue;
+    const bearing = bearingTo(self.position, waypoint);
+    // Single-slot write — path already handles routing around geometry, no
+    // need for ±45°/±90° sidesteps (those would bypass the path's planning).
+    ring.writeInterest(bearing, strength);
+    return true;
+  }
+  // All waypoints are within the lookahead radius — we're essentially at
+  // the goal. Write interest at the last waypoint so the vehicle finishes
+  // rather than drifting.
+  const goal = path[path.length - 1];
+  const dGoal = dist2d(self.position, goal);
+  if (dGoal < 0.5) return false; // basically on top of goal; let tactic fall through
+  ring.writeInterest(bearingTo(self.position, goal), strength);
+  return true;
+}
+
 // Commit-to-a-side helper used by tactic writer — when the direct line to
 // the goal is blocked (target bearing's slot has danger), we need interest
 // to survive in slots off-axis so the ring has somewhere to go. Writes

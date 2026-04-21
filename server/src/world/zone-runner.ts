@@ -4,6 +4,7 @@ import { createTurnEngine, TurnEngine } from '../rules/engine';
 import { computeAiInput } from '../ai/driver';
 import { getMap } from '../rules/maps';
 import { totalSalvageFor } from '../rules/salvage';
+import { Pathfinder, hashWreckage } from '../ai/pathfinder';
 
 const TICK_MS = 100;
 
@@ -30,6 +31,10 @@ export class ZoneRunner {
   private pausedBy: WebSocket | null = null;   // the client that initiated the pause; only they can unpause
   private rival: RivalInfo | null = null;      // rival gang for this match, if set by handler
   private map: ArenaMap;
+  // One pathfinder per arena — constructed at match start, its wreckage
+  // obstacle layer is refreshed only when the wreckage list changes (hashed).
+  private pathfinder: Pathfinder;
+  private lastWreckageHash = '';
 
   hasEnded(): boolean { return this.ended; }
   readonly zoneId: string;
@@ -44,6 +49,7 @@ export class ZoneRunner {
     this.zoneId = zoneId;
     this.onEnd = options.onEnd;
     this.map = getMap(mapId);
+    this.pathfinder = new Pathfinder(this.map);
     this.engine = createTurnEngine(
       { id: zoneId, type: zoneType, tick: 0, vehicles: [], hazardObjects: [] },
       this.map,
@@ -233,15 +239,25 @@ export class ZoneRunner {
     }
 
     const state = this.engine.getState();
+    // Refresh the pathfinder's obstacle layer when wreckage changes — hash
+    // comparison short-circuits the common case of "no new wreckage this
+    // tick" so we avoid rebuilding the soft-cost grid most ticks.
+    const wreckage = state.wreckage ?? [];
+    const hash = hashWreckage(wreckage);
+    if (hash !== this.lastWreckageHash) {
+      this.pathfinder.updateObstacles(wreckage);
+      this.lastWreckageHash = hash;
+    }
     // Per-tick context shared across every AI vehicle this tick. Fields are
-    // read-only inside computeAiInput; Phase 2-4 will extend this bundle with
-    // pathfinder / squad state / influence maps without changing the caller
-    // shape at this layer.
+    // read-only inside computeAiInput; later phases will extend this bundle
+    // with squad state / influence maps without changing the caller shape
+    // at this layer.
     const ctxBase = {
       map: this.map,
       allVehicles: state.vehicles,
-      wreckage: state.wreckage ?? [],
+      wreckage,
       tick: state.tick,
+      pathfinder: this.pathfinder,
     };
     state.vehicles.forEach(vehicle => {
       if (vehicle.stats.damageState.destroyed) return;

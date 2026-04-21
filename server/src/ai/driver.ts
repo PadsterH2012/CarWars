@@ -2,7 +2,7 @@ import type { VehicleState, ArenaMap, SquadOrder } from '@carwars/shared';
 import { WEAPONS } from '../rules/data/weapons';
 import type { AiContext } from './types';
 import { ContextRing } from './context-ring';
-import { writeWallDanger, writeVehicleDanger, writeWreckageDanger, writeGoalInterest } from './writers';
+import { writeWallDanger, writeVehicleDanger, writeWreckageDanger, writeGoalInterest, writePathInterest } from './writers';
 
 export type { AiContext } from './types';
 
@@ -243,10 +243,19 @@ export function computeAiInput(
   // to the specified enemy.
   if (order) {
     if (order.type === 'move') {
-      const bearingDeg = bearingTo(self.position, { x: order.x, y: order.y });
-      const dist = dist2d(self.position, { x: order.x, y: order.y });
+      const goal = { x: order.x, y: order.y };
+      const dist = dist2d(self.position, goal);
       if (dist < 1.5) return { speed: 0, steer: 0, fireWeapon: null };  // arrived
-      const steer = Math.max(-MAX_TURN, Math.min(MAX_TURN, shortestTurn(self.facing, bearingDeg)));
+      // Phase 3: route through the pathfinder so 'move to (x, y)' can find
+      // its way around buildings instead of steering headfirst into one.
+      // Falls back to direct bearing if no path is available.
+      let targetBearing = bearingTo(self.position, goal);
+      const path = ctx.pathfinder?.find(self.position, goal);
+      if (path && path.length > 0) {
+        const first = path.find(p => dist2d(self.position, p) >= 2) ?? path[path.length - 1];
+        targetBearing = bearingTo(self.position, first);
+      }
+      const steer = Math.max(-MAX_TURN, Math.min(MAX_TURN, shortestTurn(self.facing, targetBearing)));
       return { speed: Math.min(self.stats.maxSpeed, dist > 6 ? self.stats.maxSpeed : Math.floor(self.stats.maxSpeed * 0.5)), steer, fireWeapon: null };
     }
     if (order.type === 'retreat') {
@@ -536,11 +545,12 @@ export function computeAiInput(
     }
   }
 
-  // Tactic goal → context ring interest. writeGoalInterest writes a wide
-  // arc (primary + 45° sidestep + 90° fallback) on a per-vehicle deterministic
-  // side, so when the primary bearing gets blocked by danger the ring has a
-  // committed next-best slot to pick rather than drifting between zero-
-  // interest candidates. Strength reflects tactic priority.
+  // Tactic goal → context ring interest. When a pathfinder is available
+  // (Phase 3) and there's meaningful geometry between self and target, use
+  // the first waypoint bearing so the AI routes AROUND obstacles rather than
+  // greedy-pursuing through them. Fallback to writeGoalInterest (direct
+  // bearing + symmetric sidesteps) when the pathfinder can't produce a
+  // route — equivalent to the Phase 2 behaviour.
   if (!isRecovering) {
     const tacticInterest: Record<Tactic, number> = {
       aggressive: 0.9,
@@ -549,7 +559,32 @@ export function computeAiInput(
       orbit:      0.8,
       evasive:    1.0,
     };
-    writeGoalInterest(ds.ring, self, desiredFacing, tacticInterest[tactic]);
+    const strength = tacticInterest[tactic];
+    let pathUsed = false;
+    if (ctx.pathfinder && map && map.walls.length > 0) {
+      // Pick the goal position based on tactic — aggressive/flanking head
+      // toward the target; snipe/orbit head toward preferred-range arc;
+      // evasive heads away. All collapse to "target position" for Phase 3 —
+      // richer goal geometry can be added later without changing the wiring.
+      const path = ctx.pathfinder.find(self.position, target.position);
+      if (path && path.length > 0) {
+        pathUsed = writePathInterest(ds.ring, self, path, strength);
+        if (pathUsed) {
+          // Also write the ±45° sidesteps off the path's first bearing so the
+          // ring can dodge local obstacles without abandoning the overall route
+          const first = path.find(p => {
+            const dx = p.x - self.position.x, dy = p.y - self.position.y;
+            return Math.hypot(dx, dy) >= 2;
+          }) ?? path[path.length - 1];
+          const pathBearing = (Math.atan2(first.x - self.position.x, -(first.y - self.position.y)) * 180 / Math.PI + 360) % 360;
+          ds.ring.writeInterest((pathBearing + 45) % 360, strength * 0.4);
+          ds.ring.writeInterest((pathBearing - 45 + 360) % 360, strength * 0.4);
+        }
+      }
+    }
+    if (!pathUsed) {
+      writeGoalInterest(ds.ring, self, desiredFacing, strength);
+    }
   }
 
   // ── Survival overlay: vehicle safety overrides offensive positioning ──────
