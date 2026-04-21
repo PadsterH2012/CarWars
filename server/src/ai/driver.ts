@@ -174,13 +174,31 @@ function pickWeapon(self: VehicleState): WeaponChoice | null {
 // ── Target selection ─────────────────────────────────────────────────────────
 
 // Prefer: weakest enemy first, tiebreak on proximity
-function pickTarget(self: VehicleState, enemies: VehicleState[]): VehicleState {
-  return enemies.reduce((best, e) => {
-    const eHealth = armorFrac(e);
-    const bHealth = armorFrac(best);
-    if (Math.abs(eHealth - bHealth) > 0.15) return eHealth < bHealth ? e : best; // weakest wins
-    return dist2d(self.position, e.position) < dist2d(self.position, best.position) ? e : best;
+function pickTarget(self: VehicleState, enemies: VehicleState[], ctx?: AiContext): VehicleState {
+  // Score each enemy: lower = better target. Incorporates squad saturation so
+  // three squadmates don't dogpile the same weakest enemy (Phase 4). Without
+  // squad context (solo match, test) the behaviour reduces to the original
+  // weakest-then-closest picker.
+  const squad = ctx?.squad;
+  const scored = enemies.map(e => {
+    const h = armorFrac(e);
+    const d = dist2d(self.position, e.position);
+    // Base: prefer weak (low h) and close — rawScore is smaller = better
+    let rawScore = h * 20 + d * 0.5;
+    if (squad) {
+      const claim = squad.targetClaims.get(e.id);
+      const claimants = claim?.claimants.length ?? 0;
+      // Don't penalise if WE are already the claimant (keep firing at current target)
+      const selfOnlyClaimant = claimants === 1 && claim?.claimants[0] === self.id;
+      if (!selfOnlyClaimant) {
+        // Penalty ramps: 1 other claimant = +8, 2+ = +20 (big push to find alternative)
+        rawScore += claimants === 1 ? 8 : claimants >= 2 ? 20 : 0;
+      }
+    }
+    return { e, rawScore };
   });
+  scored.sort((a, b) => a.rawScore - b.rawScore);
+  return scored[0].e;
 }
 
 // ── Tactic selection ─────────────────────────────────────────────────────────
@@ -341,7 +359,7 @@ export function computeAiInput(
   const attackTarget = order?.type === 'attack'
     ? enemies.find(e => e.id === order.targetId)
     : undefined;
-  const target = attackTarget ?? pickTarget(self, enemies);
+  const target = attackTarget ?? pickTarget(self, enemies, ctx);
   const d = dist2d(self.position, target.position);
   const bearing = bearingTo(self.position, target.position);
   const w = pickWeapon(self);
@@ -350,7 +368,17 @@ export function computeAiInput(
   const forcedChange = armorFrac(self) < 0.2;
   ds.tacticTicks++;
   if (forcedChange || ds.tacticTicks >= 15) {
-    const newTactic = chooseTactic(self, target, d, skill, ds.tactic, ds.tacticTicks, w);
+    let newTactic = chooseTactic(self, target, d, skill, ds.tactic, ds.tacticTicks, w);
+    // Phase 4 — squad role biases tactic choice when the base picker is
+    // indifferent. Flankers prefer flanking; supports prefer orbit (loiter
+    // near rally); anchors prefer aggressive.
+    const role = ctx.squad?.roleByAgent.get(self.id);
+    if (role === 'flanker_l' || role === 'flanker_r') {
+      if (newTactic === 'aggressive' || newTactic === 'orbit') newTactic = 'flanking';
+    } else if (role === 'support') {
+      // Support stays back — orbit at range unless critically hurt (evasive)
+      if (newTactic === 'aggressive') newTactic = 'orbit';
+    }
     if (newTactic !== ds.tactic) {
       ds.tactic = newTactic;
       ds.tacticTicks = 0;

@@ -5,6 +5,7 @@ import { computeAiInput } from '../ai/driver';
 import { getMap } from '../rules/maps';
 import { totalSalvageFor } from '../rules/salvage';
 import { Pathfinder, hashWreckage } from '../ai/pathfinder';
+import { SquadContext, runAuction, updateClaims, type FireEvent } from '../ai/squad';
 
 const TICK_MS = 100;
 
@@ -35,6 +36,13 @@ export class ZoneRunner {
   // obstacle layer is refreshed only when the wreckage list changes (hashed).
   private pathfinder: Pathfinder;
   private lastWreckageHash = '';
+  // One SquadContext per distinct playerId — lazily created when the first
+  // AI vehicle of that playerId ticks. Role auction runs every AUCTION_PERIOD
+  // ticks so roles stay stable long enough for behaviours to commit, but
+  // adapt quickly when squadmates die or take damage.
+  private squadsByPlayer = new Map<string, SquadContext>();
+  // Fire events from the previous tick — fed into claim updates this tick
+  private lastTickFireEvents: FireEvent[] = [];
 
   hasEnded(): boolean { return this.ended; }
   readonly zoneId: string;
@@ -248,10 +256,43 @@ export class ZoneRunner {
       this.pathfinder.updateObstacles(wreckage);
       this.lastWreckageHash = hash;
     }
+
+    // ── Squad layer (Phase 4) ─────────────────────────────────────────────
+    // Group currently-alive vehicles by playerId. Each distinct group gets
+    // its own SquadContext. Role auction runs every AUCTION_PERIOD ticks;
+    // target claims update every tick from the last tick's fire events.
+    const AUCTION_PERIOD = 20;
+    const playerGroups = new Map<string, string[]>();
+    for (const v of state.vehicles) {
+      if (v.stats.damageState.destroyed) continue;
+      const arr = playerGroups.get(v.playerId) ?? [];
+      arr.push(v.id);
+      playerGroups.set(v.playerId, arr);
+    }
+    for (const [playerId, memberIds] of playerGroups) {
+      let squad = this.squadsByPlayer.get(playerId);
+      if (!squad) {
+        squad = new SquadContext(playerId);
+        this.squadsByPlayer.set(playerId, squad);
+      }
+      // Keep members in sync with alive vehicles every tick (cheap)
+      squad.members = memberIds;
+      if (state.tick - squad.lastAuctionTick >= AUCTION_PERIOD) {
+        runAuction(squad, state.vehicles);
+        squad.lastAuctionTick = state.tick;
+      }
+    }
+    // Update target claims from last resolved tick's combat events
+    const fireEvents: FireEvent[] = [];
+    for (const ev of this.lastTickFireEvents) fireEvents.push(ev);
+    this.lastTickFireEvents = [];
+    for (const squad of this.squadsByPlayer.values()) {
+      const squadEvents = fireEvents.filter(e => squad.members.includes(e.attackerId));
+      updateClaims(squad, squadEvents, state.tick);
+    }
+
     // Per-tick context shared across every AI vehicle this tick. Fields are
-    // read-only inside computeAiInput; later phases will extend this bundle
-    // with squad state / influence maps without changing the caller shape
-    // at this layer.
+    // read-only inside computeAiInput.
     const ctxBase = {
       map: this.map,
       allVehicles: state.vehicles,
@@ -267,7 +308,8 @@ export class ZoneRunner {
       if (needsAi && !this.humanInputThisTick.has(vehicle.id)) {
         const skill = this.vehicleSkills.get(vehicle.id) ?? 3;
         const order = this.squadOrders.get(vehicle.id);
-        const aiInput = computeAiInput(vehicle, { ...ctxBase, skill }, order);
+        const squad = this.squadsByPlayer.get(vehicle.playerId);
+        const aiInput = computeAiInput(vehicle, { ...ctxBase, skill, squad }, order);
         this.engine.queueInput(vehicle.id, aiInput);
       }
     });
@@ -278,6 +320,16 @@ export class ZoneRunner {
     // Accumulate per-vehicle combat stats — used by the prestige-point
     // award at zone-end (server/src/ws/handler.ts).
     for (const ev of newState.combatEvents ?? []) {
+      // Every attempted shot (hit or miss) feeds the squad target-claim
+      // registry on the next tick — claims track who's committed to whom,
+      // not who's landing. `fired: true` on any event means the trigger
+      // was pulled; dps is a coarse estimate (damage or 1 if missed).
+      this.lastTickFireEvents.push({
+        attackerId: ev.attackerId,
+        targetId: ev.targetId,
+        fired: true,
+        dps: ev.damage ?? 1,
+      });
       if (!ev.hit) continue;
       const dmg = ev.damage ?? 0;
       const a = this.matchStats.get(ev.attackerId) ?? { damageDealt: 0, hitsTaken: 0 };

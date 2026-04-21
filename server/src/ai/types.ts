@@ -1,5 +1,6 @@
 import type { VehicleState, ArenaMap, WreckageObject } from '@carwars/shared';
 import type { Pathfinder } from './pathfinder';
+import type { SquadContext } from './squad';
 
 /**
  * Per-tick inputs bundled for the AI. Phase 1 carries the minimum superset
@@ -21,4 +22,8 @@ export interface AiContext {
   wreckage: WreckageObject[];
   tick: number;
   pathfinder?: Pathfinder;
+  // The vehicle's own squad context — ownRole, target claims, rally point.
+  // Optional because zone-runner is free to omit it (e.g. solo vehicles,
+  // or tests that don't care about coordination).
+  squad?: SquadContext;
 }
