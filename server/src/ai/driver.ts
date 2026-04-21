@@ -484,16 +484,24 @@ export function computeAiInput(
         );
         if (blocker) {
           escapeHeading = (bearingTo(self.position, blocker.position) + 180) % 360;
+          // Vehicle-blocker panic: just drive AWAY at max speed. Alternating
+          // forward/reverse at a fixed heading is self-cancelling when the
+          // blocker is another vehicle — both would oscillate in place.
+          // Constant forward motion is what actually separates them.
+          escapeSpeed = self.stats.maxSpeed;
         } else {
           // Wall pin — aim at centre with a per-vehicle scatter so two stuck
           // vehicles in the same corner don't pick identical headings.
           const scatter = (hash % 180) - 90;
           escapeHeading = (bearingTo(self.position, { x: 0, y: 0 }) + scatter + 360) % 360;
+          // Wall traps can need forward-then-reverse shimmying to squeeze out
+          // of concave geometry; alternation helps here. Phase-offset so two
+          // corner-stuck vehicles don't sync up their forward/reverse bursts.
+          const phaseOffset = Math.abs(hash) % 5;
+          escapeSpeed = Math.floor((ds.stuckTicks + phaseOffset) / 5) % 2 === 0
+            ? self.stats.maxSpeed
+            : REVERSE_SPEED;
         }
-        const phaseOffset = Math.abs(hash) % 5;
-        escapeSpeed = Math.floor((ds.stuckTicks + phaseOffset) / 5) % 2 === 0
-          ? self.stats.maxSpeed
-          : REVERSE_SPEED;
       } else if (ds.stuckTicks >= 60) {
         const compassStep = Math.floor(ds.stuckTicks / 10) % 8;
         escapeHeading = compassStep * 45;
