@@ -100,6 +100,42 @@ describe('Squad coordination', () => {
   });
 });
 
+describe('Driver personality affects auction', () => {
+  it('high aggression drivers bid higher for anchor', () => {
+    const squad = new SquadContext('cpu');
+    squad.members = ['calm', 'fiery'];
+    const calm  = makeVehicle('calm',  'cpu', -5, -10);
+    const fiery = makeVehicle('fiery', 'cpu',  5, -10);
+    const enemy = makeVehicle('enemy', 'bad',  0,   0);
+    const driverInfoFor = (id: string) => id === 'fiery'
+      ? { skill: 3, aggression: 6, loyalty: 5 }
+      : { skill: 3, aggression: 1, loyalty: 5 };
+    runAuction(squad, [calm, fiery, enemy], driverInfoFor);
+    // fiery (aggression 6) should take anchor; calm drops to flanker/support
+    expect(squad.roleByAgent.get('fiery')).toBe('anchor');
+    expect(squad.roleByAgent.get('calm')).not.toBe('anchor');
+  });
+
+  it('high loyalty healthy driver takes support role in 4-squad', () => {
+    const squad = new SquadContext('cpu');
+    squad.members = ['a1', 'a2', 'a3', 'a4'];
+    // Four healthy members — rolePriority for 4 at full HP is
+    // [anchor, flanker_r, flanker_l, support]. a4 has max loyalty so the
+    // support bid pulls them into it despite being healthy.
+    const a1 = makeVehicle('a1', 'cpu', -8, -10);
+    const a2 = makeVehicle('a2', 'cpu',  8, -10);
+    const a3 = makeVehicle('a3', 'cpu', -2, -10);
+    const a4 = makeVehicle('a4', 'cpu',  2, -10);
+    const enemy = makeVehicle('enemy', 'bad', 0, 0);
+    const driverInfoFor = (id: string) => {
+      if (id === 'a4') return { skill: 3, aggression: 2, loyalty: 10 };
+      return { skill: 3, aggression: 3, loyalty: 3 };
+    };
+    runAuction(squad, [a1, a2, a3, a4, enemy], driverInfoFor);
+    expect(squad.roleByAgent.get('a4')).toBe('support');
+  });
+});
+
 describe('Target claim decay', () => {
   it('claim expires when claimant stops firing at the target', () => {
     const squad = new SquadContext('cpu');

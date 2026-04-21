@@ -191,8 +191,13 @@ function pickTarget(self: VehicleState, enemies: VehicleState[], ctx?: AiContext
       // Don't penalise if WE are already the claimant (keep firing at current target)
       const selfOnlyClaimant = claimants === 1 && claim?.claimants[0] === self.id;
       if (!selfOnlyClaimant) {
-        // Penalty ramps: 1 other claimant = +8, 2+ = +20 (big push to find alternative)
-        rawScore += claimants === 1 ? 8 : claimants >= 2 ? 20 : 0;
+        // Loyalty scales saturation-aversion: loyal drivers (10) fully respect
+        // claims; disloyal drivers (0) ignore them and happily poach. Base
+        // penalty ramps: 1 other claimant = +8, 2+ = +20.
+        const loyalty = ctx?.loyalty ?? 5;
+        const loyaltyMul = loyalty / 10;
+        const basePenalty = claimants === 1 ? 8 : claimants >= 2 ? 20 : 0;
+        rawScore += basePenalty * loyaltyMul;
       }
     }
     return { e, rawScore };
@@ -211,10 +216,12 @@ function chooseTactic(
   prev: Tactic,
   prevTicks: number,
   w: WeaponChoice | null,
+  aggression = 3,
 ): Tactic {
   const health = armorFrac(self);
 
-  // Critically low armor: evade regardless
+  // Critically low armor: evade regardless — even the most aggressive
+  // driver isn't going to suicide-charge at 20% hp
   if (health < 0.25) return 'evasive';
 
   // Any face at zero — orbit to stop presenting it, regardless of skill
@@ -223,8 +230,11 @@ function chooseTactic(
   // Front armor nearly gone — orbit to stop presenting it
   if (faceArmor(self, 'front') < 2 && health < 0.65) return 'orbit';
 
-  // Sniping: have a long-range weapon and skill to use it, but break out after a while
-  if (w && w.longRange >= 14 && skill >= 3 && health > 0.4) {
+  // Aggression shifts the snipe threshold — timid drivers (aggression ≤ 2)
+  // will snipe with any long-ish weapon; hot-head drivers (aggression ≥ 5)
+  // skip snipe entirely and always close the distance.
+  const snipeThreshold = aggression >= 5 ? 18 : aggression >= 3 ? 14 : 11;
+  if (w && w.longRange >= snipeThreshold && skill >= 3 && health > 0.4 && aggression <= 4) {
     // After holding snipe for 80+ ticks, charge aggressively to vary positioning
     if (prev === 'snipe' && prevTicks > 80 && Math.random() < 0.65) {
       return health > 0.5 ? 'aggressive' : 'orbit';
@@ -232,11 +242,14 @@ function chooseTactic(
     return 'snipe';
   }
 
-  // Flanking: healthy, high skill, enemy is reachable
-  if (health > 0.75 && skill >= 4 && d < 35) return 'flanking';
+  // Flanking: healthy, high skill, enemy is reachable. Aggressive drivers
+  // prefer aggressive > flanking (they close straight); calm drivers are
+  // happier to take the longer, safer flank.
+  if (health > 0.75 && skill >= 4 && d < 35 && aggression <= 4) return 'flanking';
 
-  // Orbit: moderately damaged or already in range and facing issues
-  if (health < 0.55 && d < (w?.longRange ?? 16)) return 'orbit';
+  // Orbit: moderately damaged or already in range and facing issues. Highly
+  // aggressive drivers shrug off the damage and keep attacking.
+  if (health < 0.55 && d < (w?.longRange ?? 16) && aggression < 5) return 'orbit';
 
   return 'aggressive';
 }
@@ -277,14 +290,26 @@ export function computeAiInput(
       return { speed: Math.min(self.stats.maxSpeed, dist > 6 ? self.stats.maxSpeed : Math.floor(self.stats.maxSpeed * 0.5)), steer, fireWeapon: null };
     }
     if (order.type === 'retreat') {
-      if (enemies.length > 0) {
+      // Very low loyalty (≤ 1) means the driver ignores the retreat order
+      // and keeps fighting — rolls each tick so orders eventually stick if
+      // the player keeps issuing them. Captures "mercenary driver who won't
+      // run away" flavour with actual gameplay weight.
+      const loyalty = ctx.loyalty ?? 5;
+      const disobey = loyalty <= 1 && Math.random() < 0.6;
+      if (!disobey && enemies.length > 0) {
         const cx = enemies.reduce((s, e) => s + e.position.x, 0) / enemies.length;
         const cy = enemies.reduce((s, e) => s + e.position.y, 0) / enemies.length;
         const awayBearing = bearingTo({ x: cx, y: cy }, self.position);
         const steer = Math.max(-MAX_TURN, Math.min(MAX_TURN, shortestTurn(self.facing, awayBearing)));
         return { speed: self.stats.maxSpeed, steer, fireWeapon: null };
       }
-      return { speed: 0, steer: 0, fireWeapon: null };
+      if (disobey) {
+        // Fall through to normal combat logic — explicit console note so
+        // the player can see WHY their order didn't take effect
+        console.log(`[AI] ${self.id.padEnd(10)} RETREAT ignored (loyalty=${loyalty})`);
+      } else {
+        return { speed: 0, steer: 0, fireWeapon: null };
+      }
     }
     if (order.type === 'follow' && allVehicles) {
       const leader = allVehicles.find(v => v.id === order.leaderId && !v.stats.damageState.destroyed);
@@ -368,7 +393,7 @@ export function computeAiInput(
   const forcedChange = armorFrac(self) < 0.2;
   ds.tacticTicks++;
   if (forcedChange || ds.tacticTicks >= 15) {
-    let newTactic = chooseTactic(self, target, d, skill, ds.tactic, ds.tacticTicks, w);
+    let newTactic = chooseTactic(self, target, d, skill, ds.tactic, ds.tacticTicks, w, ctx.aggression ?? 3);
     // Phase 4 — squad role biases tactic choice when the base picker is
     // indifferent. Flankers prefer flanking; supports prefer orbit (loiter
     // near rally); anchors prefer aggressive.
@@ -389,8 +414,12 @@ export function computeAiInput(
   // personality shifts preferred range ±2 units and orbit angles ±10° — persistent per vehicle
   const personalityRangeOffset = Math.round(ds.personality * 4 - 2);
   const personalityAngleOffset = Math.round(ds.personality * 20 - 10);
+  // Aggression also nudges preferred range: every point above 3 brings the
+  // fight one unit closer; every point below pushes it one unit further.
+  // Range at aggression 6 ≈ −3 units, at aggression 1 ≈ +2 units.
+  const aggressionRangeOffset = 3 - (ctx.aggression ?? 3);
 
-  const prefRange  = (w?.preferredRange ?? 12) + personalityRangeOffset;
+  const prefRange  = Math.max(4, (w?.preferredRange ?? 12) + personalityRangeOffset + aggressionRangeOffset);
   const fireRange  = w?.longRange ?? 16;
   const closeRange = w?.shortRange ?? 6;
 

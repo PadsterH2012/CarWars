@@ -23,7 +23,10 @@ export class ZoneRunner {
   private humanVehicles = new Set<string>();
   // Vehicles where the human has opted into AI autopilot
   private autopilotVehicles = new Set<string>();
-  private vehicleSkills = new Map<string, number>(); // vehicleId → driver skill
+  // Per-vehicle driver personality — skill affects AI competence + to-hit;
+  // aggression biases tactic selection (close vs snipe) and anchor-role bids;
+  // loyalty affects squad cohesion (support bids, retreat compliance).
+  private vehicleDrivers = new Map<string, { skill: number; aggression: number; loyalty: number }>();
   // Per-match combat stats per vehicle — accumulated from every tick's
   // combatEvents. Feeds the prestige-point award at zone-end so drivers are
   // credited for damage dealt + hits soaked, not just kills.
@@ -63,7 +66,7 @@ export class ZoneRunner {
       this.map,
       // Give the engine read-access to our per-vehicle driver skill so the
       // to-hit resolution picks it up without plumbing through every call.
-      { getDriverSkill: (vehicleId: string) => this.vehicleSkills.get(vehicleId) },
+      { getDriverSkill: (vehicleId: string) => this.vehicleDrivers.get(vehicleId)?.skill },
     );
   }
 
@@ -117,12 +120,27 @@ export class ZoneRunner {
     else this.autopilotVehicles.delete(vehicleId);
   }
 
+  // Back-compat wrapper — callers that only know skill (rivals, legacy spawn
+  // paths) get neutral aggression/loyalty defaults.
   setVehicleSkill(vehicleId: string, skill: number): void {
-    this.vehicleSkills.set(vehicleId, skill);
+    const existing = this.vehicleDrivers.get(vehicleId);
+    this.vehicleDrivers.set(vehicleId, {
+      skill,
+      aggression: existing?.aggression ?? 3,
+      loyalty:    existing?.loyalty    ?? 5,
+    });
+  }
+
+  setVehicleDriver(vehicleId: string, stats: { skill: number; aggression: number; loyalty: number }): void {
+    this.vehicleDrivers.set(vehicleId, stats);
   }
 
   getDriverSkill(vehicleId: string): number {
-    return this.vehicleSkills.get(vehicleId) ?? 3;
+    return this.vehicleDrivers.get(vehicleId)?.skill ?? 3;
+  }
+
+  getDriverStats(vehicleId: string): { skill: number; aggression: number; loyalty: number } {
+    return this.vehicleDrivers.get(vehicleId) ?? { skill: 3, aggression: 3, loyalty: 5 };
   }
 
   queueInput(vehicleId: string, input: { speed: number; steer: number; fireWeapon: string | null }): void {
@@ -278,7 +296,7 @@ export class ZoneRunner {
       // Keep members in sync with alive vehicles every tick (cheap)
       squad.members = memberIds;
       if (state.tick - squad.lastAuctionTick >= AUCTION_PERIOD) {
-        runAuction(squad, state.vehicles);
+        runAuction(squad, state.vehicles, (id) => this.vehicleDrivers.get(id));
         squad.lastAuctionTick = state.tick;
       }
     }
@@ -306,10 +324,14 @@ export class ZoneRunner {
       const hasAutopilot = this.autopilotVehicles.has(vehicle.id);
       const needsAi = !isHuman || hasAutopilot;
       if (needsAi && !this.humanInputThisTick.has(vehicle.id)) {
-        const skill = this.vehicleSkills.get(vehicle.id) ?? 3;
+        const stats = this.getDriverStats(vehicle.id);
         const order = this.squadOrders.get(vehicle.id);
         const squad = this.squadsByPlayer.get(vehicle.playerId);
-        const aiInput = computeAiInput(vehicle, { ...ctxBase, skill, squad }, order);
+        const aiInput = computeAiInput(
+          vehicle,
+          { ...ctxBase, skill: stats.skill, aggression: stats.aggression, loyalty: stats.loyalty, squad },
+          order,
+        );
         this.engine.queueInput(vehicle.id, aiInput);
       }
     });

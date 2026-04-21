@@ -17,13 +17,17 @@ import type { SquadContext } from './squad';
  */
 export interface AiContext {
   skill: number;
+  // Driver personality stats — default to neutral (3, 5) when the caller
+  // (typically a test) doesn't have a real driver record.
+  //   aggression: 0..6+ — higher = prefers close combat, ramming, anchor role
+  //   loyalty:    0..10 — higher = sticks with squad, defers saturated targets,
+  //                       bids higher for support role; very low = ignores retreat
+  aggression?: number;
+  loyalty?: number;
   map?: ArenaMap;
   allVehicles: VehicleState[];
   wreckage: WreckageObject[];
   tick: number;
   pathfinder?: Pathfinder;
-  // The vehicle's own squad context — ownRole, target claims, rally point.
-  // Optional because zone-runner is free to omit it (e.g. solo vehicles,
-  // or tests that don't care about coordination).
   squad?: SquadContext;
 }

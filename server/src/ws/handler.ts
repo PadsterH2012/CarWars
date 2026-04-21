@@ -674,12 +674,12 @@ async function handleMessage(ws: WebSocket, raw: string): Promise<void> {
         const uuidRe = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
         if (uuidRe.test(mateId)) {
           const dr = await db.query(
-            `SELECT skill FROM drivers WHERE assigned_vehicle_id = $1 AND alive = TRUE LIMIT 1`,
+            `SELECT skill, aggression, loyalty FROM drivers WHERE assigned_vehicle_id = $1 AND alive = TRUE LIMIT 1`,
             [mateId]
           );
           if (!dr.rows.length) continue; // squadmate without a driver — skip
           await db.query(`UPDATE vehicles SET in_arena = TRUE WHERE id = $1 AND player_id = $2`, [mateId, playerId]);
-          const mateSkill = dr.rows[0].skill;
+          const { skill, aggression, loyalty } = dr.rows[0];
           const placed: VehicleState = {
             ...mateVehicle,
             position: { x: pos.x, y: pos.y },
@@ -688,7 +688,7 @@ async function handleMessage(ws: WebSocket, raw: string): Promise<void> {
           };
           runner.getEngine().removeVehicle(mateId);
           runner.getEngine().addVehicle(placed);
-          runner.setVehicleSkill(mateId, mateSkill);
+          runner.setVehicleDriver(mateId, { skill, aggression, loyalty });
         }
       }
     }
@@ -701,12 +701,13 @@ async function handleMessage(ws: WebSocket, raw: string): Promise<void> {
       if (uuidRe.test(msg.vehicleId)) {
         const db = getDb();
         const driverRes = await db.query(
-          `SELECT skill FROM drivers WHERE assigned_vehicle_id = $1 AND alive = TRUE LIMIT 1`,
+          `SELECT skill, aggression, loyalty FROM drivers WHERE assigned_vehicle_id = $1 AND alive = TRUE LIMIT 1`,
           [msg.vehicleId]
         );
         if (driverRes.rows.length) {
-          joinedSkill = driverRes.rows[0].skill;
-          runner.setVehicleSkill(msg.vehicleId, joinedSkill);
+          const { skill, aggression, loyalty } = driverRes.rows[0];
+          joinedSkill = skill;
+          runner.setVehicleDriver(msg.vehicleId, { skill, aggression, loyalty });
         }
       }
     }

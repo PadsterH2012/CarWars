@@ -115,14 +115,22 @@ function dist2d(a: { x: number; y: number }, b: { x: number; y: number }): numbe
 
 // Role set sized by squad membership. Greedy assignment: for each role in
 // priority order, pick the member with the best fit (weighted bid), remove
-// them from the pool, repeat. Role stickiness: current role gets −15% on
+// them from the pool, repeat. Role stickiness: current role gets +15% on
 // own re-bid to prevent churn between two nearly-equal candidates.
+//
+// Driver personality biases bids:
+//   - aggression raises anchor and flanker bids (wants to fight)
+//   - loyalty raises support bid (wants to stay with the group)
 //
 // Rally-shift: when the squad average HP is below 40%, the auction promotes
 // 'support' (rally role) over 'flanker' — damaged squads cluster rather
-// than split. This is the cheap version of the plan's full utility scoring;
-// good enough to hit the rally ship gate without the influence-map cost.
-export function runAuction(squad: SquadContext, allVehicles: VehicleState[]): void {
+// than split.
+export interface DriverInfo { skill: number; aggression: number; loyalty: number; }
+export function runAuction(
+  squad: SquadContext,
+  allVehicles: VehicleState[],
+  driverInfoFor?: (vehicleId: string) => DriverInfo | undefined,
+): void {
   // Prune dead members
   squad.members = squad.members.filter(id => {
     const v = allVehicles.find(vv => vv.id === id);
@@ -162,20 +170,30 @@ export function runAuction(squad: SquadContext, allVehicles: VehicleState[]): vo
 
   const bid = (role: SquadRole, v: VehicleState): number => {
     const hp = armorFrac(v);
+    const driver = driverInfoFor?.(v.id);
+    const aggression = driver?.aggression ?? 3;
+    const loyalty    = driver?.loyalty    ?? 5;
+    // Aggression bonus for combat roles — scales 0..+0.3 across range 0..6
+    const agBonus = Math.max(0, (aggression - 3) / 10);
+    // Loyalty bonus for support — scales 0..+0.4 across range 0..10
+    const loyalBonus = (loyalty - 5) / 12.5;
+
     // Anchor: full-strength member closest to best target
     if (role === 'anchor') {
       const closest = enemies.length > 0
         ? Math.min(...enemies.map(e => dist2d(v.position, e.position)))
         : 0;
-      return hp * 1.5 - closest / 40; // high hp + short distance → high bid
+      return hp * 1.5 - closest / 40 + agBonus;
     }
     // Flanker: any healthy member, bias by "not the anchor candidate"
     if (role === 'flanker_l' || role === 'flanker_r') {
-      return hp * 1.0 + (role === 'flanker_l' ? v.position.x / 100 : -v.position.x / 100);
+      return hp * 1.0 + (role === 'flanker_l' ? v.position.x / 100 : -v.position.x / 100) + agBonus * 0.5;
     }
-    // Support: damaged vehicles preferred (supports rally behaviour)
+    // Support: damaged vehicles preferred (supports rally behaviour); loyalty
+    // pushes healthy loyal drivers toward support too — they'll stay and
+    // shepherd the injured rather than chase glory.
     if (role === 'support') {
-      return (1 - hp) * 1.5 + 0.2; // low hp → high bid, small baseline
+      return (1 - hp) * 1.5 + 0.2 + loyalBonus;
     }
     return 0;
   };
