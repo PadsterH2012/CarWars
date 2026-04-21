@@ -13,6 +13,31 @@ const WORLD_CENTER_Y = 360;
 // Interpolation target per vehicle — updated on each zone_state, lerped toward each frame
 interface VehicleTarget { x: number; y: number; rotation: number; }
 
+// ─── Map visual theming ──────────────────────────────────────────────────────
+// Palette tints the off-grid background fill. Individual floor tiles override
+// local surface so palette only sets the ambient tone.
+function paletteBackground(palette?: import('@carwars/shared').MapPalette): number {
+  switch (palette) {
+    case 'industrial': return 0x0a0e14;
+    case 'urban':      return 0x0b0810;
+    case 'desert':     return 0x140d08;
+    case 'wasteland':  return 0x080808;
+    default:           return 0x0a0a14;
+  }
+}
+
+// Per-surface fill colour — chosen for high contrast against vehicles and walls.
+const FLOOR_COLORS: Record<import('@carwars/shared').FloorType, number> = {
+  asphalt:     0x1a1a1e,  // charcoal — default road surface
+  concrete:    0x4a4a52,  // medium grey slab
+  dirt:        0x3a2a1c,  // warm brown
+  gravel:      0x2e2e34,  // slightly lighter than asphalt
+  sand:        0x8e7648,  // warm tan
+  scrub_grass: 0x3a4a2a,  // dry muted green
+  rust_plate:  0x5a3020,  // orange-brown oxidised metal
+  neon_tile:   0x202838,  // dark indigo, pairs with neon_strip accents
+};
+
 export class ArenaScene extends Phaser.Scene {
   private connection!: Connection;
   private vehicleSprites = new Map<string, Phaser.GameObjects.Container>();
@@ -48,6 +73,9 @@ export class ArenaScene extends Phaser.Scene {
   private minimapGfx!: Phaser.GameObjects.Graphics;
   private mapWalls: import('@carwars/shared').Rect[] = [];
   private mapGraphics!: Phaser.GameObjects.Graphics;
+  // Extra layers (below walls): floor surfaces and non-colliding decorations
+  private floorGraphics!: Phaser.GameObjects.Graphics;
+  private decorationGraphics!: Phaser.GameObjects.Graphics;
   private tilemapLayers: Phaser.Tilemaps.TilemapLayer[] = [];
   private bgGraphics!: Phaser.GameObjects.Graphics;
 
@@ -227,6 +255,10 @@ export class ArenaScene extends Phaser.Scene {
     });
 
     this.minimapGfx = this.add.graphics().setScrollFactor(0).setDepth(20);
+    // Floor and decoration layers sit between the dark background fill (depth 0)
+    // and the walls (depth 1) so walls always sit on top of painted surfaces.
+    this.floorGraphics = this.add.graphics().setDepth(0.4);
+    this.decorationGraphics = this.add.graphics().setDepth(0.7);
     this.mapGraphics = this.add.graphics().setDepth(1);  // above ground, below vehicles
 
     // Combat log panel — bottom-left, shows the last 6 events
@@ -291,21 +323,30 @@ export class ArenaScene extends Phaser.Scene {
           this.mapWalls = msg.state.walls;
           this.renderMapWalls(msg.state.walls);
           if (msg.state.mapWidth && msg.state.mapHeight) {
-            // Any map with explicit dimensions gets its own camera bounds + dark
-            // background fill. The embedded default tilemap is hidden since it's
-            // not authored to match this map's size.
+            // Any map with explicit dimensions gets its own camera bounds + palette-
+            // tinted background fill. The embedded default tilemap is hidden since
+            // it's not authored to match this map's size.
             this.tilemapLayers.forEach(l => l.setVisible(false));
             const mapW = msg.state.mapWidth * PIXELS_PER_INCH;
             const mapH = msg.state.mapHeight * PIXELS_PER_INCH;
             const mapX = WORLD_CENTER_X - mapW / 2;
             const mapY = WORLD_CENTER_Y - mapH / 2;
-            this.bgGraphics.fillStyle(0x0a0a14, 1);
+            const bgColor = paletteBackground(msg.state.palette);
+            this.bgGraphics.fillStyle(bgColor, 1);
             this.bgGraphics.fillRect(mapX, mapY, mapW, mapH);
             // Zoom level tuned by map size — bigger maps zoom out more so the player
             // can see across the arena
             const zoomForMap = msg.state.mapWidth > 80 ? 0.6 : msg.state.mapWidth > 50 ? 0.85 : 1.1;
             this.cameras.main.setZoom(zoomForMap);
             this.cameras.main.setBounds(mapX, mapY, mapW, mapH);
+          }
+          // Paint floor surfaces and decorations from the join message (both
+          // are static for the match — re-rendered only on scene restart).
+          if (msg.state.floor && msg.state.floor.length > 0) {
+            this.renderMapFloor(msg.state.floor);
+          }
+          if (msg.state.decorations && msg.state.decorations.length > 0) {
+            this.renderMapDecorations(msg.state.decorations);
           }
         }
         this.zoneState = msg.state;
@@ -547,6 +588,246 @@ export class ArenaScene extends Phaser.Scene {
         this.hazardSprites.delete(id);
       }
     });
+  }
+
+  // Paint each floor tile as a filled rectangle in palette-consistent colours.
+  // Tiles are centred on their (x, y) world position — no rotation is applied here,
+  // rotation has already been baked into w/h by the composer.
+  private renderMapFloor(floor: import('@carwars/shared').FloorTile[]): void {
+    const gfx = this.floorGraphics;
+    gfx.clear();
+    for (const tile of floor) {
+      const px = WORLD_CENTER_X + tile.x * PIXELS_PER_INCH - (tile.w * PIXELS_PER_INCH) / 2;
+      const py = WORLD_CENTER_Y + tile.y * PIXELS_PER_INCH - (tile.h * PIXELS_PER_INCH) / 2;
+      const pw = tile.w * PIXELS_PER_INCH;
+      const ph = tile.h * PIXELS_PER_INCH;
+      gfx.fillStyle(FLOOR_COLORS[tile.type] ?? 0x1a1a1e, 1);
+      gfx.fillRect(px, py, pw, ph);
+      // Neon tile gets a subtle grid overlay — one stroked inset rect is cheap
+      // and gives it the "cyberpunk dance floor" feel without per-pixel work.
+      if (tile.type === 'neon_tile') {
+        gfx.lineStyle(1, 0x44aaff, 0.35);
+        gfx.strokeRect(px + 2, py + 2, pw - 4, ph - 4);
+      }
+    }
+  }
+
+  // Render every decoration as a simple primitive shape. Directional decos use
+  // `facing` (degrees, 0=north/up, 90=east) to orient their long axis.
+  private renderMapDecorations(decorations: import('@carwars/shared').Decoration[]): void {
+    const gfx = this.decorationGraphics;
+    gfx.clear();
+    const PI = PIXELS_PER_INCH;
+    for (const d of decorations) {
+      const px = WORLD_CENTER_X + d.x * PI;
+      const py = WORLD_CENTER_Y + d.y * PI;
+      const w  = (d.w ?? 1) * PI;
+      const h  = (d.h ?? 1) * PI;
+      const facing = d.facing ?? 0;
+      const rad = (facing * Math.PI) / 180;
+      switch (d.type) {
+        case 'lane_yellow': {
+          // Dashed line along the decoration's long axis. Rendered as N short
+          // fills spaced apart so it reads as road striping at any zoom.
+          gfx.fillStyle(0xffcc00, 0.95);
+          this.drawDashedStrip(gfx, px, py, w, h, facing, 6, 4);
+          break;
+        }
+        case 'lane_white': {
+          gfx.fillStyle(0xe8e8e8, 0.95);
+          // Solid strip — rotate via a small sub-graphic translation
+          this.drawStrip(gfx, px, py, w, h, rad);
+          break;
+        }
+        case 'parking_stall': {
+          gfx.lineStyle(2, 0xdddddd, 0.85);
+          gfx.strokeRect(px - w / 2, py - h / 2, w, h);
+          break;
+        }
+        case 'oil_stain': {
+          gfx.fillStyle(0x050505, 0.85);
+          gfx.fillEllipse(px, py, w, h * 0.7);
+          gfx.fillStyle(0x1a1410, 0.55);
+          gfx.fillEllipse(px + w * 0.12, py - h * 0.08, w * 0.6, h * 0.35);
+          break;
+        }
+        case 'crack': {
+          gfx.lineStyle(1.5, 0x888888, 0.55);
+          // Zigzag across the strip length so it reads as fracture, not paint
+          const hw = w / 2;
+          gfx.beginPath();
+          gfx.moveTo(px - hw, py);
+          gfx.lineTo(px - hw * 0.3, py - 2);
+          gfx.lineTo(px + hw * 0.2, py + 3);
+          gfx.lineTo(px + hw, py - 1);
+          gfx.strokePath();
+          break;
+        }
+        case 'pothole': {
+          gfx.fillStyle(0x050505, 1);
+          gfx.fillCircle(px, py, w / 2);
+          gfx.lineStyle(1, 0x2a2a2a, 0.7);
+          gfx.strokeCircle(px, py, w / 2);
+          break;
+        }
+        case 'tire_marks': {
+          gfx.fillStyle(0x050505, 0.7);
+          const offset = h / 3;
+          this.drawStrip(gfx, px + Math.cos(rad + Math.PI / 2) * offset,
+                              py + Math.sin(rad + Math.PI / 2) * offset, w, h / 4, rad);
+          this.drawStrip(gfx, px - Math.cos(rad + Math.PI / 2) * offset,
+                              py - Math.sin(rad + Math.PI / 2) * offset, w, h / 4, rad);
+          break;
+        }
+        case 'cone': {
+          // Orange filled triangle with a dark base stripe
+          const r = w / 2;
+          gfx.fillStyle(0xff7722, 1);
+          gfx.fillTriangle(px, py - r, px - r * 0.8, py + r * 0.6, px + r * 0.8, py + r * 0.6);
+          gfx.fillStyle(0xffffff, 0.9);
+          gfx.fillRect(px - r * 0.7, py + r * 0.1, r * 1.4, 2);
+          break;
+        }
+        case 'barrel': {
+          const r = w / 2;
+          gfx.fillStyle(0xbb2222, 1);
+          gfx.fillCircle(px, py, r);
+          gfx.lineStyle(1, 0x661111, 1);
+          gfx.strokeCircle(px, py, r);
+          // Ring highlight — reads as "barrel, not puck"
+          gfx.lineStyle(1, 0xffaa66, 0.6);
+          gfx.strokeCircle(px, py, r * 0.55);
+          break;
+        }
+        case 'crate': {
+          gfx.fillStyle(0x8b5a2b, 1);
+          gfx.fillRect(px - w / 2, py - h / 2, w, h);
+          gfx.lineStyle(1, 0x5a3a1b, 1);
+          gfx.strokeRect(px - w / 2, py - h / 2, w, h);
+          // Plank line across the middle
+          gfx.lineStyle(1, 0x5a3a1b, 0.6);
+          gfx.beginPath();
+          gfx.moveTo(px - w / 2, py);
+          gfx.lineTo(px + w / 2, py);
+          gfx.strokePath();
+          break;
+        }
+        case 'dumpster': {
+          gfx.fillStyle(0x3a5a3a, 1);
+          gfx.fillRect(px - w / 2, py - h / 2, w, h);
+          gfx.lineStyle(1.5, 0x1a2a1a, 1);
+          gfx.strokeRect(px - w / 2, py - h / 2, w, h);
+          // Lid seam
+          gfx.lineStyle(1, 0x1a2a1a, 0.7);
+          gfx.beginPath();
+          gfx.moveTo(px - w / 2, py - h / 6);
+          gfx.lineTo(px + w / 2, py - h / 6);
+          gfx.strokePath();
+          break;
+        }
+        case 'rubble': {
+          gfx.fillStyle(0x6a6a70, 1);
+          const r = Math.min(w, h) / 2;
+          for (let i = 0; i < 5; i++) {
+            const a = (i / 5) * Math.PI * 2;
+            gfx.fillCircle(px + Math.cos(a) * r * 0.45, py + Math.sin(a) * r * 0.45, r * 0.22);
+          }
+          break;
+        }
+        case 'sign': {
+          // Yellow diamond with a dark border — universal warning sign
+          const r = w / 2;
+          gfx.fillStyle(0xffcc00, 1);
+          gfx.fillTriangle(px, py - r, px + r, py, px, py + r);
+          gfx.fillTriangle(px, py - r, px - r, py, px, py + r);
+          gfx.lineStyle(1.5, 0x4a3a00, 1);
+          gfx.beginPath();
+          gfx.moveTo(px, py - r);
+          gfx.lineTo(px + r, py);
+          gfx.lineTo(px, py + r);
+          gfx.lineTo(px - r, py);
+          gfx.closePath();
+          gfx.strokePath();
+          break;
+        }
+        case 'arrow': {
+          // White triangle pointing in the `facing` direction (default up)
+          const len = Math.max(w, h);
+          const ax = Math.cos(rad - Math.PI / 2);
+          const ay = Math.sin(rad - Math.PI / 2);
+          const sx = -ay, sy = ax; // perpendicular
+          const tipX  = px + ax * len / 2;
+          const tipY  = py + ay * len / 2;
+          const backX = px - ax * len / 2;
+          const backY = py - ay * len / 2;
+          gfx.fillStyle(0xffffff, 0.9);
+          gfx.fillTriangle(
+            tipX, tipY,
+            backX + sx * len / 3, backY + sy * len / 3,
+            backX - sx * len / 3, backY - sy * len / 3,
+          );
+          break;
+        }
+        case 'fuel_pump': {
+          // Grey pill body with a red top slab — reads as an old-school pump
+          gfx.fillStyle(0x555560, 1);
+          gfx.fillRect(px - w / 2, py - h / 2, w, h);
+          gfx.fillStyle(0xcc2222, 1);
+          gfx.fillRect(px - w / 2, py - h / 2, w, h * 0.3);
+          gfx.lineStyle(1, 0x111118, 1);
+          gfx.strokeRect(px - w / 2, py - h / 2, w, h);
+          break;
+        }
+        case 'neon_strip': {
+          gfx.fillStyle(0x22ccff, 0.9);
+          this.drawStrip(gfx, px, py, w, Math.max(h, 2), rad);
+          // Soft outer glow (translucent fatter stripe underneath)
+          gfx.fillStyle(0x22ccff, 0.25);
+          this.drawStrip(gfx, px, py, w, Math.max(h * 3, 4), rad);
+          break;
+        }
+        case 'blood_splat': {
+          gfx.fillStyle(0x5a1a1a, 0.85);
+          gfx.fillEllipse(px, py, w, h * 0.75);
+          gfx.fillStyle(0x8a2020, 0.7);
+          gfx.fillEllipse(px + w * 0.2, py + h * 0.1, w * 0.35, h * 0.25);
+          break;
+        }
+      }
+    }
+  }
+
+  // Draw a thin filled strip oriented along `rad` radians. Centre at (cx, cy),
+  // length = w, thickness = h. Phaser Graphics has no native rotation for rects
+  // so we compute the 4 corners manually.
+  private drawStrip(gfx: Phaser.GameObjects.Graphics, cx: number, cy: number, w: number, h: number, rad: number): void {
+    const dx = Math.cos(rad) * w / 2;
+    const dy = Math.sin(rad) * w / 2;
+    const nx = -Math.sin(rad) * h / 2;
+    const ny =  Math.cos(rad) * h / 2;
+    gfx.fillPoints([
+      { x: cx - dx - nx, y: cy - dy - ny },
+      { x: cx + dx - nx, y: cy + dy - ny },
+      { x: cx + dx + nx, y: cy + dy + ny },
+      { x: cx - dx + nx, y: cy - dy + ny },
+    ], true);
+  }
+
+  // Dashed strip — dash/gap lengths in pixels. Orientation driven by `facing`.
+  private drawDashedStrip(
+    gfx: Phaser.GameObjects.Graphics, cx: number, cy: number, w: number, h: number,
+    facing: number, dashLen: number, gapLen: number,
+  ): void {
+    const rad = (facing * Math.PI) / 180;
+    const total = dashLen + gapLen;
+    const stride = Math.floor(w / total);
+    const startOffset = -w / 2 + dashLen / 2;
+    for (let i = 0; i <= stride; i++) {
+      const off = startOffset + i * total;
+      const dx = Math.cos(rad) * off;
+      const dy = Math.sin(rad) * off;
+      this.drawStrip(gfx, cx + dx, cy + dy, dashLen, h, rad);
+    }
   }
 
   private renderMapWalls(walls: import('@carwars/shared').Rect[]): void {

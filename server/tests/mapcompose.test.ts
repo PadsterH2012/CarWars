@@ -117,4 +117,53 @@ describe('composeMap', () => {
     expect(e1.x).toBeCloseTo(w2.x, 5);
     expect(e1.y).toBeCloseTo(w2.y, 5);
   });
+
+  it('floor tiles rotate and translate with the snippet', () => {
+    const sn: MapSnippet = {
+      id: 'f', size: { w: 20, h: 10 }, walls: [],
+      floor: [{ x: 5, y: 0, w: 10, h: 4, type: 'asphalt' }],
+    };
+    // 90° rotation: (5, 0) → (0, 5); 10×4 → 4×10
+    const mapRot = composeMap('m', 40, 40, [{ snippet: sn, x: 0, y: 0, rotation: 90 }]);
+    expect(mapRot.floor?.length).toBe(1);
+    expect(mapRot.floor![0].x).toBe(0);
+    expect(mapRot.floor![0].y).toBe(5);
+    expect(mapRot.floor![0].w).toBe(4);
+    expect(mapRot.floor![0].h).toBe(10);
+    expect(mapRot.floor![0].type).toBe('asphalt');
+    // Translation: same tile at (10, 5) placed rotation 0
+    const mapTr = composeMap('m', 40, 40, [{ snippet: sn, x: 10, y: 5, rotation: 0 }]);
+    expect(mapTr.floor![0].x).toBe(15);
+    expect(mapTr.floor![0].y).toBe(5);
+  });
+
+  it('decorations rotate with facing and translate with the snippet', () => {
+    const sn: MapSnippet = {
+      id: 'd', size: { w: 10, h: 10 }, walls: [],
+      decorations: [
+        { x: 3, y: 0, type: 'arrow', facing: 0 },
+        { x: 0, y: 0, type: 'oil_stain' },
+      ],
+    };
+    // 90° rotation: arrow at (3, 0) facing 0 → (0, 3) facing 90
+    const map = composeMap('m', 40, 40, [{ snippet: sn, x: 0, y: 0, rotation: 90 }]);
+    const arrow = map.decorations!.find(d => d.type === 'arrow')!;
+    expect(arrow.x).toBe(0);
+    expect(arrow.y).toBe(3);
+    expect(arrow.facing).toBe(90);
+    const stain = map.decorations!.find(d => d.type === 'oil_stain')!;
+    expect(stain.x).toBe(0);
+    expect(stain.y).toBe(0);
+    expect(stain.facing).toBeUndefined();
+  });
+
+  it('composed maps emit empty floor/decoration arrays when snippets have none', () => {
+    const bare: MapSnippet = {
+      id: 'b', size: { w: 4, h: 4 },
+      walls: [{ x: 0, y: 0, w: 4, h: 4, type: 'wall' }],
+    };
+    const map = composeMap('m', 10, 10, [{ snippet: bare, x: 0, y: 0, rotation: 0 }]);
+    expect(map.floor).toEqual([]);
+    expect(map.decorations).toEqual([]);
+  });
 });

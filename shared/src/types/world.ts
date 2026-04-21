@@ -31,12 +31,70 @@ export interface SpawnPoint {
   team: 'player' | 'ai';
 }
 
+// Floor surfaces — large painted rectangles UNDER walls, giving each area its own
+// texture and colour. Client paints them on the map background layer.
+export type FloorType =
+  | 'asphalt'      // charcoal road surface
+  | 'concrete'     // grey slab courtyard / plaza
+  | 'dirt'         // brown unpaved
+  | 'gravel'       // flecked dark grey
+  | 'sand'         // tan desert floor
+  | 'scrub_grass'  // dry muted green
+  | 'rust_plate'   // orange-brown corroded metal
+  | 'neon_tile';   // dark with cyan grid — cyberpunk flourish
+
+export interface FloorTile {
+  x: number;       // center x in world units
+  y: number;       // center y in world units
+  w: number;       // width
+  h: number;       // height
+  type: FloorType;
+}
+
+// Decorations — small detail items overlaid on the floor. Non-colliding,
+// purely visual, rendered above floor but below walls. Orientation is only
+// used for directional ones (arrow, tire_marks, lane_*).
+export type DecorationType =
+  | 'lane_yellow'   // dashed yellow road line
+  | 'lane_white'    // solid white road line
+  | 'parking_stall' // white outlined parking bay
+  | 'oil_stain'     // dark blotch
+  | 'crack'         // pavement crack line
+  | 'pothole'       // dark circular hole
+  | 'tire_marks'    // dark parallel skid streaks
+  | 'cone'          // orange traffic cone
+  | 'barrel'        // red hazmat barrel
+  | 'crate'         // wooden crate
+  | 'dumpster'      // green dumpster
+  | 'rubble'        // grey debris cluster
+  | 'sign'          // yellow warning sign
+  | 'arrow'         // directional arrow
+  | 'fuel_pump'     // gas station pump
+  | 'neon_strip'    // cyan glowing strip
+  | 'blood_splat';  // dark red combat splat
+
+export interface Decoration {
+  x: number;       // center x in world units
+  y: number;       // center y in world units
+  type: DecorationType;
+  w?: number;      // optional width; default = type's natural size
+  h?: number;      // optional height
+  facing?: number; // optional rotation in degrees (0=up/north, 90=east) — for directional types
+}
+
+// Visual mood — tints background and default floor colours. Individual floor
+// tiles override the palette's default surface for local variety.
+export type MapPalette = 'industrial' | 'urban' | 'desert' | 'wasteland';
+
 export interface ArenaMap {
   id: string;
   width: number;        // total world units (arena spans ±width/2)
   height: number;       // total world units (arena spans ±height/2)
   walls: Rect[];
   spawnPoints: SpawnPoint[];
+  floor?: FloorTile[];
+  decorations?: Decoration[];
+  palette?: MapPalette; // client background + default surface tint
 }
 
 export interface VehicleState {
@@ -107,4 +165,7 @@ export interface ZoneState {
   mapWidth?: number;   // world-unit width of the loaded map (sent on join)
   mapHeight?: number;  // world-unit height of the loaded map (sent on join)
   walls?: Rect[];      // only present in the initial join state, not every tick
+  floor?: FloorTile[]; // only present in the initial join state
+  decorations?: Decoration[]; // only present in the initial join state
+  palette?: MapPalette;
 }

@@ -64,6 +64,9 @@ export class ZoneRunner {
       mapWidth: this.map.width,
       mapHeight: this.map.height,
       walls: this.map.walls,
+      floor: this.map.floor,
+      decorations: this.map.decorations,
+      palette: this.map.palette,
     };
     const msg: ServerMessage = { type: 'zone_state', state: initialState };
     if (ws.readyState === WebSocket.OPEN) {

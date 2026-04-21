@@ -1,4 +1,4 @@
-import type { ArenaMap, Rect, SpawnPoint, WallType } from '@carwars/shared';
+import type { ArenaMap, Rect, SpawnPoint, WallType, FloorTile, Decoration } from '@carwars/shared';
 
 // A Connector declares a typed exit on a snippet — the composer uses it so roads
 // auto-align when two snippets with matching connector ids are placed adjacent.
@@ -20,6 +20,8 @@ export interface MapSnippet {
   walls: Rect[];
   spawnPoints?: SpawnPoint[];
   connectors?: Connector[];
+  floor?: FloorTile[];       // surface tiles — rotated with the snippet
+  decorations?: Decoration[]; // props — rotated with the snippet
 }
 
 export type Rotation = 0 | 90 | 180 | 270;
@@ -59,6 +61,31 @@ function rotateWall(wall: Rect, rotation: Rotation): Rect {
   };
 }
 
+function rotateFloor(tile: FloorTile, rotation: Rotation): FloorTile {
+  const rotated = rotatePoint(tile.x, tile.y, rotation);
+  const swap = rotation === 90 || rotation === 270;
+  return {
+    x: rotated.x,
+    y: rotated.y,
+    w: swap ? tile.h : tile.w,
+    h: swap ? tile.w : tile.h,
+    type: tile.type,
+  };
+}
+
+function rotateDecoration(d: Decoration, rotation: Rotation): Decoration {
+  const rotated = rotatePoint(d.x, d.y, rotation);
+  const swap = rotation === 90 || rotation === 270;
+  return {
+    ...d,
+    x: rotated.x,
+    y: rotated.y,
+    w: d.w !== undefined && swap ? d.h : d.w,
+    h: d.h !== undefined && swap ? d.w : d.h,
+    facing: d.facing !== undefined ? rotateFacing(d.facing, rotation) : undefined,
+  };
+}
+
 // Exposed for tests: resolves a snippet's connectors to world-space coords under a placement.
 export function snippetConnectorsOf(
   snippet: MapSnippet,
@@ -85,6 +112,8 @@ export function composeMap(
 ): ArenaMap {
   const walls: Rect[] = [];
   const spawnPoints: SpawnPoint[] = [];
+  const floor: FloorTile[] = [];
+  const decorations: Decoration[] = [];
 
   for (const p of placements) {
     for (const w of p.snippet.walls) {
@@ -100,7 +129,15 @@ export function composeMap(
         team: sp.team,
       });
     }
+    for (const f of p.snippet.floor ?? []) {
+      const rf = rotateFloor(f, p.rotation);
+      floor.push({ ...rf, x: rf.x + p.x, y: rf.y + p.y });
+    }
+    for (const d of p.snippet.decorations ?? []) {
+      const rd = rotateDecoration(d, p.rotation);
+      decorations.push({ ...rd, x: rd.x + p.x, y: rd.y + p.y });
+    }
   }
 
-  return { id: mapId, width, height, walls, spawnPoints };
+  return { id: mapId, width, height, walls, spawnPoints, floor, decorations };
 }
