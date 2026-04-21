@@ -344,10 +344,14 @@ export function computeAiInput(
   //
   // Phase 1 (4–29 ticks): sidestep perpendicular to enemy bearing, alternating sides
   // Phase 2 (30–59 ticks): drive away from enemy (bearing + 180)
-  // Phase 3 (60+ ticks):   sweep 8 world compass directions, 10 ticks each
-  if (ds.stuckTicks >= 4) {
-    // If we just became stuck (and aren't already reversing), start a reverse burst
-    if (ds.reverseTicks <= 0 && ds.stuckTicks === 5) {
+  // Phase 3 (60–99 ticks): sweep 8 world compass directions, 10 ticks each
+  // Phase 4 (100+ ticks):  PANIC — force heading toward arena centre at full reverse,
+  //                        then full forward, alternating every 5 ticks to break any pin
+  const isRecovering = ds.stuckTicks >= 4;
+  if (isRecovering) {
+    // If we just became stuck (and aren't already reversing), start a reverse burst.
+    // Using >= 5 (not ===) so missed-tick edge cases still trigger the burst.
+    if (ds.reverseTicks <= 0 && ds.stuckTicks >= 5 && ds.stuckTicks < 10) {
       ds.reverseTicks = REVERSE_BURST_TICKS;
     }
 
@@ -361,7 +365,15 @@ export function computeAiInput(
       console.log(`[AI] ${self.id.padEnd(10)} REVERSE×${ds.reverseTicks} — pos=(${self.position.x.toFixed(1)},${self.position.y.toFixed(1)}) spd=${desiredSpeed}`);
     } else {
       let escapeHeading: number;
-      if (ds.stuckTicks >= 60) {
+      let escapeSpeed = self.stats.maxSpeed;
+      if (ds.stuckTicks >= 100) {
+        // Panic unstick: aim at arena centre (0,0) and alternate forward/reverse
+        // every 5 ticks. Neither the tactic nor SURV will override this.
+        escapeHeading = bearingTo(self.position, { x: 0, y: 0 });
+        escapeSpeed = Math.floor(ds.stuckTicks / 5) % 2 === 0
+          ? self.stats.maxSpeed
+          : REVERSE_SPEED;
+      } else if (ds.stuckTicks >= 60) {
         const compassStep = Math.floor(ds.stuckTicks / 10) % 8;
         escapeHeading = compassStep * 45;
       } else if (ds.stuckTicks >= 30) {
@@ -372,17 +384,20 @@ export function computeAiInput(
         escapeHeading = (bearing + dir * 90 + 360) % 360;
       }
       desiredFacing = escapeHeading;
-      desiredSpeed = self.stats.maxSpeed;
-      console.log(`[AI] ${self.id.padEnd(10)} STUCK×${ds.stuckTicks} — escape heading=${escapeHeading.toFixed(0)}° pos=(${self.position.x.toFixed(1)},${self.position.y.toFixed(1)})`);
+      desiredSpeed = escapeSpeed;
+      console.log(`[AI] ${self.id.padEnd(10)} STUCK×${ds.stuckTicks} — escape heading=${escapeHeading.toFixed(0)}° pos=(${self.position.x.toFixed(1)},${self.position.y.toFixed(1)})${ds.stuckTicks >= 100 ? ' PANIC' : ''}`);
     }
-    // Fall through to wall avoidance — do NOT early-return here.
-    // Blind escape at max speed into a wall is what caused the original bug.
   } else {
     // Not stuck — clear any pending reverse ticks so future matches start fresh
     ds.reverseTicks = 0;
   }
 
-  switch (tactic) {
+  // The tactic switch below used to run unconditionally, which silently
+  // overwrote the stuck recovery values — that's why pinned AI would oscillate
+  // between "reverse 1 tick" and "forward 1 tick" and never break free. When
+  // recovering, skip tactic entirely so the escape heading sticks long enough
+  // to open a gap; SURV + AVOID overlays still run so safety wins when needed.
+  if (!isRecovering) switch (tactic) {
     // ── Evasive: flee at max speed, present strongest armor face ──────────────
     case 'evasive': {
       const best = strongestFace(self);
@@ -468,8 +483,11 @@ export function computeAiInput(
 
   // ── Survival overlay: vehicle safety overrides offensive positioning ──────
   // Runs every tick after tactic and wall logic. Blends protective heading in
-  // based on how exposed the vehicle is. This cannot be disabled by any tactic.
-  {
+  // based on how exposed the vehicle is. Disabled during stuck recovery
+  // because its speed-minimum would clobber the reverse burst (Math.max of
+  // negative REVERSE_SPEED and positive target flips the sign, preventing
+  // the vehicle from actually backing out of its pin).
+  if (!isRecovering) {
     const selfHealth = armorFrac(self);
     const frontA = faceArmor(self, 'front');
     const backA  = faceArmor(self, 'back');
