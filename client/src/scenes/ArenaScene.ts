@@ -60,6 +60,13 @@ export class ArenaScene extends Phaser.Scene {
   private rivalBanner?: Phaser.GameObjects.Text;
   private rivalEmblem?: Phaser.GameObjects.Image;
 
+  // Separate camera for HUD so main-camera zoom doesn't drag scroll-fixed UI
+  // toward the map centre. Pairs with refreshHud() which routes each child to
+  // exactly one camera based on its scrollFactorX.
+  private uiCam!: Phaser.Cameras.Scene2D.Camera;
+  private hudIgnored = new WeakSet<Phaser.GameObjects.GameObject>();
+  private worldIgnored = new WeakSet<Phaser.GameObjects.GameObject>();
+
   constructor() {
     super({ key: 'ArenaScene' });
   }
@@ -84,6 +91,8 @@ export class ArenaScene extends Phaser.Scene {
     this.hazardSprites.clear();
     this.wreckSprites.clear();
     this.squadOrders.clear();
+    this.hudIgnored = new WeakSet();
+    this.worldIgnored = new WeakSet();
     this.combatLog = [];
     this.rival = null;
     this.mapWalls = [];
@@ -239,6 +248,12 @@ export class ArenaScene extends Phaser.Scene {
     this.cameras.main.setLerp(0.08, 0.08);
     this.cameras.main.scrollX = 0;
     this.cameras.main.scrollY = 0;
+
+    // Dedicated UI camera at zoom 1 so HUD stays glued to the viewport corners
+    // regardless of how far the main camera zooms out for bigger maps.
+    this.uiCam = this.cameras.add(0, 0, this.scale.width, this.scale.height);
+    this.uiCam.setZoom(1);
+    this.uiCam.setScroll(0, 0);
 
     bindFullscreenToggle(this);
     onLayout(this, () => this.layoutHud());
@@ -829,14 +844,38 @@ export class ArenaScene extends Phaser.Scene {
     this.combatLogHeading?.setPosition(16, height - 140);
     this.combatLogText?.setPosition(16, height - 122);
     this.positionRivalBanner();
-    // Resize the main camera viewport to match the new canvas size so world
-    // rendering uses the full window.
+    // Resize the main + UI camera viewports to match the new canvas size so
+    // world rendering and the HUD both use the full window.
     this.cameras.main.setSize(width, height);
+    this.uiCam?.setSize(width, height);
+  }
+
+  // Partition the display list across the two cameras: scrollFactorX===0 means
+  // "fixed HUD" → main cam ignores it so it's only drawn by the unzoomed UI
+  // cam. Everything else (world objects) stays on the main cam and is hidden
+  // from the UI cam. WeakSets dedupe so a child is only ignored once.
+  private refreshHud(): void {
+    if (!this.uiCam) return;
+    for (const obj of this.children.list) {
+      const isHud = (obj as unknown as { scrollFactorX?: number }).scrollFactorX === 0;
+      if (isHud) {
+        if (!this.hudIgnored.has(obj)) {
+          this.cameras.main.ignore(obj);
+          this.hudIgnored.add(obj);
+        }
+      } else {
+        if (!this.worldIgnored.has(obj)) {
+          this.uiCam.ignore(obj);
+          this.worldIgnored.add(obj);
+        }
+      }
+    }
   }
 
   update(time: number): void {
     if (!this.zoneState) return;
 
+    this.refreshHud();
     this.updateHud();
 
     // Interpolate all vehicle sprites toward their server-authoritative targets each frame.
