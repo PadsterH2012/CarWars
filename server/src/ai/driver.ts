@@ -367,10 +367,28 @@ export function computeAiInput(
       let escapeHeading: number;
       let escapeSpeed = self.stats.maxSpeed;
       if (ds.stuckTicks >= 100) {
-        // Panic unstick: aim at arena centre (0,0) and alternate forward/reverse
-        // every 5 ticks. Neither the tactic nor SURV will override this.
-        escapeHeading = bearingTo(self.position, { x: 0, y: 0 });
-        escapeSpeed = Math.floor(ds.stuckTicks / 5) % 2 === 0
+        // Panic unstick. Two failure modes to handle:
+        //   1) Pinned on a wall → push toward arena centre
+        //   2) Pinned on another vehicle → push opposite the blocker
+        // Without (2), two adjacent stuck vehicles both aim at (0,0), lock
+        // together, and never break free. Phase-offset the forward/reverse
+        // cycle by id-hash so their burst timing also doesn't sync.
+        const hash = [...self.id].reduce((h, c) => ((h << 5) - h + c.charCodeAt(0)) | 0, 0);
+        const blocker = allVehicles?.find(v =>
+          v.id !== self.id &&
+          !v.stats.damageState.destroyed &&
+          dist2d(v.position, self.position) < 3,
+        );
+        if (blocker) {
+          escapeHeading = (bearingTo(self.position, blocker.position) + 180) % 360;
+        } else {
+          // Wall pin — aim at centre with a per-vehicle scatter so two stuck
+          // vehicles in the same corner don't pick identical headings.
+          const scatter = (hash % 180) - 90;
+          escapeHeading = (bearingTo(self.position, { x: 0, y: 0 }) + scatter + 360) % 360;
+        }
+        const phaseOffset = Math.abs(hash) % 5;
+        escapeSpeed = Math.floor((ds.stuckTicks + phaseOffset) / 5) % 2 === 0
           ? self.stats.maxSpeed
           : REVERSE_SPEED;
       } else if (ds.stuckTicks >= 60) {
