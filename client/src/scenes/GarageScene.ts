@@ -222,40 +222,51 @@ export class GarageScene extends Phaser.Scene {
     add(hireBtn);
 
     // Driver-request badge — only shown when there are pending requests
+    const CREW_PANEL_W = 280;
+    let firstRowY = 162;
     if (this.driverRequests.length > 0) {
-      const reqBtn = this.add.text(crewX, 156, `⚠ ${this.driverRequests.length} DRIVER REQUEST${this.driverRequests.length > 1 ? 'S' : ''}`, {
+      const reqBtn = this.add.text(crewX, 154, `⚠ ${this.driverRequests.length} DRIVER REQUEST${this.driverRequests.length > 1 ? 'S' : ''}`, {
         color: '#ffcc00', fontSize: '11px', fontFamily: 'monospace',
         backgroundColor: '#332200', padding: { x: 6, y: 3 },
       }).setInteractive();
       reqBtn.on('pointerdown', () => this.showRequestsModal());
       add(reqBtn);
+      // Push the first driver row below the badge so they don't collide
+      firstRowY = 188;
     }
 
     const livingDrivers = this.drivers.filter(d => d.alive);
     if (livingDrivers.length === 0) {
-      add(this.add.text(crewX, 160, 'No drivers hired.\nHire at least one to\nfield a vehicle in arena.', {
+      add(this.add.text(crewX, firstRowY, 'No drivers hired.\nHire at least one to\nfield a vehicle in arena.', {
         color: '#777', fontSize: '11px', fontFamily: 'monospace'
       }));
     } else {
+      const ROW_H = 50;
       livingDrivers.forEach((d, i) => {
-        const y = 160 + i * 44;
+        const y = firstRowY + i * ROW_H;
         const assignedVehicle = this.vehicles.find(v => v.id === d.assigned_vehicle_id);
+        // Row 1: driver name (left) + assignment button (right-aligned)
         add(this.add.text(crewX, y, d.name, {
           color: '#ffffff', fontSize: '13px', fontFamily: 'monospace'
         }));
-        const titleLine = d.title
-          ? `${d.title} · sk${d.skill} · ${d.xp} PP${d.xpToNext ? ` (${d.xpToNext} to next)` : ''}`
-          : `skill ${d.skill} | ${d.xp} XP`;
-        add(this.add.text(crewX, y + 16, titleLine, {
-          color: '#888', fontSize: '10px', fontFamily: 'monospace'
-        }));
         const assignStr = assignedVehicle ? `▶ ${assignedVehicle.name}` : 'unassigned';
-        const assignBtn = this.add.text(crewX + 100, y + 8, assignStr, {
+        const assignBtn = this.add.text(crewX + CREW_PANEL_W, y, assignStr, {
           color: assignedVehicle ? '#88ccff' : '#ffaa44', fontSize: '11px', fontFamily: 'monospace',
-          backgroundColor: '#111122', padding: { x: 4, y: 2 }
-        }).setInteractive();
+          backgroundColor: '#111122', padding: { x: 6, y: 3 }
+        }).setOrigin(1, 0).setInteractive();
         assignBtn.on('pointerdown', () => this.showAssignDriverMenu(d));
         add(assignBtn);
+        // Row 2: title · skill · XP (never collides because it's on its own line)
+        const titleLine = d.title
+          ? `${d.title} · sk${d.skill} · ${d.xp} PP${d.xpToNext ? ` (${d.xpToNext} to next)` : ''}`
+          : `skill ${d.skill} · ${d.xp} XP`;
+        add(this.add.text(crewX, y + 18, titleLine, {
+          color: '#888', fontSize: '10px', fontFamily: 'monospace'
+        }));
+        // Subtle divider between rows for scannability (skip after last driver)
+        if (i < livingDrivers.length - 1) {
+          add(this.add.rectangle(crewX, y + 40, CREW_PANEL_W, 1, 0x333344, 0.8).setOrigin(0, 0));
+        }
       });
     }
 
