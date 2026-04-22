@@ -138,20 +138,29 @@ export const truckStopMap: ArenaMap = {
     { x: -42, y: -22, w: 1.2, h: 1.2, type: 'rubble' },
     { x: -48, y: -28, w: 0.8, h: 0.8, type: 'blood_splat' },
   ],
-  // Spawn points re-laid-out 2026-04-21 — the original geometry put player
-  // and AI on a direct y-axis collision lane with no obstacle between, so
-  // the bench harness reported 100% mutual destruction across 100 matches.
-  // New layout: player team in opposite south corners (SE + SW), AI stays
-  // north. The main building (-6, 16.5, 36×18) now sits between the two
-  // sides, forcing squads to manoeuvre around instead of charging head-on.
+  // Spawn points re-laid-out 2026-04-22 — third pass. Diagonal N/S spawns
+  // (second pass) gave 97% mutual at 1v1 because the direct line between
+  // opposite corners passed south of the main building, leaving no
+  // obstacle to force manoeuvring. Now spawns are on the east and west
+  // sides at staggered y-offsets: the main building (x=-24..+12,
+  // y=7.5..25.5) sits directly across any west→east line, and the
+  // y-stagger prevents exact head-on alignment.
+  //
+  //   map.width = 120 / map.height = 75 → arena spans x=±60, y=±37.5
+  //   main building at (x=-24..+12, y=7.5..25.5) blocks W↔E at y>7.5
+  //   power building at (x=12..27.5, y=-18..0)  → avoid y<0 at x>+27
+  //   security building at (x=-36..-24, y=-12..+6) → avoid y<+6 at x<-24
   spawnPoints: [
-    { x:  30, y:  30, facing: 315, team: 'player' },  // SE corner, facing NW toward arena
-    { x: -30, y:  30, facing:  45, team: 'player' },  // SW corner, facing NE toward arena
-    { x:  40, y:  25, facing: 315, team: 'player' },
-    { x: -40, y:  25, facing:  45, team: 'player' },
-    { x: -21, y: -18, facing: 135, team: 'ai' },
-    { x:   0, y: -21, facing: 180, team: 'ai' },
-    { x:  45, y:   7.5, facing: 270, team: 'ai' },
-    { x:  45, y:  18, facing: 270, team: 'ai' },
+    // Team A — west side, facing east
+    { x: -45, y:  12, facing:  90, team: 'player' },  // W, south-of-centre
+    { x: -45, y: -12, facing:  90, team: 'player' },  // W, north-of-centre
+    { x: -50, y:  18, facing:  90, team: 'player' },
+    { x: -50, y: -18, facing:  90, team: 'player' },
+    // Team B — east side, facing west. Squad #1 y-offset from team_a #1
+    // to avoid head-on (team_a #1 at y=+12, team_b #1 at y=-12).
+    { x:  45, y: -12, facing: 270, team: 'ai' },      // E, north-of-centre
+    { x:  45, y:  12, facing: 270, team: 'ai' },      // E, south-of-centre
+    { x:  50, y: -18, facing: 270, team: 'ai' },
+    { x:  50, y:  18, facing: 270, team: 'ai' },
   ],
 };

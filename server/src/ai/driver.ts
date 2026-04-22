@@ -448,13 +448,19 @@ export function computeAiInput(
   ds.tacticTicks++;
   // Standoff-break: if the AI hasn't pulled the trigger in 100+ ticks (10s),
   // it's stuck in a snipe/orbit loop that can't resolve. Force-switch to
-  // aggressive to close the distance. Prevents the rare infinite-standoff
-  // timeout the bench harness caught (1/100 on open, 2/10 post-spawn-fix
-  // on truck-stop).
-  const standoffBreak = ds.ticksSinceLastFire > 100 && d > (w?.shortRange ?? 6);
-  if (forcedChange || ds.tacticTicks >= 15 || standoffBreak) {
+  // aggressive to close the distance.
+  // Long-match override: if the match has been running for 300+ ticks (30s)
+  // and the AI is still at meaningful range, force aggressive regardless of
+  // fire history. Bench caught AIs that occasionally miss a shot
+  // (resetting ticksSinceLastFire) but never land a kill — standoffs that
+  // drag to the tick cap. This forces resolution. `closeRange` isn't in
+  // scope here yet; use the weapon's short range as the threshold proxy.
+  const closeRangeApprox = w?.shortRange ?? 6;
+  const standoffBreak = ds.ticksSinceLastFire > 100 && d > closeRangeApprox;
+  const longMatchPush = ctx.tick > 300 && d > closeRangeApprox;
+  if (forcedChange || ds.tacticTicks >= 15 || standoffBreak || longMatchPush) {
     let newTactic = chooseTactic(self, target, d, skill, ds.tactic, ds.tacticTicks, w, ctx.aggression ?? 3);
-    if (standoffBreak) newTactic = 'aggressive';
+    if (standoffBreak || longMatchPush) newTactic = 'aggressive';
     // Phase 4 — squad role biases tactic choice when the base picker is
     // indifferent. Flankers prefer flanking; supports prefer orbit (loiter
     // near rally); anchors prefer aggressive.
