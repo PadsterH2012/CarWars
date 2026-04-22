@@ -275,6 +275,7 @@ export class GarageScene extends Phaser.Scene {
       { id: 'truck-stop',  label: 'Truck Stop' },
       { id: 'town-square', label: 'Town Square' },
       { id: 'open',        label: 'Open Arena' },
+      { id: 'double-drum', label: 'Double Drum' },
     ];
     let selectedMap = localStorage.getItem('cw_selected_map') ?? 'truck-stop';
     if (!MAPS.find(m => m.id === selectedMap)) selectedMap = 'truck-stop';

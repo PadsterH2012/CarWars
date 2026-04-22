@@ -172,24 +172,32 @@ async function runMatch(matchIndex: number): Promise<MatchReport> {
   const map = getMap(MAP_ID);
   const spawns = spawnPoints(map, SQUAD_SIZE);
 
-  // Alternate loadouts from the stock pool per squad member to get variety
-  const squadA: VehicleState[] = spawns.a.map((p, i) => {
-    const loadout = STOCK_POOL[(matchIndex + i) % STOCK_POOL.length];
-    return buildVehicle(`a${i}`, 'team_a', loadout, p.x, p.y, p.facing);
-  });
-  const squadB: VehicleState[] = spawns.b.map((p, i) => {
-    const loadout = STOCK_POOL[(matchIndex + i + 1) % STOCK_POOL.length];
-    return buildVehicle(`b${i}`, 'team_b', loadout, p.x, p.y, p.facing);
-  });
+  // Loadouts rotate through the stock pool across matches for variety, but
+  // BOTH teams get the SAME loadout per slot — previously team_b had a +1
+  // offset which meant team_b often had Speedball (the strongest loadout)
+  // when team_a didn't, introducing a ~35% per-match bias that washed at
+  // 4v4 but skewed 1v1 and 2v2 results. Identical loadouts let the map's
+  // actual balance show through.
+  const loadoutFor = (i: number) => STOCK_POOL[(matchIndex + i) % STOCK_POOL.length];
+  const squadA: VehicleState[] = spawns.a.map((p, i) =>
+    buildVehicle(`a${i}`, 'team_a', loadoutFor(i), p.x, p.y, p.facing),
+  );
+  const squadB: VehicleState[] = spawns.b.map((p, i) =>
+    buildVehicle(`b${i}`, 'team_b', loadoutFor(i), p.x, p.y, p.facing),
+  );
 
-  // Contrasting driver personalities so the aggression/loyalty code sees load
+  // Driver personalities mirror across teams: slot i in team A gets the
+  // same stats as slot i in team B. Otherwise the aggression/loyalty
+  // distribution could itself bias outcomes (Team A "hot-head + sniper"
+  // vs Team B "uniform moderates" was a measurable ~5% skew at 3v3).
   const driverByVehicle = new Map<string, DriverSpec>();
-  for (const [i, v] of squadA.entries()) {
-    driverByVehicle.set(v.id, { skill: 3, aggression: i === 0 ? 6 : 2, loyalty: i === 0 ? 3 : 7 });
-  }
-  for (const [i, v] of squadB.entries()) {
-    driverByVehicle.set(v.id, { skill: 3, aggression: i === 0 ? 5 : 3, loyalty: i === 0 ? 4 : 6 });
-  }
+  const personalityFor = (i: number): DriverSpec => ({
+    skill: 3,
+    aggression: i === 0 ? 6 : i === 1 ? 2 : i === 2 ? 4 : 3,
+    loyalty:    i === 0 ? 3 : i === 1 ? 7 : i === 2 ? 5 : 6,
+  });
+  for (const [i, v] of squadA.entries()) driverByVehicle.set(v.id, personalityFor(i));
+  for (const [i, v] of squadB.entries()) driverByVehicle.set(v.id, personalityFor(i));
 
   const engine = createTurnEngine(
     { id: 'bench', type: 'arena', tick: 0, vehicles: [], hazardObjects: [] },
