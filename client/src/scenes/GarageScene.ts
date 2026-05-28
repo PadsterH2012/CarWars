@@ -33,7 +33,7 @@ export class GarageScene extends Phaser.Scene {
 
   init(data: { token: string; justFoughtVehicleId?: string }): void {
     this.token = data.token;
-    this.justFoughtVehicleId = data.justFoughtVehicleId ?? ;
+    this.justFoughtVehicleId = data.justFoughtVehicleId ?? '';
   }
 
   async create(): Promise<void> {
