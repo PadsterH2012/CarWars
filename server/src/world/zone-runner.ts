@@ -9,8 +9,13 @@ import { SquadContext, runAuction, updateClaims, type FireEvent } from '../ai/sq
 
 const TICK_MS = 100;
 
+export interface TravelContext {
+  fromNodeId: string;
+  toNodeId: string;
+}
+
 export interface ZoneRunnerOptions {
-  onEnd?: (winnerId: string | null, salvage: number, ctx: { reason: string; rival: RivalInfo | null }) => Promise<{ prize: number; jobPayout: number; salvage: number; wages: number; maintenance: number; rivalQuote?: string }>;
+  onEnd?: (winnerId: string | null, salvage: number, ctx: { reason: string; rival: RivalInfo | null; travelContext?: TravelContext }) => Promise<{ prize: number; jobPayout: number; salvage: number; wages: number; maintenance: number; rivalQuote?: string }>;
 }
 
 export class ZoneRunner {
@@ -49,7 +54,8 @@ export class ZoneRunner {
 
   hasEnded(): boolean { return this.ended; }
   readonly zoneId: string;
-  private onEnd?: (winnerId: string | null, salvage: number, ctx: { reason: string; rival: RivalInfo | null }) => Promise<{ prize: number; jobPayout: number; salvage: number; wages: number; maintenance: number; rivalQuote?: string }>;
+  public travelContext: TravelContext | undefined;
+  private onEnd?: (winnerId: string | null, salvage: number, ctx: { reason: string; rival: RivalInfo | null; travelContext?: TravelContext }) => Promise<{ prize: number; jobPayout: number; salvage: number; wages: number; maintenance: number; rivalQuote?: string }>;
 
   constructor(
     zoneId: string,
@@ -59,6 +65,7 @@ export class ZoneRunner {
   ) {
     this.zoneId = zoneId;
     this.onEnd = options.onEnd;
+    this.travelContext = options.travelContext;
     this.map = getMap(mapId);
     this.pathfinder = new Pathfinder(this.map);
     this.engine = createTurnEngine(
@@ -235,13 +242,14 @@ export class ZoneRunner {
     const reason = winnerPlayerId === null ? 'all_destroyed'
                   : winnerPlayerId === 'ai-team' ? 'ai_victory'
                   : 'last_standing';
-    const outcome = (await this.onEnd?.(humanWinnerId, grossSalvage, { reason, rival: this.rival }))
+    const outcome = (await this.onEnd?.(humanWinnerId, grossSalvage, { reason, rival: this.rival, travelContext: this.travelContext }))
       ?? { prize: 0, jobPayout: 0, salvage: 0, wages: 0, maintenance: 0 };
 
     const endMsg: ServerMessage = {
       type: 'zone_end',
       winnerId: humanWinnerId,
       reason,
+      travelContext: this.travelContext,
       prize: outcome.prize,
       jobPayout: outcome.jobPayout,
       salvage: outcome.salvage,

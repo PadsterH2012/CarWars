@@ -12,6 +12,8 @@ import { gangsRouter } from './api/gangs';
 import { weaponsRouter } from './api/weapons';
 import { catalogRouter } from './api/catalog';
 import { stockRouter } from './api/stock';
+import { mapsRouter } from './api/maps';
+import { worldRouter } from './api/world';
 import { requireAuth, AuthRequest } from './api/middleware';
 import { getDb } from './db/client';
 
@@ -34,6 +36,8 @@ export function createApp() {
   app.use('/api/weapons', weaponsRouter);
   app.use('/api/catalog', catalogRouter);
   app.use('/api/stock', stockRouter);
+  app.use('/api/maps', mapsRouter);
+  app.use('/api/world', worldRouter);
 
   app.get('/api/me', requireAuth, async (req: AuthRequest, res) => {
     const db = getDb();

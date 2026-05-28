@@ -589,3 +589,10 @@ CREATE INDEX IF NOT EXISTS idx_drivers_gang_id ON drivers(gang_id);
 CREATE INDEX IF NOT EXISTS idx_drivers_assigned_vehicle_id ON drivers(assigned_vehicle_id);
 CREATE INDEX IF NOT EXISTS idx_event_history_player_id ON event_history(player_id);
 CREATE INDEX IF NOT EXISTS idx_gangs_owner_player_id ON gangs(owner_player_id);
+
+-- World map: current node for each gang (added 2026-05-27 — Phase 4 travel)
+DO $$ BEGIN
+  IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='gangs' AND column_name='current_world_node_id') THEN
+    ALTER TABLE gangs ADD COLUMN current_world_node_id TEXT NOT NULL DEFAULT 'midville-city'::text;
+  END IF;
+END $$;

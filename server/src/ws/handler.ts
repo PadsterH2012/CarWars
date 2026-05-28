@@ -43,7 +43,9 @@ async function loadVehicleFromDb(vehicleId: string, token: string): Promise<{ ve
   const loadout = row.loadout as VehicleLoadout;
   const damageState = row.damage_state as DamageState;
   const stats = deriveStats(row.id, row.name, loadout);
-  stats.damageState = damageState;
+  // Sanitize onFire from previous match
+      const sanitizedDmg = { ...damageState, onFire: false };
+      stats.damageState = sanitizedDmg;
 
   return {
     vehicle: {
@@ -122,7 +124,9 @@ async function loadVehicleForPlayer(vehicleId: string, playerId: string): Promis
   const loadout = row.loadout as VehicleLoadout;
   const damageState = row.damage_state as DamageState;
   const stats = deriveStats(row.id, row.name, loadout);
-  stats.damageState = damageState;
+  // Sanitize onFire from previous match
+      const sanitizedDmg = { ...damageState, onFire: false };
+      stats.damageState = sanitizedDmg;
   return {
     id: row.id, playerId, driverId: '',
     position: { x: 0, y: 0 }, facing: 0, speed: 0,
@@ -209,9 +213,12 @@ async function removeClientFromZone(ws: WebSocket): Promise<void> {
       const wreck = zoneState.wreckage?.find(w => w.sourceVehicleId === id);
       try {
         if (alive) {
+          // Extinguish fire when leaving the zone — persistent onFire in the DB
+          // causes players to start their next match already burning.
+          const exitDmg = { ...alive.stats.damageState, onFire: false };
           await db.query(
             'UPDATE vehicles SET damage_state = $1, loadout = $2 WHERE id = $3 AND player_id = $4',
-            [JSON.stringify(alive.stats.damageState), JSON.stringify(alive.stats.loadout), id, playerId]
+            [JSON.stringify(exitDmg), JSON.stringify(alive.stats.loadout), id, playerId]
           );
         } else if (wreck) {
           const destroyedState: DamageState = {
@@ -300,6 +307,7 @@ async function handleMessage(ws: WebSocket, raw: string): Promise<void> {
       const zoneType = isArena ? 'arena' : isHighway ? 'highway' : 'town';
 
       const runner = new ZoneRunner(msg.zoneId, zoneType, isArena ? {
+        travelContext: msg.travelContext,
         onEnd: async (winnerId: string | null, salvage: number, ctx) => {
           const db = getDb();
 
@@ -307,6 +315,15 @@ async function handleMessage(ws: WebSocket, raw: string): Promise<void> {
           // (paid regardless of outcome) and for rival rep updates.
           const myWs = [...clientPlayers.entries()].find(([w]) => clientZones.get(w) === msg.zoneId)?.[0];
           const myPid = myWs ? clientPlayers.get(myWs) : undefined;
+
+          // Travel encounter: update location if player won
+          if (ctx.travelContext && winnerId && myPid === winnerId) {
+            await db.query(
+              `UPDATE gangs SET current_world_node_id = $1 WHERE owner_player_id = $2`,
+              [ctx.travelContext.toNodeId, winnerId]
+            );
+          }
+
           const mySquad = myWs ? (clientSquads.get(myWs) ?? []) : [];
 
           // Compute per-match expenses: wages = $50 × driver skill per squad member

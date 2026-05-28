@@ -1,0 +1,260 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Workshop — Design B: Blueprint</title>
+<style>
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; padding: 0;
+    background: #0a0a1a;
+    color: #ccc;
+    font-family: 'Courier New', monospace;
+    min-height: 100vh;
+    display: grid;
+    grid-template-rows: auto 1fr auto;
+  }
+  header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 14px 28px;
+    border-bottom: 1px solid #2a2a44;
+  }
+  h1 { margin: 0; color: #ff4444; font-size: 20px; letter-spacing: 2px; }
+  .meta { font-size: 12px; color: #666; }
+
+  main {
+    display: grid;
+    grid-template-columns: 1fr 380px;
+    min-height: 0;
+  }
+
+  .blueprint {
+    position: relative;
+    background:
+      linear-gradient(rgba(255,255,255,0.03) 1px, transparent 1px) 0 0 / 40px 40px,
+      linear-gradient(90deg, rgba(255,255,255,0.03) 1px, transparent 1px) 0 0 / 40px 40px,
+      radial-gradient(circle at center, #0d1a2a 0%, #070e1a 80%);
+    overflow: hidden;
+  }
+  .blueprint::after {
+    content: 'ROAD KILLER — mid_sized — rev 3';
+    position: absolute;
+    bottom: 16px; left: 16px;
+    font-size: 11px; color: #336688;
+    letter-spacing: 2px;
+  }
+  .blueprint-svg {
+    position: absolute;
+    top: 50%; left: 50%;
+    transform: translate(-50%, -50%);
+  }
+  .hotspot {
+    cursor: pointer;
+    transition: filter 0.15s;
+  }
+  .hotspot:hover { filter: drop-shadow(0 0 12px #ffcc00); }
+  .hotspot.selected { filter: drop-shadow(0 0 14px #00ff88); }
+
+  .armor-label {
+    font-size: 20px;
+    font-family: 'Courier New', monospace;
+    font-weight: bold;
+    fill: white;
+    text-anchor: middle;
+    pointer-events: none;
+  }
+  .face-label {
+    font-size: 11px;
+    fill: #ffcc88;
+    text-anchor: middle;
+    pointer-events: none;
+    letter-spacing: 3px;
+  }
+
+  .sidebar {
+    background: #0f0f22;
+    border-left: 1px solid #2a2a44;
+    padding: 20px;
+    overflow-y: auto;
+  }
+  .breadcrumb {
+    font-size: 10px;
+    color: #556;
+    letter-spacing: 2px;
+    margin-bottom: 8px;
+    text-transform: uppercase;
+  }
+  .context-title {
+    color: #00ff88;
+    font-size: 18px;
+    letter-spacing: 2px;
+    border-bottom: 1px solid #2a2a44;
+    padding-bottom: 12px;
+    margin-bottom: 16px;
+  }
+  .edit-row { display: flex; align-items: center; gap: 12px; margin-bottom: 20px; }
+  .edit-row .value {
+    flex: 1; text-align: center;
+    font-size: 32px; color: #00ff88; padding: 8px;
+    background: #001a11; border: 1px solid #00ff88;
+  }
+  .edit-btn {
+    width: 44px; height: 44px; font-size: 20px;
+    background: #111122; border: 1px solid #444; color: #ccc;
+    cursor: pointer; font-family: inherit;
+  }
+  .edit-btn:hover { background: #222244; }
+
+  .stats-table { width: 100%; border-collapse: collapse; font-size: 12px; }
+  .stats-table td { padding: 6px 0; border-bottom: 1px dotted #2a2a44; }
+  .stats-table td:last-child { text-align: right; color: #00ff88; }
+
+  .component-list { margin-top: 16px; }
+  .component-row {
+    display: flex; justify-content: space-between; align-items: center;
+    padding: 10px 8px; margin-bottom: 4px;
+    background: #11112a; border-left: 3px solid #2a2a44;
+    cursor: pointer; font-size: 12px;
+  }
+  .component-row:hover { border-left-color: #ffcc00; background: #1a1a33; }
+  .component-row .name { color: #aac; }
+  .component-row .val { color: #888; font-size: 10px; }
+  .component-row .chev { color: #556; }
+
+  footer {
+    display: flex;
+    justify-content: space-between;
+    padding: 14px 28px;
+    border-top: 1px solid #2a2a44;
+  }
+  .btn {
+    padding: 10px 28px; font-family: inherit; font-size: 13px; letter-spacing: 1px;
+    border: 1px solid; background: transparent; cursor: pointer;
+  }
+  .btn-cancel { color: #888; border-color: #444; }
+  .btn-save { color: #00ff88; border-color: #00ff88; background: #003322; }
+  .btn-save:hover { background: #00ff88; color: #0a0a1a; }
+</style>
+</head>
+<body>
+
+<header>
+  <h1>⚙ WORKSHOP — Road Killer</h1>
+  <div class="meta">Click any part to edit · Treasury $12,450 · Skill 4</div>
+</header>
+
+<main>
+  <div class="blueprint">
+    <svg class="blueprint-svg" width="620" height="620" viewBox="0 0 620 620">
+      <!-- FRONT armor panel -->
+      <g class="hotspot selected" onclick="">
+        <rect x="210" y="110" width="200" height="40" fill="#00aa44" opacity="0.7" stroke="#fff" stroke-width="2"/>
+        <text x="310" y="135" class="armor-label">22</text>
+      </g>
+      <text x="310" y="100" class="face-label">FRONT</text>
+
+      <!-- BACK armor panel -->
+      <g class="hotspot">
+        <rect x="210" y="470" width="200" height="40" fill="#aaaa00" opacity="0.5" stroke="#888" stroke-width="1"/>
+        <text x="310" y="495" class="armor-label">12</text>
+      </g>
+      <text x="310" y="540" class="face-label">BACK</text>
+
+      <!-- LEFT armor panel -->
+      <g class="hotspot">
+        <rect x="150" y="200" width="40" height="220" fill="#aa4400" opacity="0.5" stroke="#888" stroke-width="1"/>
+        <text x="170" y="315" class="armor-label">5</text>
+      </g>
+      <text x="120" y="315" class="face-label">L</text>
+
+      <!-- RIGHT armor panel -->
+      <g class="hotspot">
+        <rect x="430" y="200" width="40" height="220" fill="#aaaa00" opacity="0.5" stroke="#888" stroke-width="1"/>
+        <text x="450" y="315" class="armor-label">15</text>
+      </g>
+      <text x="500" y="315" class="face-label">R</text>
+
+      <!-- Car body -->
+      <rect x="200" y="170" width="220" height="280" fill="#00cd68" stroke="#004422" stroke-width="2" rx="20"/>
+      <rect x="210" y="200" width="200" height="90" fill="#00994e" opacity="0.3" rx="8"/>
+      <rect x="210" y="340" width="200" height="90" fill="#00994e" opacity="0.3" rx="8"/>
+
+      <!-- Wheels -->
+      <rect x="188" y="200" width="26" height="56" fill="#000" stroke="#fff" stroke-width="1" rx="4"/>
+      <rect x="406" y="200" width="26" height="56" fill="#000" stroke="#fff" stroke-width="1" rx="4"/>
+      <rect x="188" y="374" width="26" height="56" fill="#000" stroke="#fff" stroke-width="1" rx="4"/>
+      <rect x="406" y="374" width="26" height="56" fill="#000" stroke="#fff" stroke-width="1" rx="4"/>
+
+      <!-- Front weapon mount -->
+      <g class="hotspot" style="cursor:pointer">
+        <circle cx="310" cy="155" r="14" fill="#332200" stroke="#ffcc00" stroke-width="2"/>
+        <text x="310" y="160" text-anchor="middle" fill="#ffcc00" font-size="11" font-weight="bold">MG</text>
+      </g>
+
+      <!-- Left weapon mount -->
+      <g class="hotspot" style="cursor:pointer">
+        <circle cx="175" cy="240" r="12" fill="#220033" stroke="#aa88ff" stroke-width="2"/>
+        <text x="175" y="244" text-anchor="middle" fill="#aa88ff" font-size="10" font-weight="bold">LR</text>
+      </g>
+
+      <!-- Right weapon slot (empty) -->
+      <g class="hotspot" style="cursor:pointer">
+        <circle cx="445" cy="240" r="12" fill="#1a1a2e" stroke="#555" stroke-width="2" stroke-dasharray="3 2"/>
+        <text x="445" y="244" text-anchor="middle" fill="#666" font-size="14">+</text>
+      </g>
+
+      <!-- Engine callout -->
+      <g class="hotspot">
+        <rect x="230" y="200" width="160" height="40" fill="transparent" stroke="#888" stroke-width="1" stroke-dasharray="4 3"/>
+        <text x="310" y="225" text-anchor="middle" fill="#aac" font-size="10" letter-spacing="3">ELEC MEDIUM</text>
+      </g>
+
+      <!-- Direction chevron -->
+      <polygon points="310,60 320,80 300,80" fill="#ffff88"/>
+      <text x="310" y="52" text-anchor="middle" fill="#ffff88" font-size="10" letter-spacing="2">FORWARD</text>
+    </svg>
+  </div>
+
+  <aside class="sidebar">
+    <div class="breadcrumb">ARMOR › FRONT PANEL</div>
+    <div class="context-title">FRONT ARMOR</div>
+
+    <div class="edit-row">
+      <button class="edit-btn">−</button>
+      <div class="value">22</div>
+      <button class="edit-btn">+</button>
+    </div>
+    <div style="font-size:11px;color:#888;margin-bottom:24px;">
+      Armor type: <span style="color:#00ff88">Ablative</span><br>
+      Cost per point: <span style="color:#ffcc00">$30</span><br>
+      Weight per point: <span style="color:#ffcc00">4 lbs</span>
+    </div>
+
+    <div class="context-title" style="font-size:13px;">VEHICLE STATS</div>
+    <table class="stats-table">
+      <tr><td>Max Speed</td><td>85 mph</td></tr>
+      <tr><td>Accel</td><td>10 mph/turn</td></tr>
+      <tr><td>Handling</td><td>3</td></tr>
+      <tr><td>Weight</td><td>2,480 lbs</td></tr>
+      <tr><td>Armor total</td><td>54 pts</td></tr>
+    </table>
+
+    <div class="context-title" style="font-size:13px;margin-top:24px;">COST</div>
+    <table class="stats-table">
+      <tr><td>Build cost</td><td style="color:#ccc">$8,240</td></tr>
+      <tr><td>Delta</td><td style="color:#ffcc00">+$60</td></tr>
+      <tr><td>Treasury after</td><td>$12,390</td></tr>
+    </table>
+  </aside>
+</main>
+
+<footer>
+  <button class="btn btn-cancel">[ CANCEL ]</button>
+  <div style="align-self:center;color:#666;font-size:11px;">Click a part on the blueprint · Esc: cancel · F: fullscreen</div>
+  <button class="btn btn-save">[ SAVE CHANGES ]</button>
+</footer>
+
+</body>
+</html>

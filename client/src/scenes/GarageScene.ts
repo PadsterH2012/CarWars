@@ -307,6 +307,26 @@ export class GarageScene extends Phaser.Scene {
     });
     refreshMapButtons();
 
+    // Read-only viewer for the currently selected map — renders using the same
+    // pipeline as the live arena, handy for reviewing geometry before matches.
+    const viewBtn = this.add.text(leftX + 80 + MAPS.length * 130 + 10, arenaY - 2, '[VIEW]', {
+      color: '#aaccff', fontSize: '13px', fontFamily: 'monospace',
+      backgroundColor: '#112233', padding: { x: 6, y: 4 },
+    }).setInteractive();
+    viewBtn.on('pointerdown', () => {
+      this.scene.start('MapViewerScene', { token: this.token, mapId: selectedMap });
+    });
+    add(viewBtn);
+
+    const editBtn = this.add.text(leftX + 80 + MAPS.length * 130 + 80, arenaY - 2, '[EDIT]', {
+      color: '#ffcc88', fontSize: '13px', fontFamily: 'monospace',
+      backgroundColor: '#332211', padding: { x: 6, y: 4 },
+    }).setInteractive();
+    editBtn.on('pointerdown', () => {
+      this.scene.start('MapEditorScene', { token: this.token });
+    });
+    add(editBtn);
+
     const navY = height - 100;
     const buildBtn = this.add.text(leftX, navY, '[BUILD NEW CAR]', {
       color: '#aaaaff', fontSize: '16px', fontFamily: 'monospace',
@@ -328,6 +348,14 @@ export class GarageScene extends Phaser.Scene {
     }).setInteractive();
     jobsBtn.on('pointerdown', () => this.scene.start('JobBoardScene', { token: this.token }));
     add(jobsBtn);
+
+    const worldBtn = this.add.text(leftX + 620, navY, '[WORLD MAP]', {
+      color: '#aaffaa', fontSize: '16px', fontFamily: 'monospace',
+      backgroundColor: '#113311', padding: { x: 8, y: 4 }
+    }).setInteractive();
+    worldBtn.on('pointerdown', () => this.scene.start('WorldMapScene', { token: this.token }));
+    add(worldBtn);
+
 
     add(this.add.text(rightX - 140, height - 30, '[F] Fullscreen', {
       color: '#555', fontSize: '11px', fontFamily: 'monospace'

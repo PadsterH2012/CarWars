@@ -61,6 +61,8 @@ set -e
 mkdir -p /opt/carwars/app/dist /opt/carwars/app/public
 cp /opt/carwars/src/server/dist/main.js /opt/carwars/app/dist/
 rsync -a --delete /opt/carwars/src/client/dist/ /opt/carwars/app/public/
+# Static design mockups served at /examples/ alongside the game
+rsync -a --delete /opt/carwars/src/docs/mockups/ /opt/carwars/app/public/examples/
 # node_modules from workspace root (npm hoists deps there)
 rsync -a --delete /opt/carwars/src/node_modules/ /opt/carwars/app/node_modules/
 cp /opt/carwars/src/server/package.json /opt/carwars/app/

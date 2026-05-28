@@ -7,6 +7,9 @@ import { VehicleDesignerScene } from './scenes/VehicleDesignerScene';
 import { ArenaScene } from './scenes/ArenaScene';
 import { TacticalOverlay } from './scenes/TacticalOverlay';
 import { ShopScene } from './scenes/ShopScene';
+import { MapViewerScene } from './scenes/MapViewerScene';
+import { MapEditorScene } from './scenes/MapEditorScene';
+import { WorldMapScene } from './scenes/WorldMapScene';
 
 const config: Phaser.Types.Core.GameConfig = {
   type: Phaser.AUTO,
@@ -20,7 +23,7 @@ const config: Phaser.Types.Core.GameConfig = {
     height: window.innerHeight,
     min: { width: 1024, height: 600 },
   },
-  scene: [LoginScene, GarageScene, TownScene, JobBoardScene, VehicleDesignerScene, ArenaScene, TacticalOverlay, ShopScene]
+  scene: [LoginScene, GarageScene, TownScene, JobBoardScene, VehicleDesignerScene, ArenaScene, TacticalOverlay, ShopScene, MapViewerScene, MapEditorScene, WorldMapScene]
 };
 
 (window as any).game = new Phaser.Game(config);
