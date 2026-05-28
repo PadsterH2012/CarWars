@@ -23,10 +23,12 @@ function wreckDP(mass: 'light' | 'medium' | 'heavy'): number {
 
 function determineCause(v: VehicleState): WreckageCause {
   const ds = v.stats.damageState;
-  if (ds.onFire) return 'fire';
   if (ds.internalDamage?.includes('explosion_kill')) return 'explosion';
   if (ds.internalDamage?.includes('collision_kill')) return 'collision';
+  if (ds.onFire) return 'fire';
   if (ds.internalDamage?.includes('energy_kill')) return 'energy';
+  if (ds.internalDamage?.includes('fire_kill')) return 'fire';
+  if (ds.internalDamage?.includes('kinetic_kill')) return 'kinetic';
   return 'kinetic';
 }
 
@@ -145,7 +147,12 @@ export function createTurnEngine(initialState: ZoneState, map?: ArenaMap, opts: 
               const destroyed = ds.destroyed || (newArmor[facing] ?? 0) === 0;
               console.log(`[t${state.tick}] WALL  ${moved.id} hit ${facing} at spd=${moved.speed} -${baseDamage}pts`);
               // Write to accumulator so wall + combat damage in same tick are both applied
-              damageUpdates.set(moved.id, { ...ds, armor: newArmor, destroyed });
+              damageUpdates.set(moved.id, {
+              ...ds,
+              armor: newArmor,
+              destroyed,
+              internalDamage: ds.destroyed ? [...(ds.internalDamage ?? [])] : [...(ds.internalDamage ?? []), 'collision_kill'],
+            });
             }
             // Always correct position and zero speed
             moved = { ...moved, position: { x: hit.x, y: hit.y }, speed: 0 };
@@ -199,7 +206,12 @@ export function createTurnEngine(initialState: ZoneState, map?: ArenaMap, opts: 
               const remaining = (armor[loc] ?? 0) - dmg;
               armor[loc] = Math.max(0, remaining);
               const destroyed = ds.destroyed || armor[loc] === 0;
-              damageUpdates.set(veh.id, { ...ds, armor, destroyed });
+              damageUpdates.set(veh.id, {
+              ...ds,
+              armor,
+              destroyed,
+              internalDamage: ds.destroyed ? [...(ds.internalDamage ?? [])] : [...(ds.internalDamage ?? []), 'collision_kill'],
+            });
               lastDamager.set(veh.id, other.id);
             }
           }
@@ -466,7 +478,10 @@ export function createTurnEngine(initialState: ZoneState, map?: ArenaMap, opts: 
             onFire: (currentDamage.onFire ?? false) || damageResult.effects.includes('on_fire'),
             tiresBlown: damageResult.effects.includes('tire_blown') && !currentDamage.tiresBlown.includes(tireIndex)
               ? [...currentDamage.tiresBlown, tireIndex]
-              : currentDamage.tiresBlown
+              : currentDamage.tiresBlown,
+            internalDamage: damageResult.effects.includes('explosion') && willDestroy
+              ? [...(currentDamage.internalDamage ?? []), 'explosion_kill']
+              : currentDamage.internalDamage ?? []
           });
           lastDamager.set(target.id, attacker.id);
         });
@@ -512,6 +527,9 @@ export function createTurnEngine(initialState: ZoneState, map?: ArenaMap, opts: 
               ...currentDamage,
               armor: newArmor,
               destroyed: currentDamage.destroyed || (newArmor.underbody ?? 0) <= 0,
+              internalDamage: (currentDamage.destroyed || (newArmor.underbody ?? 0) <= 0)
+                ? [...(currentDamage.internalDamage ?? []), 'explosion_kill']
+                : currentDamage.internalDamage ?? [],
             });
             triggeredMines.add(hazard.id);
           }
@@ -556,7 +574,11 @@ export function createTurnEngine(initialState: ZoneState, map?: ArenaMap, opts: 
         const burnable = locations.filter(loc => (currentDamage.armor[loc] ?? 0) > 0);
         if (burnable.length === 0) {
           // All armor gone — fire destroys internals
-          damageUpdates.set(vehicle.id, { ...currentDamage, destroyed: true });
+          damageUpdates.set(vehicle.id, {
+              ...currentDamage,
+              destroyed: true,
+              internalDamage: [...(currentDamage.internalDamage ?? []), 'fire_kill'],
+            });
           return;
         }
 
