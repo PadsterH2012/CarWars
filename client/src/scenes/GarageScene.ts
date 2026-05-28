@@ -20,7 +20,9 @@ export class GarageScene extends Phaser.Scene {
   private gang: Gang | null = null;
   private money = 0;
   private division = 0;
-  private lastResult: { prize: number; jobPayout: number } | null = null;
+  private selectedVehicleId = '';
+  private selectedDriverId = '';
+  private lastResult: { prize: number; jobPayout: number; salvage?: number; wages?: number; maintenance?: number; won?: boolean; rivalQuote?: string } | null = null;
 
   // Container for everything the main garage screen paints — we wipe + repaint on resize
   private mainLayer!: Phaser.GameObjects.Container;
@@ -31,28 +33,32 @@ export class GarageScene extends Phaser.Scene {
     preloadVehicleSprites(this);
   }
 
-  init(data: { token: string; lastResult?: { prize: number; jobPayout: number } | null }): void {
+  init(data: { token: string }): void {
     this.token = data.token;
-    this.lastResult = data.lastResult ?? null;
+    this.lastResult = null; // Loaded from server in create()
   }
 
   async create(): Promise<void> {
     const host = window.location.hostname;
 
-    const [meRes, vRes, dRes, gRes, reqRes] = await Promise.all([
+    const [meRes, vRes, dRes, gRes, reqRes, lrRes] = await Promise.all([
       fetch(`http://${host}:3001/api/me`, { headers: { Authorization: `Bearer ${this.token}` } }),
       fetch(`http://${host}:3001/api/vehicles`, { headers: { Authorization: `Bearer ${this.token}` } }),
       fetch(`http://${host}:3001/api/drivers`, { headers: { Authorization: `Bearer ${this.token}` } }),
       fetch(`http://${host}:3001/api/gangs/mine`, { headers: { Authorization: `Bearer ${this.token}` } }),
       fetch(`http://${host}:3001/api/drivers/requests`, { headers: { Authorization: `Bearer ${this.token}` } }),
+      fetch(`http://${host}:3001/api/me/last-result`, { headers: { Authorization: `Bearer ${this.token}` } }),
     ]);
     const me = await meRes.json();
     this.money = me.money ?? 0;
     this.division = me.division ?? 0;
+    this.selectedVehicleId = me.selected_vehicle_id ?? '';
+    this.selectedDriverId = me.selected_driver_id ?? '';
     this.vehicles = await vRes.json();
     this.drivers = await dRes.json();
     if (gRes.ok) this.gang = await gRes.json();
     if (reqRes.ok) this.driverRequests = await reqRes.json();
+    if (lrRes.ok) this.lastResult = await lrRes.json();
 
     this.mainLayer = this.add.container(0, 0);
 
@@ -128,6 +134,15 @@ export class GarageScene extends Phaser.Scene {
         const isDestroyed = ds.destroyed;
         const nameColor = isDestroyed ? '#ff4444' : '#00ff88';
 
+        // Highlight the persisted "currently selected" vehicle row so the
+        // player sees their last choice survived the page reload.
+        if (v.id === this.selectedVehicleId) {
+          const hl = this.add.rectangle(leftX - 6, y - 6, vehicleListMaxX - leftX + 12, 76, 0x224422, 0.35)
+            .setOrigin(0, 0)
+            .setStrokeStyle(1, 0x44aa44, 0.7);
+          add(hl);
+        }
+
         // Thumbnail — body PNG tinted with the gang's primary colour so each
         // vehicle reads at a glance as a cycle / pickup / bus etc.
         const spriteKey = `body_${bodySpriteKey(v.loadout?.bodyType)}`;
@@ -197,7 +212,10 @@ export class GarageScene extends Phaser.Scene {
         });
         if (!isDestroyed) {
           fightBtn.setInteractive();
-          fightBtn.on('pointerdown', () => this.showSquadModal(v.id));
+          fightBtn.on('pointerdown', () => {
+            this.persistSelection(v.id, driver?.id ?? null);
+            this.showSquadModal(v.id);
+          });
         }
         add(fightBtn);
 
@@ -360,6 +378,27 @@ export class GarageScene extends Phaser.Scene {
     add(this.add.text(rightX - 140, height - 30, '[F] Fullscreen', {
       color: '#555', fontSize: '11px', fontFamily: 'monospace'
     }).setOrigin(0, 0.5));
+  }
+
+  // Fire-and-forget persistence of the player's current vehicle (and the
+  // driver assigned to it, if any). Updates local state immediately so the
+  // highlight survives the next renderGarage(), even if the request races.
+  private persistSelection(vehicleId: string, driverId: string | null): void {
+    const host = window.location.hostname;
+    this.selectedVehicleId = vehicleId;
+    fetch(`http://${host}:3001/api/me/select-vehicle`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${this.token}` },
+      body: JSON.stringify({ vehicleId }),
+    }).catch(() => { /* selection persistence is best-effort */ });
+    if (driverId) {
+      this.selectedDriverId = driverId;
+      fetch(`http://${host}:3001/api/me/select-driver`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${this.token}` },
+        body: JSON.stringify({ driverId }),
+      }).catch(() => { /* selection persistence is best-effort */ });
+    }
   }
 
   private async repairVehicle(vehicleId: string): Promise<void> {

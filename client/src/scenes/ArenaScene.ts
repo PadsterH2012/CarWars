@@ -803,10 +803,7 @@ export class ArenaScene extends Phaser.Scene {
     garageBtn.on('pointerdown', () => {
       this.connection.send({ type: 'leave_zone' });
       this.connection.close();
-      this.scene.start('GarageScene', {
-        token: this.token,
-        lastResult: isWinner ? { prize, jobPayout } : null,
-      });
+      this.scene.start('GarageScene', { token: this.token });
     });
   }
 

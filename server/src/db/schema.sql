@@ -5,8 +5,17 @@ CREATE TABLE IF NOT EXISTS players (
   money INTEGER NOT NULL DEFAULT 25000,
   division INTEGER NOT NULL DEFAULT 5,
   reputation INTEGER NOT NULL DEFAULT 0,
+  wins INTEGER NOT NULL DEFAULT 0,
+  losses INTEGER NOT NULL DEFAULT 0,
+  kills INTEGER NOT NULL DEFAULT 0,
+  arena_count INTEGER NOT NULL DEFAULT 0,
   created_at TIMESTAMPTZ DEFAULT NOW()
 );
+
+-- selected_vehicle_id / selected_driver_id reference rows in tables that are
+-- declared below this point — column-level FK constraints can't reference a
+-- table that doesn't exist yet, so they're added by ALTER TABLE further down
+-- the file. The ALTER TABLE block at the bottom also covers existing DBs.
 
 CREATE TABLE IF NOT EXISTS vehicles (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -596,3 +605,18 @@ DO $$ BEGIN
     ALTER TABLE gangs ADD COLUMN current_world_node_id TEXT NOT NULL DEFAULT 'midville-city'::text;
   END IF;
 END $$;
+
+-- Player profile expansion: persisted selections + stat counters
+-- (added 2026-05-28 — Player Persistence Plan, task 2)
+DO $$ BEGIN
+  ALTER TABLE players ADD COLUMN IF NOT EXISTS selected_vehicle_id UUID REFERENCES vehicles(id) ON DELETE SET NULL;
+EXCEPTION WHEN duplicate_object THEN NULL;
+END $$;
+DO $$ BEGIN
+  ALTER TABLE players ADD COLUMN IF NOT EXISTS selected_driver_id UUID REFERENCES drivers(id) ON DELETE SET NULL;
+EXCEPTION WHEN duplicate_object THEN NULL;
+END $$;
+ALTER TABLE players ADD COLUMN IF NOT EXISTS wins INTEGER NOT NULL DEFAULT 0;
+ALTER TABLE players ADD COLUMN IF NOT EXISTS losses INTEGER NOT NULL DEFAULT 0;
+ALTER TABLE players ADD COLUMN IF NOT EXISTS kills INTEGER NOT NULL DEFAULT 0;
+ALTER TABLE players ADD COLUMN IF NOT EXISTS arena_count INTEGER NOT NULL DEFAULT 0;

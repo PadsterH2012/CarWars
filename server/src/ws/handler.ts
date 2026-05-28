@@ -170,6 +170,20 @@ const clientPlayers = new Map<WebSocket, string>(); // ws → playerId (DB UUID)
 const clientJobs = new Map<WebSocket, string>(); // ws → jobId
 const clientSquads = new Map<WebSocket, string[]>(); // ws → list of all squad vehicle ids (primary + mates)
 
+// playerId → most recent arena outcome. Written by the onEnd callback after a
+// successful prize transaction; consumed once by GET /api/me/last-result so
+// the garage can show a summary even after a page reload.
+export interface LastArenaResult {
+  prize: number;
+  jobPayout: number;
+  salvage: number;
+  wages: number;
+  maintenance: number;
+  won: boolean;
+  rivalQuote?: string;
+}
+export const lastResults = new Map<string, LastArenaResult>();
+
 export function resetState(): void {
   zones.forEach(runner => runner.shutdown());
   zones.clear();
@@ -178,6 +192,7 @@ export function resetState(): void {
   clientPlayers.clear();
   clientJobs.clear();
   clientSquads.clear();
+  lastResults.clear();
 }
 
 function send(ws: WebSocket, msg: ServerMessage): void {
@@ -208,9 +223,11 @@ async function removeClientFromZone(ws: WebSocket): Promise<void> {
     const zoneState = runner.getEngine().getState();
     const db = getDb();
     const uuidRe = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+    let hadWreck = false;
     for (const id of squadIds) {
       const alive = zoneState.vehicles.find(v => v.id === id);
       const wreck = zoneState.wreckage?.find(w => w.sourceVehicleId === id);
+      if (wreck) hadWreck = true;
       try {
         if (alive) {
           // Extinguish fire when leaving the zone — persistent onFire in the DB
@@ -258,6 +275,21 @@ async function removeClientFromZone(ws: WebSocket): Promise<void> {
         }
       } catch (e) {
         console.error(`Failed to persist squad vehicle ${id}:`, e);
+      }
+    }
+
+    // If any vehicle in the squad was wrecked, mark this match as a loss for
+    // the player. arena_count tracks total matches (won OR lost) — winners
+    // bump it inside the prize transaction (see onEnd), so this only runs on
+    // the loser path.
+    if (hadWreck) {
+      try {
+        await db.query(
+          'UPDATE players SET losses = losses + 1, arena_count = arena_count + 1 WHERE id = $1',
+          [playerId]
+        );
+      } catch (e) {
+        console.error(`Failed to record loss for ${playerId}:`, e);
       }
     }
   }
@@ -401,37 +433,47 @@ async function handleMessage(ws: WebSocket, raw: string): Promise<void> {
             let completedZoneId = '';
 
             let winnerVehicleId: string | null = null;
+            let pendingJobId: string | null = null;
             for (const [ws, pid] of clientPlayers) {
               if (pid !== winnerId) continue;
               winnerVehicleId = clientVehicles.get(ws) ?? null;
               const jobId = clientJobs.get(ws);
-              if (!jobId) {
-                break;
-              }
-
-              // Verify job belongs to winner and is still open
-              const jobRes = await db.query(
-                `UPDATE jobs SET completed = TRUE
-                 WHERE id = $1 AND taken_by = $2 AND completed = FALSE
-                 RETURNING payout, job_type, zone_id`,
-                [jobId, winnerId]
-              );
-              if (jobRes.rows.length) {
-                jobPayout = jobRes.rows[0].payout;
+              if (jobId) {
+                pendingJobId = jobId;
                 completedJobWs = ws;
-                completedJobType = jobRes.rows[0].job_type;
-                completedJobId = jobId;
-                completedZoneId = jobRes.rows[0].zone_id;
               }
               break;
             }
 
-            const total = prize + jobPayout + salvage;
             const client = await db.connect();
             try {
               await client.query('BEGIN');
+
+              // Mark the job complete inside the transaction so a ROLLBACK
+              // also un-completes the job — previously the UPDATE ran outside
+              // and a failed payout could leave the player owing themselves money.
+              if (pendingJobId) {
+                const jobRes = await client.query(
+                  `UPDATE jobs SET completed = TRUE
+                   WHERE id = $1 AND taken_by = $2 AND completed = FALSE
+                   RETURNING payout, job_type, zone_id`,
+                  [pendingJobId, winnerId]
+                );
+                if (jobRes.rows.length) {
+                  jobPayout = jobRes.rows[0].payout;
+                  completedJobType = jobRes.rows[0].job_type;
+                  completedJobId = pendingJobId;
+                  completedZoneId = jobRes.rows[0].zone_id;
+                } else {
+                  completedJobWs = null;
+                }
+              }
+
+              const total = prize + jobPayout + salvage;
               await client.query(
-                'UPDATE players SET money = money + $1, reputation = reputation + $2 WHERE id = $3',
+                `UPDATE players SET money = money + $1, reputation = reputation + $2,
+                                    wins = wins + 1, arena_count = arena_count + 1
+                 WHERE id = $3`,
                 [total, Math.floor(prize / 500), winnerId]
               );
               await client.query(
@@ -523,6 +565,10 @@ async function handleMessage(ws: WebSocket, raw: string): Promise<void> {
               console.error('Failed to log ledger entries:', e);
             }
 
+            lastResults.set(winnerId, {
+              prize, jobPayout, salvage, wages, maintenance,
+              won: true, rivalQuote,
+            });
             return { prize, jobPayout, salvage, wages, maintenance, rivalQuote };
           } catch (e) {
             console.error('Failed to credit arena prize:', e);
