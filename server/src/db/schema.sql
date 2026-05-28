@@ -75,6 +75,18 @@ DO $$ BEGIN
   END IF;
 END $$;
 
+DO $$ BEGIN
+  IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='drivers' AND column_name='wounded') THEN
+    ALTER TABLE drivers ADD COLUMN wounded BOOLEAN NOT NULL DEFAULT FALSE;
+  END IF;
+END $$;
+DO $$ BEGIN
+  IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='drivers' AND column_name='wounded_until') THEN
+    ALTER TABLE drivers ADD COLUMN wounded_until TIMESTAMPTZ;
+  END IF;
+END $$;
+
+
 -- Gangs (added 2026-04-19 — Gang Management Phase 3)
 CREATE TABLE IF NOT EXISTS gangs (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),

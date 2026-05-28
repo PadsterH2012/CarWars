@@ -61,7 +61,7 @@ driversRouter.post('/', async (req: AuthRequest, res) => {
 driversRouter.get('/', async (req: AuthRequest, res) => {
   const db = getDb();
   const result = await db.query(
-    `SELECT id, name, skill, aggression, loyalty, xp, assigned_vehicle_id, alive
+    `SELECT id, name, skill, aggression, loyalty, xp, assigned_vehicle_id, alive, wounded, wounded_until
      FROM drivers WHERE player_id = $1`,
     [req.playerId]
   );

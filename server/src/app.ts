@@ -79,6 +79,75 @@ export function createApp() {
     return res.json(result);
   });
 
+  app.post('/api/me/claim-starter', requireAuth, async (req: AuthRequest, res) => {
+    const db = getDb();
+    const client = await db.connect();
+    try {
+      await client.query('BEGIN');
+
+      // Check if player already has vehicles
+      const existing = await client.query(
+        'SELECT COUNT(*)::int AS cnt FROM vehicles WHERE player_id = $1',
+        [req.playerId]
+      );
+      if (existing.rows[0].cnt > 0) {
+        await client.query('ROLLBACK');
+        return res.status(400).json({ error: 'Already have vehicles' });
+      }
+
+      // Build a starter loadout — Sprocket-like, front MG, basic armor
+      const loadout = {
+        chassisId: 'compact', engineId: 'medium', suspensionId: 'standard',
+        tires: [{ id: 't0', blown: false }, { id: 't1', blown: false },
+                { id: 't2', blown: false }, { id: 't3', blown: false }],
+        mounts: [{ id: 'm0', arc: 'front', weaponId: 'mg', ammo: 200 }],
+        armor: { front: 6, back: 4, left: 4, right: 4, top: 2, underbody: 2 },
+        totalCost: 12000,
+      };
+      const damageState = {
+        armor: { front: 6, back: 4, left: 4, right: 4, top: 2, underbody: 2 },
+        engineDamaged: false, driverWounded: false, tiresBlown: [], destroyed: false,
+      };
+
+      // Create the vehicle
+      const vRes = await client.query(
+        `INSERT INTO vehicles (player_id, name, loadout, original_loadout, damage_state, value)
+         VALUES ($1, $2, $3, $3, $4, $5) RETURNING id`,
+        [req.playerId, 'Sprocket', JSON.stringify(loadout), JSON.stringify(damageState), 12000]
+      );
+      const vehicleId = vRes.rows[0].id;
+
+      // Assign gang
+      const gRes = await client.query('SELECT id FROM gangs WHERE owner_player_id = $1', [req.playerId]);
+      if (gRes.rows.length) {
+        await client.query('UPDATE vehicles SET gang_id = $1 WHERE id = $2', [gRes.rows[0].id, vehicleId]);
+      }
+
+      // Create a default driver assigned to the vehicle
+      const dRes = await client.query(
+        `INSERT INTO drivers (player_id, name, skill, aggression, loyalty, assigned_vehicle_id, gang_id)
+         SELECT $1, $2, 3, 3, 5, $3, id FROM gangs WHERE owner_player_id = $1 RETURNING id`,
+        [req.playerId, 'Rookie', vehicleId]
+      );
+      const driverId = dRes.rows.length ? dRes.rows[0].id : null;
+
+      // Auto-select the starter vehicle + driver
+      await client.query(
+        'UPDATE players SET selected_vehicle_id = $1, selected_driver_id = $2 WHERE id = $3',
+        [vehicleId, driverId, req.playerId]
+      );
+
+      await client.query('COMMIT');
+      return res.status(201).json({ vehicleId, driverId });
+    } catch (e) {
+      await client.query('ROLLBACK');
+      console.error('Failed to claim starter:', e);
+      return res.status(500).json({ error: 'Server error' });
+    } finally {
+      client.release();
+    }
+  });
+
   app.post('/api/me/select-driver', requireAuth, async (req: AuthRequest, res) => {
     const { driverId } = req.body ?? {};
     if (typeof driverId !== 'string' || !driverId) {

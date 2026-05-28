@@ -268,6 +268,19 @@ async function removeClientFromZone(ws: WebSocket): Promise<void> {
                 [playerId, JSON.stringify({ driverId: dead.id, driverName: dead.name, vehicleId: id, cause: wreck.causedBy })]
               );
             }
+          } else {
+            // Driver survived — check if they took enough damage to be wounded.
+            // driverWounded on the vehicle's damageState means the final hit
+            // had excess > 3, which wounds the driver for a real-time recovery.
+            const driverWounded = wreck.remainingDP <= 0 && alive?.stats.damageState.driverWounded;
+            if (driverWounded) {
+              await db.query(
+                `UPDATE drivers SET wounded = TRUE, wounded_until = NOW() + INTERVAL '10 minutes'
+                 WHERE assigned_vehicle_id = $1 AND alive = TRUE`,
+                [id]
+              );
+              console.log(`[driver-wound] driver of vehicle ${id} wounded — 10min recovery`);
+            }
           }
         }
         if (uuidRe.test(id)) {
@@ -756,6 +769,31 @@ async function handleMessage(ws: WebSocket, raw: string): Promise<void> {
       }
     }
     clientSquads.set(ws, allSquadIds);
+
+    // Check if this vehicle's driver is wounded — mark on join for client to display
+    let driverWounded = false;
+    {
+      const uuidRe = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+      if (uuidRe.test(msg.vehicleId)) {
+        const wRes = await getDb().query(
+          `SELECT wounded, wounded_until FROM drivers WHERE assigned_vehicle_id = $1 AND alive = TRUE LIMIT 1`,
+          [msg.vehicleId]
+        );
+        if (wRes.rows.length && wRes.rows[0].wounded && wRes.rows[0].wounded_until) {
+          const expired = new Date(wRes.rows[0].wounded_until).getTime() < Date.now();
+          if (!expired) {
+            driverWounded = true;
+            console.log(`[arena] ${msg.vehicleId} joined with wounded driver`);
+          } else {
+            // Wound timer expired — auto-clear
+            await getDb().query(
+              `UPDATE drivers SET wounded = FALSE, wounded_until = NULL WHERE assigned_vehicle_id = $1`,
+              [msg.vehicleId]
+            );
+          }
+        }
+      }
+    }
 
     // Load driver skill for this vehicle (only for real DB vehicles with valid UUID)
     let joinedSkill = 3;

@@ -117,9 +117,28 @@ export class GarageScene extends Phaser.Scene {
     const vehicleListMaxX = crewX - 40;
 
     if (this.vehicles.length === 0) {
-      add(this.add.text(cx, height * 0.45, 'No vehicles. Build one!', {
+      add(this.add.text(cx, height * 0.38, 'No vehicles yet!', {
         color: '#888888', fontSize: '18px', fontFamily: 'monospace'
       }).setOrigin(0.5));
+      const claimBtn = this.add.text(cx, height * 0.48, '[ CLAIM STARTER CAR ]', {
+        color: '#00ff88', fontSize: '18px', fontFamily: 'monospace',
+        backgroundColor: '#003322', padding: { x: 16, y: 8 }
+      }).setOrigin(0.5).setInteractive();
+      claimBtn.on('pointerdown', async () => {
+        const host = window.location.hostname;
+        const res = await fetch(`http://${host}:3001/api/me/claim-starter`, {
+          method: 'POST',
+          headers: { Authorization: `Bearer ${this.token}` },
+        });
+        if (res.ok) {
+          this.scene.restart({ token: this.token });
+        } else {
+          const err = await res.json();
+          console.error('Claim failed:', err.error);
+          claimBtn.setAlpha(0.3);
+        }
+      });
+      add(claimBtn);
     } else {
       const driverByVid = new Map<string, Driver>();
       for (const d of this.drivers) {
@@ -268,9 +287,17 @@ export class GarageScene extends Phaser.Scene {
       livingDrivers.forEach((d, i) => {
         const y = firstRowY + i * ROW_H;
         const assignedVehicle = this.vehicles.find(v => v.id === d.assigned_vehicle_id);
-        // Row 1: driver name (left) + assignment button (right-aligned)
-        add(this.add.text(crewX, y, d.name, {
-          color: '#ffffff', fontSize: '13px', fontFamily: 'monospace'
+        // Row 1: driver name (left) with wound indicator + assignment button (right-aligned)
+        let woundStr = '';
+        if (d.wounded && d.wounded_until) {
+          const remaining = new Date(d.wounded_until).getTime() - Date.now();
+          if (remaining > 0) {
+            const mins = Math.ceil(remaining / 60000);
+            woundStr = ' [WOUNDED ' + mins + 'm]';
+          }
+        }
+        add(this.add.text(crewX, y, d.name + woundStr, {
+          color: woundStr ? '#ff4444' : '#ffffff', fontSize: '13px', fontFamily: 'monospace'
         }));
         const assignStr = assignedVehicle ? `▶ ${assignedVehicle.name}` : 'unassigned';
         const assignBtn = this.add.text(crewX + CREW_PANEL_W, y, assignStr, {
