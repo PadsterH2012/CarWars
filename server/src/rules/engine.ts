@@ -1,4 +1,4 @@
-import type { ZoneState, VehicleState, HazardObject, DamageState, ArmorLocation, ArenaMap, CombatEvent, WreckageObject, WreckageCause, WreckageState } from '@carwars/shared';
+import type { ZoneState, VehicleState, VehicleStats, HazardObject, DamageState, ArmorLocation, ArenaMap, CombatEvent, WreckageObject, WreckageCause, WreckageState } from '@carwars/shared';
 import { computeMovement, classifyManeuver, resolveControlTable, computeSpinAngle, resolveCollision } from './movement';
 import { resolveToHit, resolveDamage, isWeaponInArc, hasLineOfSight, roll2d6, rollDamage, getAttackLocation } from './combat';
 import { accessoryToHitBonus, accessorySkillBonus } from './accessoryEffects';
@@ -66,10 +66,14 @@ interface VehicleInput {
 
 export interface TickSnapshot {
   tick: number;
-  vehicles: { id: string; x: number; y: number; facing: number; speed: number; playerId: string }[];
+  vehicles: {
+    id: string; x: number; y: number; facing: number; speed: number; playerId: string;
+    stats: VehicleStats;
+  }[];
   combatEvents: CombatEvent[];
   wreckage: { id: string; x: number; y: number; facing: number; state: WreckageState; sourceVehicleId: string }[];
   winnerId: string | null;
+  roster?: VehicleState[];
 }
 
 export interface TurnEngine {
@@ -747,7 +751,11 @@ export function createTurnEngine(initialState: ZoneState, map?: ArenaMap, opts: 
         vehicles: state.vehicles.map(v => ({
           id: v.id, x: v.position.x, y: v.position.y,
           facing: v.facing, speed: v.speed, playerId: v.playerId,
+          stats: v.stats,
         })),
+        // Full vehicle roster — populated only on the first tick so the replay
+        // viewer can call buildVehicleSprite() with the initial loadout data.
+        roster: snapshots.length === 0 ? state.vehicles.map(v => ({ ...v })) : undefined,
         combatEvents: combatEvents,
         wreckage: (state.wreckage ?? []).map(w => ({
           id: w.id, x: w.position.x, y: w.position.y,

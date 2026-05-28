@@ -1,9 +1,13 @@
 import Phaser from 'phaser';
 import { bindFullscreenToggle, onLayout } from '../ui/responsive';
 import { renderMapFloor, renderMapWalls, renderMapDecorations, type MapRenderOptions } from '../rendering/mapRenderer';
-import type { ArenaMap, CombatEvent, WreckageState } from '@carwars/shared';
+import { buildVehicleSprite, updateVehicleSprite } from '../game/VehicleSprite';
+import type { ArenaMap, CombatEvent, WreckageState, VehicleState } from '@carwars/shared';
 
 const PIXELS_PER_INCH = 32;
+const WORLD_CENTER_X = 640;
+const WORLD_CENTER_Y = 360;
+const RENDER_OPTS: MapRenderOptions = { centerX: WORLD_CENTER_X, centerY: WORLD_CENTER_Y, pixelsPerInch: PIXELS_PER_INCH };
 
 export interface ReplaySceneData {
   token: string;
@@ -13,10 +17,14 @@ export interface ReplaySceneData {
 
 interface TickSnapshot {
   tick: number;
-  vehicles: { id: string; x: number; y: number; facing: number; speed: number; playerId: string }[];
+  vehicles: {
+    id: string; x: number; y: number; facing: number; speed: number; playerId: string;
+    stats?: import('@carwars/shared').VehicleStats;
+  }[];
   combatEvents: CombatEvent[];
   wreckage: { id: string; x: number; y: number; facing: number; state: WreckageState; sourceVehicleId: string }[];
   winnerId: string | null;
+  roster?: import('@carwars/shared').VehicleState[];
 }
 
 interface ReplayPayload {
@@ -30,8 +38,6 @@ interface ReplayPayload {
   recorded_at: string;
 }
 
-// Speed-step → ticks-per-frame. The replay's native rate is one snapshot per
-// engine tick (100 ms). At 1× we advance one tick per 100 ms of wall time.
 const SPEED_STEPS = [0.5, 1, 2, 4] as const;
 type Speed = typeof SPEED_STEPS[number];
 
@@ -41,6 +47,12 @@ function mapIdForZone(zoneId: string): string {
   return 'open';
 }
 
+function paletteBackground(palette: any): number {
+  if (!palette || !palette.ambient) return 0x0a0a14;
+  const c = palette.ambient;
+  return parseInt(c.replace('#', ''), 16);
+}
+
 export class ReplayScene extends Phaser.Scene {
   private payload!: ReplaySceneData;
   private replay: ReplayPayload | null = null;
@@ -48,12 +60,16 @@ export class ReplayScene extends Phaser.Scene {
   private currentTick = 0;
   private speed: Speed = 1;
   private paused = false;
-  private accumulator = 0; // wall-time ms since last tick advance
+  private accumulator = 0;
 
-  private centerX = 0;
-  private centerY = 0;
+  // Vehicle sprite containers, indexed by vehicle id
+  private vehicleSprites = new Map<string, Phaser.GameObjects.Container>();
+  // Vehicle roster from tick 0 — used for sprite building
+  private roster: VehicleState[] = [];
+
   private worldLayer!: Phaser.GameObjects.Container;
   private effectsLayer!: Phaser.GameObjects.Container;
+  private vehicleLayer!: Phaser.GameObjects.Container;
   private hudText!: Phaser.GameObjects.Text;
   private timelineBar!: Phaser.GameObjects.Rectangle;
   private timelineFill!: Phaser.GameObjects.Rectangle;
@@ -67,6 +83,8 @@ export class ReplayScene extends Phaser.Scene {
     this.speed = 1;
     this.paused = false;
     this.accumulator = 0;
+    this.vehicleSprites.clear();
+    this.roster = [];
   }
 
   async create(): Promise<void> {
@@ -84,41 +102,83 @@ export class ReplayScene extends Phaser.Scene {
     }
     this.replay = await replayRes.json() as ReplayPayload;
 
+    // Build roster from tick 0 if available, or from the roster field
+    const firstSnap = this.replay.data[0];
+    if (firstSnap?.roster && firstSnap.roster.length > 0) {
+      this.roster = firstSnap.roster;
+    } else if (firstSnap?.vehicles?.[0]?.stats) {
+      // Fallback: build synthetic roster from tick 0 vehicle data
+      this.roster = firstSnap.vehicles.map(v => ({
+        id: v.id,
+        position: { x: v.x, y: v.y },
+        facing: v.facing,
+        speed: v.speed,
+        playerId: v.playerId,
+        stats: v.stats!,
+      })) as unknown as VehicleState[];
+    }
+
     const mapId = mapIdForZone(this.replay.zone_id);
     const mapRes = await fetch(`http://${host}:3001/api/maps/${mapId}`, { headers });
     if (mapRes.ok) this.map = await mapRes.json() as ArenaMap;
 
     this.worldLayer = this.add.container(0, 0);
+    this.vehicleLayer = this.add.container(0, 0);
     this.effectsLayer = this.add.container(0, 0);
+
+    // Camera setup — match ArenaScene
+    this.cameras.main.setZoom(0.6);
+    this.cameras.main.setLerp(0.08, 0.08);
+    this.cameras.main.scrollX = 0;
+    this.cameras.main.scrollY = 0;
 
     bindFullscreenToggle(this);
     onLayout(this, () => this.layout());
     this.layout();
     this.bindInput();
+
+    // Build vehicle sprites from roster
+    this.buildVehicleSprites();
+
+    // Render first frame
     this.renderFrame();
+  }
+
+  private buildVehicleSprites(): void {
+    this.vehicleLayer.removeAll(true);
+    this.vehicleSprites.clear();
+    for (const roV of this.roster) {
+      const teamColor = this.replayColor(roV.playerId);
+      const sprite = buildVehicleSprite(this, roV, {
+        isPlayer: roV.playerId === 'player',
+        teamColor,
+      });
+      this.vehicleSprites.set(roV.id, sprite);
+      this.vehicleLayer.add(sprite);
+    }
   }
 
   private layout(): void {
     const { width, height } = this.scale;
-    this.centerX = width / 2;
-    this.centerY = height / 2 - 20;
 
     this.worldLayer.removeAll(true);
     if (this.map) this.renderMap(this.map);
 
-    // HUD
+    // Re-size camera to match viewport
+    this.cameras.main.setViewport(0, 0, width, height);
+
+    // HUD — top-left, fixed to camera (scrollFactor 0)
     if (this.hudText) this.hudText.destroy();
     this.hudText = this.add.text(20, 20, '', {
       fontSize: '14px', color: '#cccccc', fontFamily: 'monospace',
       backgroundColor: '#000000aa', padding: { x: 8, y: 4 },
-    });
+    }).setScrollFactor(0);
 
-    // Status (top-right)
     if (this.statusText) this.statusText.destroy();
     this.statusText = this.add.text(width - 20, 20, '', {
       fontSize: '14px', color: '#ffcc00', fontFamily: 'monospace',
       backgroundColor: '#000000aa', padding: { x: 8, y: 4 },
-    }).setOrigin(1, 0);
+    }).setOrigin(1, 0).setScrollFactor(0);
 
     // Timeline bar at bottom
     if (this.timelineBar) this.timelineBar.destroy();
@@ -126,29 +186,37 @@ export class ReplayScene extends Phaser.Scene {
     const barW = Math.min(width - 80, 800);
     const barX = width / 2;
     const barY = height - 40;
-    this.timelineBar = this.add.rectangle(barX, barY, barW, 6, 0x333344);
-    this.timelineFill = this.add.rectangle(barX - barW / 2, barY, 1, 6, 0xffcc00).setOrigin(0, 0.5);
+    this.timelineBar = this.add.rectangle(barX, barY, barW, 6, 0x333344).setScrollFactor(0);
+    this.timelineFill = this.add.rectangle(barX - barW / 2, barY, 1, 6, 0xffcc00).setOrigin(0, 0.5).setScrollFactor(0);
 
     this.renderFrame();
   }
 
   private renderMap(map: ArenaMap): void {
-    const opts: MapRenderOptions = { centerX: this.centerX, centerY: this.centerY, pixelsPerInch: PIXELS_PER_INCH };
-    const bg = this.add.rectangle(this.centerX, this.centerY, map.width * PIXELS_PER_INCH, map.height * PIXELS_PER_INCH, 0x0a0a14);
+    const mapW = map.width * PIXELS_PER_INCH;
+    const mapH = map.height * PIXELS_PER_INCH;
+    const mapX = WORLD_CENTER_X - mapW / 2;
+    const mapY = WORLD_CENTER_Y - mapH / 2;
+
+    const bgColor = map.palette ? paletteBackground(map.palette) : 0x0a0a14;
+    const bg = this.add.rectangle(
+      WORLD_CENTER_X, WORLD_CENTER_Y, mapW, mapH, bgColor
+    );
     this.worldLayer.add(bg);
+
     if (map.floor && map.floor.length > 0) {
       const gfx = this.add.graphics();
-      renderMapFloor(gfx, map.floor, opts);
+      renderMapFloor(gfx, map.floor, RENDER_OPTS);
       this.worldLayer.add(gfx);
     }
     if (map.decorations && map.decorations.length > 0) {
       const gfx = this.add.graphics();
-      renderMapDecorations(gfx, map.decorations, opts);
+      renderMapDecorations(gfx, map.decorations, RENDER_OPTS);
       this.worldLayer.add(gfx);
     }
     if (map.walls && map.walls.length > 0) {
       const gfx = this.add.graphics();
-      renderMapWalls(gfx, map.walls, opts);
+      renderMapWalls(gfx, map.walls, RENDER_OPTS);
       this.worldLayer.add(gfx);
     }
   }
@@ -174,7 +242,6 @@ export class ReplayScene extends Phaser.Scene {
       this.updateHud();
       return;
     }
-    // Native rate: 1 tick per 100 ms wall time. Speed multiplier scales that.
     this.accumulator += delta * this.speed;
     while (this.accumulator >= 100 && this.currentTick < this.replay.data.length - 1) {
       this.accumulator -= 100;
@@ -191,42 +258,51 @@ export class ReplayScene extends Phaser.Scene {
     const snap = this.replay.data[this.currentTick];
     if (!snap) return;
 
-    // Clear effects layer (vehicles, wreckage, combat tracers) and re-draw.
-    // For a replay viewer, redrawing every frame keeps the implementation
-    // tiny — no need for sprite reuse since maps are small.
-    this.effectsLayer.removeAll(true);
+    // Update vehicle sprite positions + stats
+    for (const vd of snap.vehicles) {
+      const sprite = this.vehicleSprites.get(vd.id);
+      if (!sprite) continue;
 
-    // Wreckage — small dark rectangles
+      // Position
+      sprite.x = WORLD_CENTER_X + vd.x * PIXELS_PER_INCH;
+      sprite.y = WORLD_CENTER_Y + vd.y * PIXELS_PER_INCH;
+      sprite.setRotation(Phaser.Math.DegToRad(vd.facing));
+
+      // Update damage state + ammo from per-tick stats
+      const roV = this.roster.find(r => r.id === vd.id);
+      if (roV && vd.stats) {
+        // Clone roster vehicle and overlay current tick's stats
+        const updatedV: VehicleState = {
+          ...roV,
+          stats: vd.stats,
+          facing: vd.facing,
+          speed: vd.speed,
+        };
+        const teamColor = this.replayColor(roV.playerId);
+        updateVehicleSprite(sprite, updatedV, {
+          isPlayer: vd.playerId === 'player',
+          teamColor,
+        });
+      }
+    }
+
+    // Wreckage — clear and re-draw (few objects, simple)
+    this.effectsLayer.removeAll(true);
     for (const w of snap.wreckage) {
-      const wx = this.centerX + w.x * PIXELS_PER_INCH;
-      const wy = this.centerY + w.y * PIXELS_PER_INCH;
+      const wx = WORLD_CENTER_X + w.x * PIXELS_PER_INCH;
+      const wy = WORLD_CENTER_Y + w.y * PIXELS_PER_INCH;
       const color = w.state === 'burning' ? 0x882200 : w.state === 'smouldering' ? 0x442211 : 0x222222;
       const rect = this.add.rectangle(wx, wy, 22, 38, color).setStrokeStyle(1, 0x111111)
         .setRotation(Phaser.Math.DegToRad(w.facing));
       this.effectsLayer.add(rect);
     }
 
-    // Vehicles — colored rectangles by playerId; player teams in green, AI in red, others auto-coloured
-    for (const v of snap.vehicles) {
-      const wx = this.centerX + v.x * PIXELS_PER_INCH;
-      const wy = this.centerY + v.y * PIXELS_PER_INCH;
-      const color = this.colorForPlayer(v.playerId);
-      const body = this.add.rectangle(wx, wy, 22, 38, color)
-        .setStrokeStyle(1, 0x111111)
-        .setRotation(Phaser.Math.DegToRad(v.facing));
-      this.effectsLayer.add(body);
-      // Facing indicator — small wedge at front
-      const arrow = this.add.triangle(wx, wy, 0, -22, -5, -14, 5, -14, 0xffffff)
-        .setRotation(Phaser.Math.DegToRad(v.facing));
-      this.effectsLayer.add(arrow);
-    }
-
-    // Combat events for this tick — faded tracers + hit flashes
+    // Combat events for this tick
     for (const ev of snap.combatEvents) {
-      const fx = this.centerX + ev.fromX * PIXELS_PER_INCH;
-      const fy = this.centerY + ev.fromY * PIXELS_PER_INCH;
-      const tx = this.centerX + ev.toX   * PIXELS_PER_INCH;
-      const ty = this.centerY + ev.toY   * PIXELS_PER_INCH;
+      const fx = WORLD_CENTER_X + ev.fromX * PIXELS_PER_INCH;
+      const fy = WORLD_CENTER_Y + ev.fromY * PIXELS_PER_INCH;
+      const tx = WORLD_CENTER_X + ev.toX   * PIXELS_PER_INCH;
+      const ty = WORLD_CENTER_Y + ev.toY   * PIXELS_PER_INCH;
       const line = this.add.line(0, 0, fx, fy, tx, ty,
         ev.hit ? 0xff4400 : 0xffff00, ev.hit ? 0.9 : 0.5).setOrigin(0, 0);
       this.effectsLayer.add(line);
@@ -263,11 +339,10 @@ export class ReplayScene extends Phaser.Scene {
     this.timelineFill.setSize(Math.max(1, this.timelineBar.width * ratio), 6);
   }
 
-  // Stable colour mapping per playerId. Special-cases the AI team to red and
-  // player to green; everything else falls back to a deterministic hash colour.
-  private colorForPlayer(playerId: string): number {
-    if (playerId === 'ai-team') return 0xff4444;
+  // Stable colour by playerId — mirrors arena scene team colors
+  private replayColor(playerId: string): number {
     if (playerId === 'player')  return 0x00ff88;
+    if (playerId === 'ai-team') return 0xff4444;
     let h = 0;
     for (let i = 0; i < playerId.length; i++) h = (h * 31 + playerId.charCodeAt(i)) >>> 0;
     return 0x444466 + ((h & 0xffffff) >>> 0) % 0xbbbbbb;
