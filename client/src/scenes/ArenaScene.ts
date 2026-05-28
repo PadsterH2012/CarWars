@@ -362,7 +362,7 @@ export class ArenaScene extends Phaser.Scene {
         this.rival = msg.rival;
         this.showRivalBanner(msg.rival);
       } else if (msg.type === 'zone_end') {
-        this.showZoneEnd(msg.winnerId, msg.reason, msg.prize ?? 0, msg.jobPayout ?? 0, msg.salvage ?? 0, msg.wages ?? 0, msg.maintenance ?? 0, msg.rival, msg.rivalQuote);
+        this.showZoneEnd(msg.winnerId, msg.reason, msg.prize ?? 0, msg.jobPayout ?? 0, msg.salvage ?? 0, msg.wages ?? 0, msg.maintenance ?? 0, msg.rival, msg.rivalQuote, msg.replayId);
       }
     });
   }
@@ -628,7 +628,7 @@ export class ArenaScene extends Phaser.Scene {
     renderMapWalls(this.mapGraphics, walls, RENDER_OPTS);
   }
 
-  private showZoneEnd(winnerId: string | null, reason: string, prize: number, jobPayout: number, salvage: number, wages: number, maintenance: number, rival?: import('@carwars/shared').RivalInfo, rivalQuote?: string): void {
+  private showZoneEnd(winnerId: string | null, reason: string, prize: number, jobPayout: number, salvage: number, wages: number, maintenance: number, rival?: import('@carwars/shared').RivalInfo, rivalQuote?: string, replayId?: string): void {
     if (this.zoneEnded) return;
     this.zoneEnded = true;
 
@@ -647,163 +647,29 @@ export class ArenaScene extends Phaser.Scene {
       localStorage.removeItem('cw_active_job_payout');
     }
 
-    // Sidebar-style panel on the right so the battlefield remains visible
-    const { width: screenW, height: screenH } = this.scale;
-    const PW = 360;      // panel width
-    const PX = screenW - PW / 2 - 20;     // panel centre x — anchored to the right edge
-    const PH = Math.min(700, screenH - 20);
-    this.add.rectangle(PX, screenH / 2, PW, PH, 0x000000, 0.92).setScrollFactor(0).setDepth(10)
-      .setStrokeStyle(2, 0x4466aa);
+    // Classify outcome for the result screen
+    const result: 'win' | 'loss' | 'draw' | 'destroyed' =
+      isWinner ? 'win'
+      : wasDestroyed ? 'destroyed'
+      : reason === 'all_destroyed' ? 'draw'
+      : 'loss';
 
-    // Title: VICTORY if we survived as the winner; DEFEATED if our car was destroyed
-    // or the AI was the last team standing; DRAW if everyone died simultaneously.
-    let titleText: string;
-    let titleColor: string;
-    if (isWinner) {
-      titleText = 'VICTORY';
-      titleColor = '#00ff88';
-    } else if (wasDestroyed || reason === 'ai_victory') {
-      titleText = 'DEFEATED';
-      titleColor = '#ff4444';
-    } else if (reason === 'all_destroyed') {
-      titleText = 'DRAW — ALL DESTROYED';
-      titleColor = '#ffaa00';
-    } else {
-      titleText = 'BATTLE OVER';
-      titleColor = '#ffaa00';
-    }
-    const panelTopY = Math.max(20, screenH / 2 - PH / 2);
-    this.add.text(PX, panelTopY + 40, titleText, {
-      fontSize: '32px', color: titleColor, fontFamily: 'monospace', fontStyle: 'bold'
-    }).setOrigin(0.5).setScrollFactor(0).setDepth(11);
-
-    let y = panelTopY + 80;
-
-    // Rival banner: name + quote (if the server sent us one)
-    if (rival) {
-      const bannerColor = '#' + rival.primary_colour.toString(16).padStart(6, '0');
-      this.add.text(PX, y, `vs. ${rival.name}`, {
-        fontSize: '16px', color: bannerColor, fontFamily: 'monospace', fontStyle: 'italic'
-      }).setOrigin(0.5).setScrollFactor(0).setDepth(11);
-      y += 22;
-      if (rivalQuote) {
-        const quoteText = this.add.text(PX, y, `"${rivalQuote}"`, {
-          fontSize: '11px', color: '#bbb', fontFamily: 'monospace',
-          wordWrap: { width: PW - 30 }, align: 'center',
-        }).setOrigin(0.5, 0).setScrollFactor(0).setDepth(11);
-        y += quoteText.height + 10;
-      }
-    }
-
-    // Financial summary (only meaningful for winner)
-    if (isWinner) {
-      if (prize > 0) {
-        this.add.text(PX, y, `Prize:      $${prize.toLocaleString()}`, {
-          fontSize: '14px', color: '#ffcc00', fontFamily: 'monospace'
-        }).setOrigin(0.5).setScrollFactor(0).setDepth(11);
-        y += 22;
-      }
-      if (jobPayout > 0) {
-        this.add.text(PX, y, `Job:        $${jobPayout.toLocaleString()}`, {
-          fontSize: '14px', color: '#ffcc00', fontFamily: 'monospace'
-        }).setOrigin(0.5).setScrollFactor(0).setDepth(11);
-        y += 22;
-      }
-      if (salvage > 0) {
-        this.add.text(PX, y, `Salvage:    $${salvage.toLocaleString()}`, {
-          fontSize: '14px', color: '#aa88ff', fontFamily: 'monospace'
-        }).setOrigin(0.5).setScrollFactor(0).setDepth(11);
-        y += 22;
-      }
-      const income = prize + jobPayout + salvage;
-      if (income > 0) {
-        this.add.text(PX, y, `Income:     $${income.toLocaleString()}`, {
-          fontSize: '14px', color: '#ffffff', fontFamily: 'monospace', fontStyle: 'bold'
-        }).setOrigin(0.5).setScrollFactor(0).setDepth(11);
-        y += 26;
-      }
-    }
-
-    // Expenses — always shown if present (both winners and losers pay)
-    if (wages > 0 || maintenance > 0) {
-      if (wages > 0) {
-        this.add.text(PX, y, `Wages:     -$${wages.toLocaleString()}`, {
-          fontSize: '14px', color: '#ff8888', fontFamily: 'monospace'
-        }).setOrigin(0.5).setScrollFactor(0).setDepth(11);
-        y += 22;
-      }
-      if (maintenance > 0) {
-        this.add.text(PX, y, `Upkeep:    -$${maintenance.toLocaleString()}`, {
-          fontSize: '14px', color: '#ff8888', fontFamily: 'monospace'
-        }).setOrigin(0.5).setScrollFactor(0).setDepth(11);
-        y += 22;
-      }
-      const net = prize + jobPayout + salvage - wages - maintenance;
-      const netColor = net >= 0 ? '#00ff88' : '#ff4444';
-      this.add.text(PX, y, `Net:  ${net >= 0 ? '+' : '-'}$${Math.abs(net).toLocaleString()}`, {
-        fontSize: '15px', color: netColor, fontFamily: 'monospace', fontStyle: 'bold'
-      }).setOrigin(0.5).setScrollFactor(0).setDepth(11);
-      y += 28;
-    }
-
-    // Damage summary
-    if (myVehicle) {
-      const ds = myVehicle.stats.damageState;
-      const armorLost = Object.entries(ds.armor)
-        .reduce((sum, [k, v]) => {
-          const orig = (myVehicle.stats.loadout.armor as Record<string, number>)[k] ?? 0;
-          return sum + Math.max(0, orig - (v ?? 0));
-        }, 0);
-      const flags = [
-        ds.engineDamaged ? 'ENGINE' : '',
-        ds.onFire ? 'FIRE' : '',
-        (ds.tiresBlown?.length ?? 0) > 0 ? `${ds.tiresBlown!.length} TIRE(S)` : '',
-      ].filter(Boolean).join('  ');
-
-      const dmgColor = armorLost > 0 ? '#ff8888' : '#88ff88';
-      this.add.text(PX, y, `Damage: ${armorLost} armor pts lost${flags ? `  [${flags}]` : ''}`, {
-        fontSize: '14px', color: dmgColor, fontFamily: 'monospace'
-      }).setOrigin(0.5).setScrollFactor(0).setDepth(11);
-      y += 24;
-    } else if (wasDestroyed) {
-      this.add.text(PX, y, `Vehicle: TOTAL LOSS  [${myWreck!.state.toUpperCase()}]`, {
-        fontSize: '14px', color: '#ff5555', fontFamily: 'monospace'
-      }).setOrigin(0.5).setScrollFactor(0).setDepth(11);
-      y += 24;
-    }
-
-    // Per-vehicle kill breakdown when squad > 1
-    if (this.squadVehicleIds.length > 1 && this.zoneState) {
-      y += 6;
-      this.add.text(PX, y, 'SQUAD REPORT', {
-        fontSize: '13px', color: '#aaa', fontFamily: 'monospace', fontStyle: 'bold'
-      }).setOrigin(0.5).setScrollFactor(0).setDepth(11);
-      y += 20;
-      for (const vid of this.squadVehicleIds) {
-        const alive = this.zoneState.vehicles.find(v => v.id === vid);
-        const wreck = this.zoneState.wreckage?.find(w => w.sourceVehicleId === vid);
-        const kills = (this.zoneState.wreckage ?? []).filter(w => w.killedByVehicleId === vid).length;
-        const name = (alive?.stats.name ?? wreck?.sourceVehicleId ?? vid).slice(0, 20);
-        const statusStr = alive ? 'survived' : wreck ? `[${wreck.state.toUpperCase()}]` : 'lost';
-        const statusColor = alive ? '#88ff88' : '#ff5555';
-        this.add.text(PX, y, `${name}: ${kills} kill${kills === 1 ? '' : 's'}, ${statusStr}`, {
-          fontSize: '12px', color: statusColor, fontFamily: 'monospace'
-        }).setOrigin(0.5).setScrollFactor(0).setDepth(11);
-        y += 18;
-      }
-    }
-
-    // Return to garage button — always near bottom of the sidebar
-    y = Math.max(y + 10, panelTopY + PH - 60);
-    const garageBtn = this.add.text(PX, y, '[RETURN TO GARAGE]', {
-      fontSize: '14px', color: '#aaaaff', fontFamily: 'monospace',
-      backgroundColor: '#111133', padding: { x: 10, y: 5 }
-    }).setOrigin(0.5).setScrollFactor(0).setDepth(11).setInteractive();
-
-    garageBtn.on('pointerdown', () => {
+    // Brief 600 ms transition so the final hit lands, then hand off to ResultScene.
+    // Disconnect the WebSocket so the runner can tear down the zone.
+    this.time.delayedCall(600, () => {
       this.connection.send({ type: 'leave_zone' });
       this.connection.close();
-      this.scene.start('GarageScene', { token: this.token });
+      this.scene.start('ResultScene', {
+        token: this.token,
+        result,
+        prize, jobPayout, salvage, wages, maintenance,
+        rival, rivalQuote,
+        vehicleIds: this.squadVehicleIds,
+        primaryVehicleId: this.myVehicleId,
+        mapId: this.mapId,
+        gangPrimaryColour: this.gangPrimaryColour,
+        replayId,
+      });
     });
   }
 

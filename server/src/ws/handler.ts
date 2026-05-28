@@ -7,6 +7,37 @@ import { getDb } from '../db/client';
 import { deriveStats } from '../rules/vehicle';
 import type { Pool } from 'pg';
 import { pickRivalForMatch, recordRivalOutcome, rivalEffectiveSkill, type RivalGang } from '../rules/rivals';
+import type { TickSnapshot } from '../rules/engine';
+
+// Best-effort replay persistence — returns the new row's id, or undefined on
+// any failure (snapshots empty, player missing, DB error). Match payout path
+// never blocks on this.
+async function persistReplay(opts: {
+  db: Pool;
+  playerId: string | undefined;
+  zoneId: string;
+  opponent: string | null;
+  result: 'win' | 'loss' | 'draw' | 'destroyed';
+  prize: number;
+  winnerId: string | null;
+  snapshots: TickSnapshot[];
+}): Promise<string | undefined> {
+  if (!opts.playerId || opts.snapshots.length === 0) return undefined;
+  try {
+    const finalSnapshot = opts.snapshots[opts.snapshots.length - 1];
+    finalSnapshot.winnerId = opts.winnerId;
+    const res = await opts.db.query<{ id: string }>(
+      `INSERT INTO match_replays (player_id, zone_id, opponent, duration_ticks, result, prize, data)
+       VALUES ($1, $2, $3, $4, $5, $6, $7)
+       RETURNING id`,
+      [opts.playerId, opts.zoneId, opts.opponent, opts.snapshots.length, opts.result, opts.prize, JSON.stringify(opts.snapshots)],
+    );
+    return res.rows[0]?.id;
+  } catch (e) {
+    console.error('Failed to save replay:', e);
+    return undefined;
+  }
+}
 
 const JWT_SECRET = process.env.JWT_SECRET ?? 'dev-secret-change-in-prod';
 
@@ -429,7 +460,16 @@ async function handleMessage(ws: WebSocket, raw: string): Promise<void> {
             }
           }
 
-          if (!winnerId) return { prize: 0, jobPayout: 0, salvage: 0, wages, maintenance, rivalQuote };
+          if (!winnerId) {
+            const replayId = await persistReplay({
+              db, playerId: myPid, zoneId: msg.zoneId,
+              opponent: ctx.rival?.name ?? null,
+              result: ctx.reason === 'all_destroyed' ? 'draw' : 'loss',
+              prize: 0, winnerId: null,
+              snapshots: runner.getEngine().getSnapshots(),
+            });
+            return { prize: 0, jobPayout: 0, salvage: 0, wages, maintenance, rivalQuote, replayId };
+          }
           try {
             const pRes = await db.query(`SELECT division FROM players WHERE id = $1`, [winnerId]);
             const division = pRes.rows[0]?.division ?? 5;
@@ -582,7 +622,13 @@ async function handleMessage(ws: WebSocket, raw: string): Promise<void> {
               prize, jobPayout, salvage, wages, maintenance,
               won: true, rivalQuote,
             });
-            return { prize, jobPayout, salvage, wages, maintenance, rivalQuote };
+            const replayId = await persistReplay({
+              db, playerId: winnerId, zoneId: msg.zoneId,
+              opponent: ctx.rival?.name ?? null,
+              result: 'win', prize, winnerId,
+              snapshots: runner.getEngine().getSnapshots(),
+            });
+            return { prize, jobPayout, salvage, wages, maintenance, rivalQuote, replayId };
           } catch (e) {
             console.error('Failed to credit arena prize:', e);
             return { prize: 0, jobPayout: 0, salvage: 0, wages, maintenance, rivalQuote };

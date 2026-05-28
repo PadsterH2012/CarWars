@@ -632,3 +632,18 @@ ALTER TABLE players ADD COLUMN IF NOT EXISTS wins INTEGER NOT NULL DEFAULT 0;
 ALTER TABLE players ADD COLUMN IF NOT EXISTS losses INTEGER NOT NULL DEFAULT 0;
 ALTER TABLE players ADD COLUMN IF NOT EXISTS kills INTEGER NOT NULL DEFAULT 0;
 ALTER TABLE players ADD COLUMN IF NOT EXISTS arena_count INTEGER NOT NULL DEFAULT 0;
+
+-- Match replays: compressed per-tick snapshots persisted on match end
+-- (added 2026-05-28 — Phase 1 Duel Loop Plan, task 1)
+CREATE TABLE IF NOT EXISTS match_replays (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  player_id UUID REFERENCES players(id) ON DELETE CASCADE,
+  zone_id TEXT NOT NULL,
+  opponent TEXT,
+  duration_ticks INTEGER NOT NULL,
+  result TEXT NOT NULL,
+  prize INTEGER NOT NULL DEFAULT 0,
+  data JSONB NOT NULL,
+  recorded_at TIMESTAMPTZ DEFAULT NOW()
+);
+CREATE INDEX IF NOT EXISTS idx_match_replays_player ON match_replays(player_id, recorded_at DESC);

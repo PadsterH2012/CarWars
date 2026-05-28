@@ -15,7 +15,7 @@ export interface TravelContext {
 }
 
 export interface ZoneRunnerOptions {
-  onEnd?: (winnerId: string | null, salvage: number, ctx: { reason: string; rival: RivalInfo | null; travelContext?: TravelContext }) => Promise<{ prize: number; jobPayout: number; salvage: number; wages: number; maintenance: number; rivalQuote?: string }>;
+  onEnd?: (winnerId: string | null, salvage: number, ctx: { reason: string; rival: RivalInfo | null; travelContext?: TravelContext }) => Promise<{ prize: number; jobPayout: number; salvage: number; wages: number; maintenance: number; rivalQuote?: string; replayId?: string }>;
 }
 
 export class ZoneRunner {
@@ -55,7 +55,7 @@ export class ZoneRunner {
   hasEnded(): boolean { return this.ended; }
   readonly zoneId: string;
   public travelContext: TravelContext | undefined;
-  private onEnd?: (winnerId: string | null, salvage: number, ctx: { reason: string; rival: RivalInfo | null; travelContext?: TravelContext }) => Promise<{ prize: number; jobPayout: number; salvage: number; wages: number; maintenance: number; rivalQuote?: string }>;
+  private onEnd?: (winnerId: string | null, salvage: number, ctx: { reason: string; rival: RivalInfo | null; travelContext?: TravelContext }) => Promise<{ prize: number; jobPayout: number; salvage: number; wages: number; maintenance: number; rivalQuote?: string; replayId?: string }>;
 
   constructor(
     zoneId: string,
@@ -257,6 +257,7 @@ export class ZoneRunner {
       maintenance: outcome.maintenance,
       rival: this.rival ?? undefined,
       rivalQuote: outcome.rivalQuote,
+      replayId: outcome.replayId,
     };
     const data = JSON.stringify(endMsg);
     this.clients.forEach(ws => {

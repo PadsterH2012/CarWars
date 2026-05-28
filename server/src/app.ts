@@ -70,6 +70,27 @@ export function createApp() {
     return res.json({ selectedVehicleId: result.rows[0].selected_vehicle_id });
   });
 
+  app.get('/api/replays', requireAuth, async (req: AuthRequest, res) => {
+    const db = getDb();
+    const result = await db.query(
+      `SELECT id, zone_id, opponent, duration_ticks, result, prize, recorded_at
+       FROM match_replays WHERE player_id = $1 ORDER BY recorded_at DESC LIMIT 50`,
+      [req.playerId]
+    );
+    return res.json(result.rows);
+  });
+
+  app.get('/api/replays/:id', requireAuth, async (req: AuthRequest, res) => {
+    const db = getDb();
+    const result = await db.query(
+      `SELECT id, zone_id, opponent, duration_ticks, result, prize, data, recorded_at
+       FROM match_replays WHERE id = $1 AND player_id = $2`,
+      [req.params.id, req.playerId]
+    );
+    if (!result.rows.length) return res.status(404).json({ error: 'Not found' });
+    return res.json(result.rows[0]);
+  });
+
   app.get('/api/me/last-result', requireAuth, async (req: AuthRequest, res) => {
     // One-shot read — clear after returning so a refresh doesn't keep showing
     // the same result. lastResults is in-process state populated by the WS

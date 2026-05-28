@@ -64,12 +64,21 @@ interface VehicleInput {
   fireWeapon: string | null;
 }
 
+export interface TickSnapshot {
+  tick: number;
+  vehicles: { id: string; x: number; y: number; facing: number; speed: number; playerId: string }[];
+  combatEvents: CombatEvent[];
+  wreckage: { id: string; x: number; y: number; facing: number; state: WreckageState; sourceVehicleId: string }[];
+  winnerId: string | null;
+}
+
 export interface TurnEngine {
   queueInput(vehicleId: string, input: VehicleInput): void;
   resolveTick(): ZoneState;
   getState(): ZoneState;
   addVehicle(vehicle: VehicleState): void;
   removeVehicle(vehicleId: string): void;
+  getSnapshots(): TickSnapshot[];
 }
 
 const TICKS_PER_TURN = 10; // 100ms ticks × 10 = 1 second = 1 Compendium turn
@@ -99,6 +108,10 @@ export function createTurnEngine(initialState: ZoneState, map?: ArenaMap, opts: 
   // Consumed when the victim is promoted to wreckage so its driver can be credited.
   const lastDamager = new Map<string, string>();
   let tickInTurn = 0;
+  // Per-match recording buffer — pushed at end of every resolveTick, read by
+  // the runner on match end to persist as a replay. Compact subset of state
+  // (just what's needed to render playback).
+  const snapshots: TickSnapshot[] = [];
 
   return {
     queueInput(vehicleId, input) {
@@ -726,7 +739,27 @@ export function createTurnEngine(initialState: ZoneState, map?: ArenaMap, opts: 
         wreckage: [...updatedExisting, ...newWrecks],
         combatEvents: combatEvents.length > 0 ? combatEvents : undefined,
       };
+
+      // Recording buffer — capture only the renderable subset each tick.
+      // Stored as JSONB on match end (server/src/world/zone-runner.ts).
+      snapshots.push({
+        tick: state.tick,
+        vehicles: state.vehicles.map(v => ({
+          id: v.id, x: v.position.x, y: v.position.y,
+          facing: v.facing, speed: v.speed, playerId: v.playerId,
+        })),
+        combatEvents: combatEvents,
+        wreckage: (state.wreckage ?? []).map(w => ({
+          id: w.id, x: w.position.x, y: w.position.y,
+          facing: w.facing, state: w.state, sourceVehicleId: w.sourceVehicleId,
+        })),
+        winnerId: null,
+      });
       return state;
+    },
+
+    getSnapshots() {
+      return snapshots;
     },
 
     getState() {

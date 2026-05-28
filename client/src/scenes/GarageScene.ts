@@ -22,8 +22,6 @@ export class GarageScene extends Phaser.Scene {
   private division = 0;
   private selectedVehicleId = '';
   private selectedDriverId = '';
-  private lastResult: { prize: number; jobPayout: number; salvage?: number; wages?: number; maintenance?: number; won?: boolean; rivalQuote?: string } | null = null;
-
   // Container for everything the main garage screen paints — we wipe + repaint on resize
   private mainLayer!: Phaser.GameObjects.Container;
 
@@ -33,21 +31,20 @@ export class GarageScene extends Phaser.Scene {
     preloadVehicleSprites(this);
   }
 
-  init(data: { token: string }): void {
+  init(data: { token: string; justFoughtVehicleId?: string }): void {
     this.token = data.token;
-    this.lastResult = null; // Loaded from server in create()
+    this.justFoughtVehicleId = data.justFoughtVehicleId ?? ;
   }
 
   async create(): Promise<void> {
     const host = window.location.hostname;
 
-    const [meRes, vRes, dRes, gRes, reqRes, lrRes] = await Promise.all([
+    const [meRes, vRes, dRes, gRes, reqRes] = await Promise.all([
       fetch(`http://${host}:3001/api/me`, { headers: { Authorization: `Bearer ${this.token}` } }),
       fetch(`http://${host}:3001/api/vehicles`, { headers: { Authorization: `Bearer ${this.token}` } }),
       fetch(`http://${host}:3001/api/drivers`, { headers: { Authorization: `Bearer ${this.token}` } }),
       fetch(`http://${host}:3001/api/gangs/mine`, { headers: { Authorization: `Bearer ${this.token}` } }),
       fetch(`http://${host}:3001/api/drivers/requests`, { headers: { Authorization: `Bearer ${this.token}` } }),
-      fetch(`http://${host}:3001/api/me/last-result`, { headers: { Authorization: `Bearer ${this.token}` } }),
     ]);
     const me = await meRes.json();
     this.money = me.money ?? 0;
@@ -58,7 +55,6 @@ export class GarageScene extends Phaser.Scene {
     this.drivers = await dRes.json();
     if (gRes.ok) this.gang = await gRes.json();
     if (reqRes.ok) this.driverRequests = await reqRes.json();
-    if (lrRes.ok) this.lastResult = await lrRes.json();
 
     this.mainLayer = this.add.container(0, 0);
 
@@ -94,13 +90,6 @@ export class GarageScene extends Phaser.Scene {
       add(this.add.text(leftX, 70, `Money: $${this.money.toLocaleString()} | Division: ${this.division}`, {
         color: '#ffcc00', fontSize: '16px', fontFamily: 'monospace'
       }));
-    }
-
-    if (this.lastResult) {
-      const total = this.lastResult.prize + this.lastResult.jobPayout;
-      add(this.add.text(cx, 55, `Last fight: +$${total.toLocaleString()} earned`, {
-        color: '#00ff88', fontSize: '14px', fontFamily: 'monospace'
-      }).setOrigin(0.5));
     }
 
     const activeJobId = localStorage.getItem('cw_active_job');
@@ -162,6 +151,15 @@ export class GarageScene extends Phaser.Scene {
           add(hl);
         }
 
+        // Just fought indicator — visible fresh from ResultScene, clears on next render
+        if (v.id === this.justFoughtVehicleId) {
+          const badge = this.add.text(leftX - 4, y - 4, "⚡ JUST FOUGHT", {
+            fontSize: "11px", color: "#ffaa00", fontFamily: "monospace", fontStyle: "bold",
+            backgroundColor: "#332200", padding: { x: 6, y: 3 },
+          }).setOrigin(0, 0);
+          add(badge);
+        }
+
         // Thumbnail — body PNG tinted with the gang's primary colour so each
         // vehicle reads at a glance as a cycle / pickup / bus etc.
         const spriteKey = `body_${bodySpriteKey(v.loadout?.bodyType)}`;
@@ -209,9 +207,10 @@ export class GarageScene extends Phaser.Scene {
         const btn2 = btn0 + btnSpan * 0.52;
         const btn3 = btn0 + btnSpan * 0.84;
 
-        const repairBtn = this.add.text(btn0, btnTop, '[REPAIR]', {
-          color: '#ffcc00', fontSize: '12px', fontFamily: 'monospace',
-          backgroundColor: '#332200', padding: { x: 4, y: 2 }
+        const isHot = v.id === this.justFoughtVehicleId;
+        const repairBtn = this.add.text(btn0, btnTop, isHot ? '[ REPAIR ▲ ]' : '[REPAIR]', {
+          color: isHot ? '#ffdd44' : '#ffcc00', fontSize: isHot ? '13px' : '12px', fontFamily: 'monospace',
+          backgroundColor: isHot ? '#554411' : '#332200', padding: { x: 4, y: 2 }
         }).setInteractive();
         repairBtn.on('pointerdown', () => this.repairVehicle(v.id));
         add(repairBtn);
