@@ -158,7 +158,10 @@ export class GarageScene extends Phaser.Scene {
         }
 
         const nameText = this.add.text(textX, y, `${v.name}`, { color: nameColor, fontSize: '16px', fontFamily: 'monospace' }).setInteractive();
-        nameText.on('pointerdown', () => this.persistSelection(v.id, driver?.id ?? null));
+        nameText.on('pointerdown', () => {
+          this.persistSelection(v.id, driver?.id ?? null);
+          this.time.delayedCall(0, () => this.renderGarage());
+        });
         add(nameText);
         add(this.add.text(textX + 230, y, `$${v.value.toLocaleString()}`, { color: '#888888', fontSize: '14px', fontFamily: 'monospace' }));
 
