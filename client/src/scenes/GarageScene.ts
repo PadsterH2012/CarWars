@@ -22,6 +22,7 @@ export class GarageScene extends Phaser.Scene {
   private division = 0;
   private selectedVehicleId = '';
   private selectedDriverId = '';
+  private justFoughtVehicleId = ''; // vehicle just back from arena
   // Container for everything the main garage screen paints — we wipe + repaint on resize
   private mainLayer!: Phaser.GameObjects.Container;
 
