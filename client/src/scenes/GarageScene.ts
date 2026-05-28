@@ -157,7 +157,9 @@ export class GarageScene extends Phaser.Scene {
           add(thumb);
         }
 
-        add(this.add.text(textX, y, `${v.name}`, { color: nameColor, fontSize: '16px', fontFamily: 'monospace' }));
+        const nameText = this.add.text(textX, y, `${v.name}`, { color: nameColor, fontSize: '16px', fontFamily: 'monospace' }).setInteractive();
+        nameText.on('pointerdown', () => this.persistSelection(v.id, driver?.id ?? null));
+        add(nameText);
         add(this.add.text(textX + 230, y, `$${v.value.toLocaleString()}`, { color: '#888888', fontSize: '14px', fontFamily: 'monospace' }));
 
         const driver = driverByVid.get(v.id);
@@ -374,6 +376,15 @@ export class GarageScene extends Phaser.Scene {
     worldBtn.on('pointerdown', () => this.scene.start('WorldMapScene', { token: this.token }));
     add(worldBtn);
 
+
+    const logoutBtn = this.add.text(10, 70, '[LOGOUT]', {
+      color: '#ff6666', fontSize: '13px', fontFamily: 'monospace'
+    }).setOrigin(0, 0.5).setInteractive();
+    logoutBtn.on('pointerdown', () => {
+      localStorage.removeItem('cw_token');
+      this.scene.start('LoginScene');
+    });
+    add(logoutBtn);
 
     add(this.add.text(rightX - 140, height - 30, '[F] Fullscreen', {
       color: '#555', fontSize: '11px', fontFamily: 'monospace'
