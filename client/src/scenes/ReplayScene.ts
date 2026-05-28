@@ -1,7 +1,7 @@
 import Phaser from 'phaser';
 import { bindFullscreenToggle, onLayout } from '../ui/responsive';
 import { renderMapFloor, renderMapWalls, renderMapDecorations, type MapRenderOptions } from '../rendering/mapRenderer';
-import { buildVehicleSprite, updateVehicleSprite } from '../game/VehicleSprite';
+import { buildVehicleSprite, updateVehicleSprite, preloadVehicleSprites } from '../game/VehicleSprite';
 import type { ArenaMap, CombatEvent, WreckageState, VehicleState } from '@carwars/shared';
 
 const PIXELS_PER_INCH = 32;
@@ -77,6 +77,10 @@ export class ReplayScene extends Phaser.Scene {
 
   constructor() { super({ key: 'ReplayScene' }); }
 
+  preload(): void {
+    preloadVehicleSprites(this);
+  }
+
   init(data: ReplaySceneData): void {
     this.payload = data;
     this.currentTick = 0;
@@ -88,60 +92,69 @@ export class ReplayScene extends Phaser.Scene {
   }
 
   async create(): Promise<void> {
-    const host = window.location.hostname;
-    const headers = { Authorization: `Bearer ${this.payload.token}` };
-    const [replayRes] = await Promise.all([
-      fetch(`http://${host}:3001/api/replays/${this.payload.replayId}`, { headers }),
-    ]);
-    if (!replayRes.ok) {
-      this.add.text(this.scale.width / 2, this.scale.height / 2, 'Replay not found', {
-        fontSize: '24px', color: '#ff4444', fontFamily: 'monospace',
+    try {
+      // Create layers FIRST — must exist before any layout/update call,
+      // since onLayout may fire layout() synchronously during create().
+      this.worldLayer = this.add.container(0, 0);
+      this.vehicleLayer = this.add.container(0, 0);
+      this.effectsLayer = this.add.container(0, 0);
+
+      const host = window.location.hostname;
+      const headers = { Authorization: `Bearer ${this.payload.token}` };
+      const [replayRes] = await Promise.all([
+        fetch(`http://${host}:3001/api/replays/${this.payload.replayId}`, { headers }),
+      ]);
+      if (!replayRes.ok) {
+        this.add.text(this.scale.width / 2, this.scale.height / 2, 'Replay not found', {
+          fontSize: '24px', color: '#ff4444', fontFamily: 'monospace',
+        }).setOrigin(0.5);
+        this.input.keyboard?.on('keydown-ESC', () => this.exit());
+        return;
+      }
+      this.replay = await replayRes.json() as ReplayPayload;
+
+      // Build roster from tick 0 if available, or from the roster field
+      const firstSnap = this.replay.data[0];
+      if (firstSnap?.roster && firstSnap.roster.length > 0) {
+        this.roster = firstSnap.roster;
+      } else if (firstSnap?.vehicles?.[0]?.stats) {
+        // Fallback: build synthetic roster from tick 0 vehicle data
+        this.roster = firstSnap.vehicles.map(v => ({
+          id: v.id,
+          position: { x: v.x, y: v.y },
+          facing: v.facing,
+          speed: v.speed,
+          playerId: v.playerId,
+          stats: v.stats!,
+        })) as unknown as VehicleState[];
+      }
+
+      const mapId = mapIdForZone(this.replay.zone_id);
+      const mapRes = await fetch(`http://${host}:3001/api/maps/${mapId}`, { headers });
+      if (mapRes.ok) this.map = await mapRes.json() as ArenaMap;
+
+      // Camera setup — match ArenaScene
+      this.cameras.main.setZoom(0.6);
+      this.cameras.main.setLerp(0.08, 0.08);
+      this.cameras.main.scrollX = 0;
+      this.cameras.main.scrollY = 0;
+
+      bindFullscreenToggle(this);
+      onLayout(this, () => this.layout());
+      this.layout();
+      this.bindInput();
+
+      // Build vehicle sprites from roster (empty = old replay, rectangle fallback used)
+      this.buildVehicleSprites();
+
+      // Render first frame
+      this.renderFrame();
+    } catch (e) {
+      console.error('ReplayScene error:', e);
+      this.add.text(this.scale.width / 2, this.scale.height / 2, 'Replay error: ' + (e as Error).message, {
+        fontSize: '16px', color: '#ff4444', fontFamily: 'monospace',
       }).setOrigin(0.5);
-      this.input.keyboard?.on('keydown-ESC', () => this.exit());
-      return;
     }
-    this.replay = await replayRes.json() as ReplayPayload;
-
-    // Build roster from tick 0 if available, or from the roster field
-    const firstSnap = this.replay.data[0];
-    if (firstSnap?.roster && firstSnap.roster.length > 0) {
-      this.roster = firstSnap.roster;
-    } else if (firstSnap?.vehicles?.[0]?.stats) {
-      // Fallback: build synthetic roster from tick 0 vehicle data
-      this.roster = firstSnap.vehicles.map(v => ({
-        id: v.id,
-        position: { x: v.x, y: v.y },
-        facing: v.facing,
-        speed: v.speed,
-        playerId: v.playerId,
-        stats: v.stats!,
-      })) as unknown as VehicleState[];
-    }
-
-    const mapId = mapIdForZone(this.replay.zone_id);
-    const mapRes = await fetch(`http://${host}:3001/api/maps/${mapId}`, { headers });
-    if (mapRes.ok) this.map = await mapRes.json() as ArenaMap;
-
-    this.worldLayer = this.add.container(0, 0);
-    this.vehicleLayer = this.add.container(0, 0);
-    this.effectsLayer = this.add.container(0, 0);
-
-    // Camera setup — match ArenaScene
-    this.cameras.main.setZoom(0.6);
-    this.cameras.main.setLerp(0.08, 0.08);
-    this.cameras.main.scrollX = 0;
-    this.cameras.main.scrollY = 0;
-
-    bindFullscreenToggle(this);
-    onLayout(this, () => this.layout());
-    this.layout();
-    this.bindInput();
-
-    // Build vehicle sprites from roster
-    this.buildVehicleSprites();
-
-    // Render first frame
-    this.renderFrame();
   }
 
   private buildVehicleSprites(): void {
@@ -254,47 +267,61 @@ export class ReplayScene extends Phaser.Scene {
   }
 
   private renderFrame(): void {
-    if (!this.replay) return;
+    if (!this.replay || !this.effectsLayer) return;
     const snap = this.replay.data[this.currentTick];
     if (!snap) return;
 
-    // Update vehicle sprite positions + stats
+    // Clear effects — combat tracers, wreckage, and rectangle-fallback vehicles
+    this.effectsLayer.removeAll(true);
+
+    // Render vehicles: sprites from roster, or rectangle fallback for old replays
     for (const vd of snap.vehicles) {
       const sprite = this.vehicleSprites.get(vd.id);
-      if (!sprite) continue;
+      if (sprite) {
+        // Position
+        sprite.x = WORLD_CENTER_X + vd.x * PIXELS_PER_INCH;
+        sprite.y = WORLD_CENTER_Y + vd.y * PIXELS_PER_INCH;
+        sprite.setRotation(Phaser.Math.DegToRad(vd.facing));
 
-      // Position
-      sprite.x = WORLD_CENTER_X + vd.x * PIXELS_PER_INCH;
-      sprite.y = WORLD_CENTER_Y + vd.y * PIXELS_PER_INCH;
-      sprite.setRotation(Phaser.Math.DegToRad(vd.facing));
-
-      // Update damage state + ammo from per-tick stats
-      const roV = this.roster.find(r => r.id === vd.id);
-      if (roV && vd.stats) {
-        // Clone roster vehicle and overlay current tick's stats
-        const updatedV: VehicleState = {
-          ...roV,
-          stats: vd.stats,
-          facing: vd.facing,
-          speed: vd.speed,
-        };
-        const teamColor = this.replayColor(roV.playerId);
-        updateVehicleSprite(sprite, updatedV, {
-          isPlayer: vd.playerId === 'player',
-          teamColor,
-        });
+        // Update damage state + ammo from per-tick stats
+        const roV = this.roster.find(r => r.id === vd.id);
+        if (roV && vd.stats) {
+          const updatedV: VehicleState = {
+            ...roV,
+            stats: vd.stats,
+            facing: vd.facing,
+            speed: vd.speed,
+          };
+          updateVehicleSprite(sprite, updatedV, {
+            isPlayer: vd.playerId === 'player',
+            teamColor: this.replayColor(vd.playerId),
+          });
+        }
+      } else {
+        // Fallback: old replay without enriched snapshot data — coloured rectangle
+        const wx = WORLD_CENTER_X + vd.x * PIXELS_PER_INCH;
+        const wy = WORLD_CENTER_Y + vd.y * PIXELS_PER_INCH;
+        const color = vd.playerId === 'player' ? 0x00ff88 : vd.playerId === 'ai-team' ? 0xff4444 : 0x6666aa;
+        this.effectsLayer.add(
+          this.add.rectangle(wx, wy, 22, 38, color).setStrokeStyle(1, 0x111111)
+            .setRotation(Phaser.Math.DegToRad(vd.facing))
+        );
+        this.effectsLayer.add(
+          this.add.triangle(wx, wy, 0, -22, -5, -14, 5, -14, 0xffffff)
+            .setRotation(Phaser.Math.DegToRad(vd.facing))
+        );
       }
     }
 
-    // Wreckage — clear and re-draw (few objects, simple)
-    this.effectsLayer.removeAll(true);
+    // Wreckage
     for (const w of snap.wreckage) {
       const wx = WORLD_CENTER_X + w.x * PIXELS_PER_INCH;
       const wy = WORLD_CENTER_Y + w.y * PIXELS_PER_INCH;
       const color = w.state === 'burning' ? 0x882200 : w.state === 'smouldering' ? 0x442211 : 0x222222;
-      const rect = this.add.rectangle(wx, wy, 22, 38, color).setStrokeStyle(1, 0x111111)
-        .setRotation(Phaser.Math.DegToRad(w.facing));
-      this.effectsLayer.add(rect);
+      this.effectsLayer.add(
+        this.add.rectangle(wx, wy, 22, 38, color).setStrokeStyle(1, 0x111111)
+          .setRotation(Phaser.Math.DegToRad(w.facing))
+      );
     }
 
     // Combat events for this tick
@@ -303,12 +330,14 @@ export class ReplayScene extends Phaser.Scene {
       const fy = WORLD_CENTER_Y + ev.fromY * PIXELS_PER_INCH;
       const tx = WORLD_CENTER_X + ev.toX   * PIXELS_PER_INCH;
       const ty = WORLD_CENTER_Y + ev.toY   * PIXELS_PER_INCH;
-      const line = this.add.line(0, 0, fx, fy, tx, ty,
-        ev.hit ? 0xff4400 : 0xffff00, ev.hit ? 0.9 : 0.5).setOrigin(0, 0);
-      this.effectsLayer.add(line);
+      this.effectsLayer.add(
+        this.add.line(0, 0, fx, fy, tx, ty,
+          ev.hit ? 0xff4400 : 0xffff00, ev.hit ? 0.9 : 0.5).setOrigin(0, 0)
+      );
       if (ev.hit) {
-        const flash = this.add.circle(tx, ty, 12, 0xff6600, 0.7).setStrokeStyle(2, 0xffffff, 0.7);
-        this.effectsLayer.add(flash);
+        this.effectsLayer.add(
+          this.add.circle(tx, ty, 12, 0xff6600, 0.7).setStrokeStyle(2, 0xffffff, 0.7)
+        );
       }
     }
 
