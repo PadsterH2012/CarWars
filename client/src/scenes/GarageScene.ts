@@ -4,7 +4,7 @@ import { bindFullscreenToggle, onLayout } from '../ui/responsive';
 import { preloadVehicleSprites, bodySpriteKey } from '../game/VehicleSprite';
 
 interface Vehicle { id: string; name: string; value: number; damage_state: any; loadout: any; in_arena?: boolean; }
-interface Driver { id: string; name: string; skill: number; xp: number; assigned_vehicle_id: string | null; alive: boolean; title?: string; xpToNext?: number; }
+interface Driver { id: string; name: string; skill: number; xp: number; assigned_vehicle_id: string | null; alive: boolean; wounded: boolean; wounded_until: string | null; title?: string; xpToNext?: number; }
 interface Gang { id: string; name: string; primary_colour: number; secondary_colour: number; emblem_id: EmblemId; treasury: number; reputation: number; }
 interface DriverRequest {
   id: string; kind: string; description: string; cost: number;
