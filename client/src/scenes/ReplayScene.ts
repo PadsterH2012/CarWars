@@ -237,7 +237,10 @@ export class ReplayScene extends Phaser.Scene {
     const wallLayer = tilemap.createLayer('walls', tileset);
     // Position the tilemap so its center aligns with WORLD_CENTER
     // The tilemap is 40 tiles wide x 30 tiles tall = 1280 x 960 pixels
-    tilemap.setPosition(WORLD_CENTER_X - 640, WORLD_CENTER_Y - 480);
+    // Phaser Tilemap has no setPosition — set on each layer instead
+    const tilemapOffsetX = WORLD_CENTER_X - 640;
+    const tilemapOffsetY = WORLD_CENTER_Y - 480;
+    this.tilemapLayers.forEach(l => l.setPosition(tilemapOffsetX, tilemapOffsetY));
 
     // If the game map has explicit dimensions, create a palette-tinted
     // background rectangle so the tilemap tiles outside the map boundaries
