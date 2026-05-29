@@ -140,7 +140,7 @@ export class JobBoardScene extends Phaser.Scene {
       color: '#ffaa44', fontSize: '18px', fontFamily: 'monospace', fontStyle: 'bold'
     });
     this.activeContracts.forEach(ac => {
-      const descText = this.add.text(0, 0, `${ac.driverName} → [${ac.jobType.toUpperCase()}] ${ac.description}`, {
+      const descText = this.add.text(0, 0, `${ac.driverName} (sk${ac.skill}) → [${ac.jobType.toUpperCase()}] ${ac.description}`, {
         color: '#cccccc', fontSize: '14px', fontFamily: 'monospace', wordWrap: { width: 700 }
       });
       const etaText = this.add.text(0, 0, `ETA ${fmtRemaining(ac.remainingSeconds)}`, {
