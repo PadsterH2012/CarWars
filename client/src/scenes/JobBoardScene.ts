@@ -4,6 +4,18 @@ import { openDriverPicker } from '../ui/DriverPicker';
 
 interface Job { id: string; job_type: string; description: string; payout: number; }
 interface Contract { id: string; job_type: string; description: string; payout: number; difficulty: number; }
+interface ActiveContract {
+  id: string; jobType: string; description: string; payout: number;
+  driverId: string; driverName: string; skill: number; remainingSeconds: number;
+}
+
+// Compact ETA used by the in-progress contract list ("1m 20s" / "45s").
+function fmtRemaining(seconds: number): string {
+  if (seconds <= 0) return 'now';
+  const m = Math.floor(seconds / 60);
+  const s = seconds % 60;
+  return m > 0 ? `${m}m ${s}s` : `${s}s`;
+}
 
 // Difficulty → colour: green easy, amber moderate, orange hard.
 function difficultyColour(difficulty: number): string {
@@ -23,6 +35,7 @@ export class JobBoardScene extends Phaser.Scene {
     takeBtn: Phaser.GameObjects.Text;
   }> = [];
   private contracts: Contract[] = [];
+  private activeContracts: ActiveContract[] = [];
   private contractsHeading?: Phaser.GameObjects.Text;
   private contractRows: Array<{
     descText: Phaser.GameObjects.Text;
@@ -30,6 +43,13 @@ export class JobBoardScene extends Phaser.Scene {
     difficultyText: Phaser.GameObjects.Text;
     assignBtn: Phaser.GameObjects.Text;
   }> = [];
+  private inProgressHeading?: Phaser.GameObjects.Text;
+  private inProgressRows: Array<{
+    info: ActiveContract;
+    descText: Phaser.GameObjects.Text;
+    etaText: Phaser.GameObjects.Text;
+  }> = [];
+  private etaTimer?: Phaser.Time.TimerEvent;
   private backBtn!: Phaser.GameObjects.Text;
   private errorText?: Phaser.GameObjects.Text;
 
@@ -40,6 +60,7 @@ export class JobBoardScene extends Phaser.Scene {
     // Reset per-run state so scene.restart() doesn't retain stale references.
     this.jobRows = [];
     this.contractRows = [];
+    this.inProgressRows = [];
     const host = window.location.hostname;
     const res = await fetch(`http://${host}:3001/api/jobs?zoneId=town-1`, {
       headers: { Authorization: `Bearer ${this.token}` }
@@ -47,6 +68,9 @@ export class JobBoardScene extends Phaser.Scene {
     const jobs: Job[] = await res.json();
 
     this.contracts = await (await fetch(`http://${host}:3001/api/jobs/headless?zoneId=town-1`, {
+      headers: { Authorization: `Bearer ${this.token}` }
+    })).json();
+    this.activeContracts = await (await fetch(`http://${host}:3001/api/jobs/active`, {
       headers: { Authorization: `Bearer ${this.token}` }
     })).json();
 
@@ -111,6 +135,28 @@ export class JobBoardScene extends Phaser.Scene {
       this.contractRows.push({ descText, payoutText, difficultyText, assignBtn });
     });
 
+    // --- In-progress contracts with live ETA ---
+    this.inProgressHeading = this.add.text(0, 0, 'IN PROGRESS', {
+      color: '#ffaa44', fontSize: '18px', fontFamily: 'monospace', fontStyle: 'bold'
+    });
+    this.activeContracts.forEach(ac => {
+      const descText = this.add.text(0, 0, `${ac.driverName} → [${ac.jobType.toUpperCase()}] ${ac.description}`, {
+        color: '#cccccc', fontSize: '14px', fontFamily: 'monospace', wordWrap: { width: 700 }
+      });
+      const etaText = this.add.text(0, 0, `ETA ${fmtRemaining(ac.remainingSeconds)}`, {
+        color: '#ffaa44', fontSize: '14px', fontFamily: 'monospace'
+      }).setOrigin(1, 0);
+      this.inProgressRows.push({ info: ac, descText, etaText });
+    });
+
+    // Tick in-progress ETAs down once a second. Phaser clears scene timers on
+    // restart/shutdown, so this does not stack across scene.restart().
+    if (this.inProgressRows.length) {
+      this.etaTimer = this.time.addEvent({
+        delay: 1000, loop: true, callback: () => this.onEtaTick(),
+      });
+    }
+
     this.backBtn = this.add.text(0, 0, '[BACK TO GARAGE]', {
       color: '#888888', fontSize: '16px', fontFamily: 'monospace'
     }).setInteractive();
@@ -150,8 +196,25 @@ export class JobBoardScene extends Phaser.Scene {
       y += 78;
     });
 
+    y += 12;
+    this.inProgressHeading?.setPosition(leftX, y);
+    y += 36;
+    this.inProgressRows.forEach(row => {
+      row.descText.setPosition(leftX, y);
+      row.descText.setStyle({ wordWrap: { width: rightX - leftX - 140 } });
+      row.etaText.setPosition(rightX, y);
+      y += 40;
+    });
+
     this.backBtn.setPosition(leftX, height - 40);
     this.errorText?.setPosition(cx, height - 70);
+  }
+
+  private onEtaTick(): void {
+    this.inProgressRows.forEach(row => {
+      if (row.info.remainingSeconds > 0) row.info.remainingSeconds -= 1;
+      row.etaText.setText(`ETA ${fmtRemaining(row.info.remainingSeconds)}`);
+    });
   }
 
   private async assignContract(contract: Contract): Promise<void> {
