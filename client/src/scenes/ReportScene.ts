@@ -13,38 +13,11 @@ interface ReportBody {
 }
 interface ReportRow { id: string; zone_id: string; outcome: Outcome; report: ReportBody; read: boolean; created_at: string; }
 
-type JobTier = "success" | "partial" | "failure" | "catastrophe";
-interface JobOutcomeRow {
-  id: string;
-  tier: JobTier;
-  success: boolean;
-  payout: number;
-  wear: number;
-  driverWounded: boolean;
-  vehicleWrecked: boolean;
-  driverDead: boolean;
-  breakdown: { baseChance: number; vehicleBonus: number; difficulty: number; successChance: number; roll: number };
-  jobDescription: string;
-  jobType: string;
-  driverName: string;
-  acknowledged: boolean;
-}
-
-// A row in the unified inbox is either a squad engagement report or a headless
-// job outcome. Job outcomes have no server timestamp so they sort first.
-type Entry = { kind: "squad"; row: ReportRow } | { kind: "job"; row: JobOutcomeRow };
-
 const OUTCOME_COLOUR: Record<Outcome, string> = {
   success: "#00ff88",
   partial: "#ffcc00",
   failure: "#ff8844",
   routed: "#ff4444",
-};
-const TIER_COLOUR: Record<JobTier, string> = {
-  success: "#00ff88",
-  partial: "#ffcc00",
-  failure: "#ff8844",
-  catastrophe: "#ff4444",
 };
 const STATUS_COLOUR: Record<PerDriver["status"], string> = {
   unharmed: "#88ccaa",
@@ -55,7 +28,6 @@ const STATUS_COLOUR: Record<PerDriver["status"], string> = {
 class ReportScene extends Phaser.Scene {
   private token = "";
   private reports: ReportRow[] = [];
-  private jobOutcomes: JobOutcomeRow[] = [];
   private selectedId: string | null = null;
   private layer!: Phaser.GameObjects.Container;
 
@@ -64,7 +36,6 @@ class ReportScene extends Phaser.Scene {
   init(data: { token: string }): void {
     this.token = data.token;
     this.reports = [];
-    this.jobOutcomes = [];
     this.selectedId = null;
   }
 
@@ -72,18 +43,14 @@ class ReportScene extends Phaser.Scene {
     bindFullscreenToggle(this);
     this.layer = this.add.container(0, 0);
     await this.fetchReports();
-    const first = this.entries()[0];
-    if (first && !this.selectedId) {
-      if (first.kind === "squad") this.selectReport(first.row);
-      else this.selectJobOutcome(first.row);
-    }
+    if (this.reports.length && !this.selectedId) this.selectReport(this.reports[0]);
     this.render();
     onLayout(this, () => this.render());
   }
 
   private async fetchReports(): Promise<void> {
-    const host = window.location.hostname;
     try {
+      const host = window.location.hostname;
       const res = await fetch(`http://${host}:3001/api/reports`, {
         headers: { Authorization: `Bearer ${this.token}` },
       });
@@ -91,23 +58,6 @@ class ReportScene extends Phaser.Scene {
     } catch (e) {
       console.error("ReportScene fetchReports failed:", e);
     }
-    try {
-      const res = await fetch(`http://${host}:3001/api/jobs/outcomes`, {
-        headers: { Authorization: `Bearer ${this.token}` },
-      });
-      if (res.ok) this.jobOutcomes = (await res.json()) ?? [];
-    } catch (e) {
-      console.error("ReportScene fetch job outcomes failed:", e);
-    }
-  }
-
-  // Unified inbox: job outcomes first (no timestamp), then squad reports in
-  // their existing created_at order. Built once so render + selection agree.
-  private entries(): Entry[] {
-    return [
-      ...this.jobOutcomes.map((row): Entry => ({ kind: "job", row })),
-      ...this.reports.map((row): Entry => ({ kind: "squad", row })),
-    ];
   }
 
   // Opening a report marks it read (server-side) so the garage badge clears.
@@ -120,19 +70,6 @@ class ReportScene extends Phaser.Scene {
         method: "POST",
         headers: { Authorization: `Bearer ${this.token}` },
       }).catch(e => console.error("mark-read failed:", e));
-    }
-  }
-
-  // Opening a job outcome acknowledges it (server-side) so the garage badge clears.
-  private selectJobOutcome(o: JobOutcomeRow): void {
-    this.selectedId = o.id;
-    if (!o.acknowledged) {
-      o.acknowledged = true;
-      const host = window.location.hostname;
-      fetch(`http://${host}:3001/api/jobs/${o.id}/acknowledge`, {
-        method: "POST",
-        headers: { Authorization: `Bearer ${this.token}` },
-      }).catch(e => console.error("acknowledge failed:", e));
     }
   }
 
@@ -150,9 +87,8 @@ class ReportScene extends Phaser.Scene {
     back.on("pointerdown", () => this.scene.start("GarageScene", { token: this.token }));
     add(back);
 
-    const entries = this.entries();
-    if (!entries.length) {
-      add(this.add.text(width / 2, height / 2, "No reports yet.\nSend a driver on a contract or deploy a squad.", {
+    if (!this.reports.length) {
+      add(this.add.text(width / 2, height / 2, "No reports yet.\nSend a squad on a job or deploy from the World Map.", {
         fontSize: "16px", fontFamily: "monospace", color: "#888888", align: "center",
       }).setOrigin(0.5));
       return;
@@ -163,40 +99,27 @@ class ReportScene extends Phaser.Scene {
     const detailX = listX + listW + 24;
     let y = 60;
 
-    for (const e of entries) {
-      const selected = e.row.id === this.selectedId;
+    for (const r of this.reports) {
+      const colour = OUTCOME_COLOUR[r.outcome];
+      const selected = r.id === this.selectedId;
       const rowH = 54;
       const bg = this.add.rectangle(listX, y, listW, rowH, selected ? 0x222233 : 0x14141c, 0.95)
         .setOrigin(0, 0).setStrokeStyle(1, selected ? 0x4444aa : 0x2a2a38, 1).setInteractive({ useHandCursor: true });
+      bg.on("pointerdown", () => { this.selectReport(r); this.render(); });
       add(bg);
-      if (e.kind === "squad") {
-        const r = e.row;
-        bg.on("pointerdown", () => { this.selectReport(r); this.render(); });
-        if (!r.read) add(this.add.circle(listX + listW - 14, y + 14, 5, 0xff3333));
-        add(this.add.text(listX + 10, y + 8, r.report.zoneName ?? r.zone_id, {
-          fontSize: "14px", fontFamily: "monospace", color: "#dddddd", fontStyle: "bold",
-        }));
-        add(this.add.text(listX + 10, y + 30, `${r.outcome.toUpperCase()} · ${r.report.assignment ?? ""}`, {
-          fontSize: "12px", fontFamily: "monospace", color: OUTCOME_COLOUR[r.outcome],
-        }));
-      } else {
-        const o = e.row;
-        bg.on("pointerdown", () => { this.selectJobOutcome(o); this.render(); });
-        if (!o.acknowledged) add(this.add.circle(listX + listW - 14, y + 14, 5, 0xff3333));
-        add(this.add.text(listX + 10, y + 8, o.driverName, {
-          fontSize: "14px", fontFamily: "monospace", color: "#dddddd", fontStyle: "bold",
-        }));
-        add(this.add.text(listX + 10, y + 30, `${o.tier.toUpperCase()} · ${o.jobType}`, {
-          fontSize: "12px", fontFamily: "monospace", color: TIER_COLOUR[o.tier],
-        }));
-      }
+      if (!r.read) add(this.add.circle(listX + listW - 14, y + 14, 5, 0xff3333));
+      add(this.add.text(listX + 10, y + 8, r.report.zoneName ?? r.zone_id, {
+        fontSize: "14px", fontFamily: "monospace", color: "#dddddd", fontStyle: "bold",
+      }));
+      add(this.add.text(listX + 10, y + 30, `${r.outcome.toUpperCase()} · ${r.report.assignment ?? ""}`, {
+        fontSize: "12px", fontFamily: "monospace", color: colour,
+      }));
       y += rowH + 6;
       if (y > height - 60) break; // simple cap; full scroll is out of scope for Phase 4
     }
 
-    const sel = entries.find(e => e.row.id === this.selectedId);
-    if (sel?.kind === "squad") this.renderDetail(add, sel.row, detailX, 60, width - detailX - 20);
-    else if (sel?.kind === "job") this.renderJobDetail(add, sel.row, detailX, 60, width - detailX - 20);
+    const sel = this.reports.find(r => r.id === this.selectedId);
+    if (sel) this.renderDetail(add, sel, detailX, 60, width - detailX - 20);
   }
 
   private renderDetail(
@@ -258,47 +181,6 @@ class ReportScene extends Phaser.Scene {
         fontSize: "13px", fontFamily: "monospace", color: "#ff88aa",
       }));
     }
-  }
-
-  private renderJobDetail(
-    add: (o: Phaser.GameObjects.GameObject) => Phaser.GameObjects.GameObject,
-    o: JobOutcomeRow, x: number, top: number, w: number,
-  ): void {
-    const colour = TIER_COLOUR[o.tier];
-    let y = top;
-
-    add(this.add.text(x, y, `${o.driverName} — ${o.tier.toUpperCase()}`, {
-      fontSize: "18px", fontFamily: "monospace", color: colour, fontStyle: "bold",
-    }));
-    y += 28;
-    add(this.add.text(x, y, `Contract: [${o.jobType}] ${o.jobDescription}`, {
-      fontSize: "13px", fontFamily: "monospace", color: "#cccccc",
-      wordWrap: { width: w }, lineSpacing: 4,
-    }));
-    y += Math.max(24, this.add.text(0, 0, `Contract: [${o.jobType}] ${o.jobDescription}`, { fontSize: "13px", fontFamily: "monospace", wordWrap: { width: w } }).setVisible(false).height + 8);
-
-    add(this.add.text(x, y, `Payout $${o.payout.toLocaleString()}`, {
-      fontSize: "14px", fontFamily: "monospace", color: o.payout > 0 ? "#00ff88" : "#888888", fontStyle: "bold",
-    }));
-    y += 28;
-
-    add(this.add.text(x, y, "CONSEQUENCES", { fontSize: "14px", fontFamily: "monospace", color: "#ffcc00", fontStyle: "bold" }));
-    y += 22;
-    const consequences: { text: string; colour: string }[] = [];
-    if (o.driverDead) consequences.push({ text: "Driver killed", colour: "#ff4444" });
-    else if (o.driverWounded) consequences.push({ text: "Driver wounded", colour: "#ffcc00" });
-    if (o.vehicleWrecked) consequences.push({ text: "Vehicle wrecked", colour: "#ff4444" });
-    if (o.wear > 0) consequences.push({ text: `Armour wear: ${o.wear}`, colour: "#aaaaaa" });
-    if (!consequences.length) consequences.push({ text: "No lasting damage", colour: "#88ccaa" });
-    for (const c of consequences) {
-      add(this.add.text(x, y, `  ${c.text}`, { fontSize: "13px", fontFamily: "monospace", color: c.colour }));
-      y += 20;
-    }
-
-    y += 10;
-    add(this.add.text(x, y, `Success chance ${(o.breakdown.successChance * 100).toFixed(0)}% · roll ${(o.breakdown.roll * 100).toFixed(0)}%`, {
-      fontSize: "12px", fontFamily: "monospace", color: "#888888",
-    }));
   }
 }
 
