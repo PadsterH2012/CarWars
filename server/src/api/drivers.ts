@@ -5,7 +5,7 @@ import { generateTieredPool } from '../rules/driverGenerator';
 import { generateRequestForDriver } from '../rules/requestGenerator';
 import { computeCapacity, isInvalid } from '../rules/capacity';
 import { driverTitleFromXp, xpToNextTitle } from '../rules/driverTitle';
-import { resolveDueHeadlessJobs } from './economy';
+import { resolveDueDeployments } from './deploy';
 
 export const driversRouter = Router();
 driversRouter.use(requireAuth);
@@ -61,8 +61,9 @@ driversRouter.post('/', async (req: AuthRequest, res) => {
 });
 
 driversRouter.get('/', async (req: AuthRequest, res) => {
-  // Resolve any headless jobs whose timer expired so statuses below are fresh.
-  await resolveDueHeadlessJobs(req.playerId!);
+  // Resolve any due squad deployments (jobs now run through the squad engine)
+  // so the statuses below are fresh.
+  await resolveDueDeployments(req.playerId!);
   const db = getDb();
   const result = await db.query(
     `SELECT id, name, skill, aggression, loyalty, xp, assigned_vehicle_id, alive, wounded, wounded_until, available_at

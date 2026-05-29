@@ -6,7 +6,6 @@ import { computeCapacity, isInvalid } from '../rules/capacity';
 import { WEAPONS } from '../rules/data/weapons';
 import { vehicleLimitReached } from './garages';
 import { resolveDueDeployments } from './deploy';
-import { resolveDueHeadlessJobs } from './economy';
 import type { VehicleLoadout, WeaponMount } from '@carwars/shared';
 
 const WORKSHOP_TRADE_IN = 0.5;   // percentage refunded when a weapon/ammo is removed
@@ -85,10 +84,9 @@ vehiclesRouter.post('/', async (req: AuthRequest, res) => {
 });
 
 vehiclesRouter.get('/', async (req: AuthRequest, res) => {
-  // Resolve any due squad deployments / headless jobs first so the status
-  // fields below reflect freshly-returned vehicles (mirrors GET /api/drivers).
+  // Resolve any due squad deployments first so the status fields below reflect
+  // freshly-returned vehicles (mirrors GET /api/drivers).
   await resolveDueDeployments(req.playerId!);
-  await resolveDueHeadlessJobs(req.playerId!);
 
   const db = getDb();
   // Each vehicle is decorated with an availability status so the garage and

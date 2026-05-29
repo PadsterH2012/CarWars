@@ -6,7 +6,7 @@ import { BODIES } from '../rules/data/bodies';
 import { TIRES } from '../rules/data/tires';
 import { POWER_PLANTS } from '../rules/data/power-plants';
 import type { VehicleLoadout, DamageState, ArmorDistribution } from '@carwars/shared';
-import { resolveHeadlessJob } from '../rules/headlessJob';
+import { resolveDueDeployments } from './deploy';
 
 export const economyRouter = Router();
 economyRouter.use(requireAuth);
@@ -239,104 +239,12 @@ economyRouter.post('/prize', async (req: AuthRequest, res) => {
 export const jobsRouter = Router();
 jobsRouter.use(requireAuth);
 
-const STATIC_JOBS: Record<string, { job_type: string; description: string; payout: number; division_min: number }[]> = {
-  'town-1': [
-    { job_type: 'escort',   description: 'Escort a cargo truck to the next town', payout: 3000, division_min: 5 },
-    { job_type: 'delivery', description: 'Deliver a sealed crate — no questions asked', payout: 2500, division_min: 5 },
-    { job_type: 'ambush',   description: 'Intercept a rival courier on Route 66', payout: 4000, division_min: 10 },
-  ],
-};
-
-jobsRouter.get('/', async (req: AuthRequest, res) => {
-  const zoneId = req.query.zoneId as string;
-  if (!zoneId) return res.status(400).json({ error: 'zoneId required' });
-
-  const db = getDb();
-  const pResult = await db.query(`SELECT division FROM players WHERE id = $1`, [req.playerId]);
-  const playerDiv = pResult.rows[0]?.division ?? 5;
-
-  const existing = await db.query(
-    `SELECT id FROM jobs WHERE zone_id = $1 AND taken_by IS NULL AND completed = FALSE AND division_min <= $2 LIMIT 1`,
-    [zoneId, playerDiv]
-  );
-  if (!existing.rows.length && STATIC_JOBS[zoneId]) {
-    for (const job of STATIC_JOBS[zoneId]) {
-      await db.query(
-        `INSERT INTO jobs (zone_id, job_type, description, payout, division_min) VALUES ($1,$2,$3,$4,$5)`,
-        [zoneId, job.job_type, job.description, job.payout, job.division_min]
-      );
-    }
-  }
-
-  const result = await db.query(
-    `SELECT id, job_type, description, payout, division_min
-     FROM jobs WHERE zone_id = $1 AND completed = FALSE AND taken_by IS NULL
-     AND division_min <= $2`,
-    [zoneId, playerDiv]
-  );
-  return res.json(result.rows);
-});
-
-jobsRouter.post('/:id/take', async (req: AuthRequest, res) => {
-  const { id } = req.params;
-  const db = getDb();
-
-  const result = await db.query(`SELECT id, description, payout, division_min FROM jobs WHERE id = $1`, [id]);
-  if (!result.rows.length) return res.status(404).json({ error: 'Job not found' });
-  const job = result.rows[0];
-
-  const pResult = await db.query(`SELECT division FROM players WHERE id = $1`, [req.playerId]);
-  if (!pResult.rows.length) return res.status(401).json({ error: 'Player not found' });
-  if (pResult.rows[0].division < job.division_min) return res.status(403).json({ error: 'Division too low' });
-
-  const updateResult = await db.query(
-    `UPDATE jobs SET taken_by = $1 WHERE id = $2 AND taken_by IS NULL AND completed = FALSE`,
-    [req.playerId, id]
-  );
-  if (updateResult.rowCount === 0) return res.status(409).json({ error: 'Job already taken' });
-
-  return res.json({ ok: true, job: { id: job.id, description: job.description, payout: job.payout } });
-});
-
-jobsRouter.post('/:id/complete', async (req: AuthRequest, res) => {
-  const { id } = req.params;
-  const db = getDb();
-
-  const result = await db.query(
-    `SELECT id, taken_by, completed, payout, job_type, zone_id FROM jobs WHERE id = $1`, [id]
-  );
-  if (!result.rows.length) return res.status(404).json({ error: 'Job not found' });
-  const job = result.rows[0];
-  if (job.completed) return res.status(409).json({ error: 'Already completed' });
-  if (job.taken_by !== req.playerId) return res.status(403).json({ error: 'Not your job' });
-
-  const client = await db.connect();
-  try {
-    await client.query('BEGIN');
-    await client.query(`UPDATE jobs SET completed = TRUE WHERE id = $1`, [id]);
-    await client.query(`UPDATE players SET money = money + $1 WHERE id = $2`, [job.payout, req.playerId]);
-    await client.query(
-      `INSERT INTO event_history (player_id, event_type, result, money_delta) VALUES ($1, $2, $3, $4)`,
-      [req.playerId, job.job_type, JSON.stringify({ jobId: id, zoneId: job.zone_id }), job.payout]
-    );
-    await client.query('COMMIT');
-  } catch (e) {
-    await client.query('ROLLBACK');
-    throw e;
-  } finally {
-    client.release();
-  }
-
-  const pResult = await db.query(`SELECT money FROM players WHERE id = $1`, [req.playerId]);
-  return res.json({ payout: job.payout, moneyNew: pResult.rows[0].money });
-});
-
 // ─── Phase 2 — Headless jobs ───────────────────────────────────────────────
-// Headless jobs auto-resolve: the player assigns an available driver and the
-// outcome is rolled (simplified, see rules/headlessJob.ts) when the timer
-// expires. Resolution is LAZY — it happens on the next API call, never during
-// an arena match (anti-rabbit-hole rule 4). Payouts are smaller than arena
-// fights (balance target $200-600) so arena stays the lucrative option.
+// Headless jobs are the available-contract board for a zone. As of Phase 5 they
+// are run by sending a squad (POST /:id/deploy) and resolve through the squad
+// engine (resolveDueDeployments) into engagement_reports — the old single-driver
+// contract path has been retired. Payouts stay smaller than arena fights
+// (balance target $200-600) so arena stays the lucrative option.
 
 const HEADLESS_JOBS: Record<string, { job_type: string; description: string; payout: number; difficulty: number; division_min: number }[]> = {
   'town-1': [
@@ -346,116 +254,10 @@ const HEADLESS_JOBS: Record<string, { job_type: string; description: string; pay
   ],
 };
 
-// Job timer window in minutes (real-time — the game has no in-game day counter).
-const HEADLESS_MIN_MINUTES = 2;
-const HEADLESS_MAX_MINUTES = 5;
-// How long a driver is sidelined after being wounded on a headless job.
-const WOUND_RECOVERY_MINUTES = 3;
-
-// Resolve any of this player's headless jobs whose timer has expired. Idempotent
-// and safe to call from multiple endpoints (GET /drivers, /headless, /outcomes).
-export async function resolveDueHeadlessJobs(playerId: string): Promise<void> {
-  const db = getDb();
-  const due = await db.query(
-    `SELECT j.id AS job_id, j.payout, j.difficulty, j.description, j.job_type,
-            d.id AS driver_id, d.skill, d.name AS driver_name, d.assigned_vehicle_id
-     FROM jobs j JOIN drivers d ON d.id = j.assigned_driver_id
-     WHERE d.player_id = $1 AND j.headless = TRUE AND j.outcome IS NULL
-       AND j.resolves_at IS NOT NULL AND j.resolves_at <= NOW()`,
-    [playerId],
-  );
-
-  for (const row of due.rows) {
-    const outcome = resolveHeadlessJob(
-      { skill: row.skill, hasVehicle: !!row.assigned_vehicle_id },
-      { payout: row.payout, difficulty: row.difficulty },
-    );
-
-    const client = await db.connect();
-    try {
-      await client.query('BEGIN');
-
-      // Claim this job atomically — resolveDueHeadlessJobs can fire from several
-      // endpoints at once (GET /drivers, /vehicles, /outcomes), and without a
-      // lock a job could resolve twice (double payout + duplicate report).
-      const claim = await client.query(
-        `SELECT id FROM jobs WHERE id = $1 AND outcome IS NULL FOR UPDATE SKIP LOCKED`,
-        [row.job_id],
-      );
-      if (!claim.rows.length) { await client.query('ROLLBACK'); continue; }
-
-      if (outcome.payout > 0) {
-        await client.query(`UPDATE players SET money = money + $1 WHERE id = $2`, [outcome.payout, playerId]);
-      }
-
-      // Vehicle consequences — wear chips the front armour face (feeds the
-      // existing repair economy); a wreck flags the vehicle destroyed.
-      if (row.assigned_vehicle_id) {
-        if (outcome.vehicleWrecked) {
-          await client.query(
-            `UPDATE vehicles SET damage_state = jsonb_set(COALESCE(damage_state, '{}'::jsonb), '{destroyed}', 'true')
-             WHERE id = $1`,
-            [row.assigned_vehicle_id],
-          );
-        } else if (outcome.wear > 0) {
-          await client.query(
-            `UPDATE vehicles
-               SET damage_state = jsonb_set(
-                 damage_state, '{armor,front}',
-                 to_jsonb(GREATEST(0, COALESCE((damage_state->'armor'->>'front')::int, 0) - $2)))
-             WHERE id = $1 AND damage_state ? 'armor'`,
-            [row.assigned_vehicle_id, outcome.wear],
-          );
-        }
-      }
-
-      // Driver consequences — dead, wounded (sidelined to recover), or freed.
-      if (outcome.driverDead) {
-        await client.query(`UPDATE drivers SET alive = FALSE, available_at = NOW() WHERE id = $1`, [row.driver_id]);
-      } else if (outcome.driverWounded) {
-        await client.query(
-          `UPDATE drivers SET wounded = TRUE, wounded_until = NOW() + ($2 || ' minutes')::interval, available_at = NOW()
-           WHERE id = $1`,
-          [row.driver_id, String(WOUND_RECOVERY_MINUTES)],
-        );
-      } else {
-        await client.query(`UPDATE drivers SET available_at = NOW() WHERE id = $1`, [row.driver_id]);
-      }
-
-      // Persist the after-action report (acknowledged=false until the player sees it).
-      const report = {
-        ...outcome,
-        jobDescription: row.description,
-        jobType: row.job_type,
-        driverName: row.driver_name,
-        acknowledged: false,
-      };
-      await client.query(`UPDATE jobs SET outcome = $1, completed = TRUE WHERE id = $2`, [JSON.stringify(report), row.job_id]);
-
-      await client.query(
-        `INSERT INTO gang_ledger (gang_id, event_type, amount, description, result)
-         VALUES ((SELECT id FROM gangs WHERE owner_player_id = $1), 'headless_job', $2, $3, $4)`,
-        [
-          playerId, outcome.payout,
-          `Headless job (${outcome.tier}): ${row.description}`,
-          JSON.stringify({ jobId: row.job_id, driverId: row.driver_id }),
-        ],
-      );
-
-      await client.query('COMMIT');
-    } catch (e) {
-      await client.query('ROLLBACK');
-      throw e;
-    } finally {
-      client.release();
-    }
-  }
-}
-
 // GET /api/jobs/headless?zoneId= — available headless jobs for a zone. Seeds the
 // zone pool on first visit (like the arena job board) and resolves any due jobs.
 jobsRouter.get('/headless', async (req: AuthRequest, res) => {
-  await resolveDueHeadlessJobs(req.playerId!);
+  await resolveDueDeployments(req.playerId!);
   const zoneId = (req.query.zoneId as string) || 'town-1';
   const db = getDb();
   const pResult = await db.query(`SELECT division FROM players WHERE id = $1`, [req.playerId]);
@@ -485,86 +287,71 @@ jobsRouter.get('/headless', async (req: AuthRequest, res) => {
   return res.json(rows);
 });
 
-// GET /api/jobs/outcomes — unacknowledged after-action reports for this player.
-jobsRouter.get('/outcomes', async (req: AuthRequest, res) => {
-  await resolveDueHeadlessJobs(req.playerId!);
-  const db = getDb();
-  const rows = (await db.query(
-    `SELECT j.id, j.outcome
-     FROM jobs j JOIN drivers d ON d.id = j.assigned_driver_id
-     WHERE d.player_id = $1 AND j.outcome IS NOT NULL
-       AND COALESCE((j.outcome->>'acknowledged')::boolean, FALSE) = FALSE`,
-    [req.playerId],
-  )).rows;
-  return res.json(rows.map(r => ({ id: r.id, ...r.outcome })));
-});
-
-// GET /api/jobs/active — this player's in-progress headless contracts (driver
-// assigned, not yet resolved). Used by the Contracts "in progress" section.
+// GET /api/jobs/active — this player's in-progress job deployments (squad out,
+// not yet resolved). Used by the Contracts "in progress" section. Job progress
+// now lives in squad_deployments (Phase 5), so resolve due deployments first.
 jobsRouter.get('/active', async (req: AuthRequest, res) => {
-  await resolveDueHeadlessJobs(req.playerId!);
+  await resolveDueDeployments(req.playerId!);
   const db = getDb();
   const rows = (await db.query(
-    `SELECT j.id, j.job_type, j.description, j.payout, j.resolves_at,
-            d.id AS driver_id, d.name AS driver_name, d.skill
-       FROM jobs j JOIN drivers d ON d.id = j.assigned_driver_id
-      WHERE d.player_id = $1 AND j.headless = TRUE AND j.outcome IS NULL
-      ORDER BY j.resolves_at ASC`,
-    [req.playerId],
-  )).rows;
+    `SELECT sd.id AS deployment_id, j.id AS job_id, j.job_type, j.description, j.payout,
+            sd.vehicle_ids,
+            GREATEST(0, CEIL(EXTRACT(EPOCH FROM (sd.resolves_at - NOW()))))::int AS remaining_seconds
+       FROM squad_deployments sd JOIN jobs j ON j.id = sd.job_id
+      WHERE sd.player_id = $1 AND sd.status = 'in_transit'
+      ORDER BY sd.resolves_at ASC`,
+    [req.playerId])).rows;
   return res.json(rows.map(r => ({
-    id: r.id, jobType: r.job_type, description: r.description, payout: r.payout,
-    driverId: r.driver_id, driverName: r.driver_name, skill: r.skill,
-    remainingSeconds: Math.max(0, Math.ceil((new Date(r.resolves_at).getTime() - Date.now()) / 1000)),
+    id: r.deployment_id, jobId: r.job_id, jobType: r.job_type, description: r.description,
+    payout: r.payout, vehicleCount: (r.vehicle_ids ?? []).length, remainingSeconds: r.remaining_seconds,
   })));
 });
 
-// POST /api/jobs/assign — assign an available driver to a headless job.
-jobsRouter.post('/assign', async (req: AuthRequest, res) => {
-  const { jobId, driverId } = req.body;
-  if (!jobId || !driverId) return res.status(400).json({ error: 'jobId and driverId required' });
+// ─── Phase 5 — send a squad to a job ───────────────────────────────────────
+// Commit 1–4 vehicles (with their assigned crew) to a job. Creates a job-linked
+// squad_deployments row, sidelines the crew, and the vehicles then show as
+// `deployed` on /api/vehicles. Task 2's resolveDueDeployments resolves the
+// job-linked row and marks the job completed when the timer expires.
+const JOB_SQUAD_CAP = 4;
+function jobDeploymentSeconds(difficulty: number): number { return 120 + difficulty * 30; }
+
+jobsRouter.post('/:id/deploy', async (req: AuthRequest, res) => {
+  const { id } = req.params;
+  const vehicleIds = req.body?.vehicleIds;
+  if (!Array.isArray(vehicleIds) || !vehicleIds.length) return res.status(400).json({ error: 'vehicleIds required' });
+  if (vehicleIds.length > JOB_SQUAD_CAP) return res.status(400).json({ error: `A squad is at most ${JOB_SQUAD_CAP} vehicles` });
   const db = getDb();
+  await resolveDueDeployments(req.playerId!);
+
+  const jr = (await db.query(`SELECT id, difficulty, completed FROM jobs WHERE id = $1`, [id])).rows[0];
+  if (!jr) return res.status(404).json({ error: 'Job not found' });
+  if (jr.completed) return res.status(409).json({ error: 'Job already completed' });
+  const existing = await db.query(`SELECT 1 FROM squad_deployments WHERE job_id = $1 AND status = 'in_transit' LIMIT 1`, [id]);
+  if (existing.rows.length) return res.status(409).json({ error: 'Job already has a squad out' });
+
+  const vRes = await db.query(
+    `SELECT id FROM vehicles WHERE id = ANY($1::uuid[]) AND player_id = $2
+       AND COALESCE((damage_state->>'destroyed')::boolean,false)=false AND in_arena=false`,
+    [vehicleIds, req.playerId]);
+  if (vRes.rows.length !== vehicleIds.length) return res.status(403).json({ error: 'One or more vehicles are unavailable or not owned' });
+
+  const busy = await db.query(`SELECT 1 FROM squad_deployments WHERE player_id=$1 AND status='in_transit' AND vehicle_ids && $2::uuid[] LIMIT 1`, [req.playerId, vehicleIds]);
+  if (busy.rows.length) return res.status(409).json({ error: 'A selected vehicle is already deployed' });
 
   const dRes = await db.query(
-    `SELECT id, alive, available_at FROM drivers WHERE id = $1 AND player_id = $2`,
-    [driverId, req.playerId],
-  );
-  if (!dRes.rows.length) return res.status(403).json({ error: 'Driver not found' });
-  const drv = dRes.rows[0];
-  if (!drv.alive) return res.status(409).json({ error: 'Driver is dead' });
-  if (drv.available_at && new Date(drv.available_at).getTime() > Date.now()) {
-    return res.status(409).json({ error: 'Driver is unavailable (on a job or wounded)' });
-  }
+    `SELECT id FROM drivers WHERE assigned_vehicle_id = ANY($1::uuid[]) AND player_id = $2
+       AND alive = true AND COALESCE(available_at, NOW()) <= NOW()`,
+    [vehicleIds, req.playerId]);
+  if (!dRes.rows.length) return res.status(409).json({ error: 'No available crew for the selected vehicles' });
+  const driverIds = dRes.rows.map(r => r.id);
 
-  const jRes = await db.query(
-    `SELECT id, headless, completed, assigned_driver_id FROM jobs WHERE id = $1`, [jobId],
-  );
-  if (!jRes.rows.length) return res.status(404).json({ error: 'Job not found' });
-  const job = jRes.rows[0];
-  if (!job.headless) return res.status(400).json({ error: 'Not a headless job' });
-  if (job.completed || job.assigned_driver_id) return res.status(409).json({ error: 'Job already assigned' });
+  const seconds = jobDeploymentSeconds(jr.difficulty);
+  const ins = await db.query(
+    `INSERT INTO squad_deployments (player_id, job_id, assignment, driver_ids, vehicle_ids, resolves_at)
+     VALUES ($1,$2,'job',$3::uuid[],$4::uuid[], NOW() + ($5 || ' seconds')::interval) RETURNING id, resolves_at`,
+    [req.playerId, id, driverIds, vehicleIds, String(seconds)]);
+  await db.query(`UPDATE drivers SET available_at = $2 WHERE id = ANY($1::uuid[])`, [driverIds, ins.rows[0].resolves_at]);
+  await db.query(`UPDATE jobs SET assigned_driver_id = $2 WHERE id = $1`, [id, driverIds[0]]);
 
-  const minutes = HEADLESS_MIN_MINUTES + Math.floor(Math.random() * (HEADLESS_MAX_MINUTES - HEADLESS_MIN_MINUTES + 1));
-  const upd = await db.query(
-    `UPDATE jobs SET assigned_driver_id = $1, resolves_at = NOW() + ($2 || ' minutes')::interval
-     WHERE id = $3 AND assigned_driver_id IS NULL AND completed = FALSE
-     RETURNING resolves_at`,
-    [driverId, String(minutes), jobId],
-  );
-  if (!upd.rowCount) return res.status(409).json({ error: 'Job already assigned' });
-
-  await db.query(`UPDATE drivers SET available_at = $1 WHERE id = $2`, [upd.rows[0].resolves_at, driverId]);
-  return res.json({ ok: true, resolvesAt: upd.rows[0].resolves_at, etaMinutes: minutes });
-});
-
-// POST /api/jobs/:id/acknowledge — mark an after-action report as seen.
-jobsRouter.post('/:id/acknowledge', async (req: AuthRequest, res) => {
-  const db = getDb();
-  await db.query(
-    `UPDATE jobs j SET outcome = jsonb_set(j.outcome, '{acknowledged}', 'true')
-     FROM drivers d
-     WHERE d.id = j.assigned_driver_id AND d.player_id = $2 AND j.id = $1 AND j.outcome IS NOT NULL`,
-    [req.params.id, req.playerId],
-  );
-  return res.json({ ok: true });
+  return res.status(201).json({ deploymentId: ins.rows[0].id, etaSeconds: seconds, resolvesAt: ins.rows[0].resolves_at });
 });

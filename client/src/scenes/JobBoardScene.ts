@@ -1,15 +1,17 @@
 import Phaser from 'phaser';
 import { bindFullscreenToggle, onLayout } from '../ui/responsive';
-import { openDriverPicker } from '../ui/DriverPicker';
+import { openSquadPicker } from '../ui/DriverPicker';
 
-interface Job { id: string; job_type: string; description: string; payout: number; }
-interface Contract { id: string; job_type: string; description: string; payout: number; difficulty: number; }
-interface ActiveContract {
-  id: string; jobType: string; description: string; payout: number;
-  driverId: string; driverName: string; skill: number; remainingSeconds: number;
+interface Job {
+  id: string; job_type: string; description: string; payout: number;
+  difficulty: number; division_min: number;
+}
+interface ActiveJob {
+  id: string; jobId: string; jobType: string; description: string;
+  payout: number; vehicleCount: number; remainingSeconds: number;
 }
 
-// Compact ETA used by the in-progress contract list ("1m 20s" / "45s").
+// Compact ETA used by the in-progress job list ("1m 20s" / "45s").
 function fmtRemaining(seconds: number): string {
   if (seconds <= 0) return 'now';
   const m = Math.floor(seconds / 60);
@@ -27,25 +29,18 @@ function difficultyColour(difficulty: number): string {
 export class JobBoardScene extends Phaser.Scene {
   private token = '';
   private header!: Phaser.GameObjects.Text;
-  private activeBanner?: Phaser.GameObjects.Text;
   private emptyText?: Phaser.GameObjects.Text;
+  private jobs: Job[] = [];
+  private activeJobs: ActiveJob[] = [];
   private jobRows: Array<{
     descText: Phaser.GameObjects.Text;
     payoutText: Phaser.GameObjects.Text;
-    takeBtn: Phaser.GameObjects.Text;
-  }> = [];
-  private contracts: Contract[] = [];
-  private activeContracts: ActiveContract[] = [];
-  private contractsHeading?: Phaser.GameObjects.Text;
-  private contractRows: Array<{
-    descText: Phaser.GameObjects.Text;
-    payoutText: Phaser.GameObjects.Text;
     difficultyText: Phaser.GameObjects.Text;
-    assignBtn: Phaser.GameObjects.Text;
+    sendBtn: Phaser.GameObjects.Text;
   }> = [];
   private inProgressHeading?: Phaser.GameObjects.Text;
   private inProgressRows: Array<{
-    info: ActiveContract;
+    info: ActiveJob;
     descText: Phaser.GameObjects.Text;
     etaText: Phaser.GameObjects.Text;
   }> = [];
@@ -59,94 +54,57 @@ export class JobBoardScene extends Phaser.Scene {
   async create(): Promise<void> {
     // Reset per-run state so scene.restart() doesn't retain stale references.
     this.jobRows = [];
-    this.contractRows = [];
     this.inProgressRows = [];
     const host = window.location.hostname;
-    const res = await fetch(`http://${host}:3001/api/jobs?zoneId=town-1`, {
-      headers: { Authorization: `Bearer ${this.token}` }
-    });
-    const jobs: Job[] = await res.json();
 
-    this.contracts = await (await fetch(`http://${host}:3001/api/jobs/headless?zoneId=town-1`, {
+    this.jobs = await (await fetch(`http://${host}:3001/api/jobs/headless?zoneId=town-1`, {
       headers: { Authorization: `Bearer ${this.token}` }
     })).json();
-    this.activeContracts = await (await fetch(`http://${host}:3001/api/jobs/active`, {
+    this.activeJobs = await (await fetch(`http://${host}:3001/api/jobs/active`, {
       headers: { Authorization: `Bearer ${this.token}` }
     })).json();
 
-    this.header = this.add.text(0, 0, 'JOB BOARD — Midville', {
+    this.header = this.add.text(0, 0, 'JOBS — send a crew', {
       color: '#ff4444', fontSize: '24px', fontFamily: 'monospace', fontStyle: 'bold'
     }).setOrigin(0.5);
 
-    const activeJobId = localStorage.getItem('cw_active_job');
-    if (activeJobId) {
-      this.activeBanner = this.add.text(0, 0, 'Active job in progress — complete it in the arena', {
-        color: '#ffcc00', fontSize: '13px', fontFamily: 'monospace'
-      }).setOrigin(0.5);
-    }
-
-    if (!jobs.length) {
+    if (!this.jobs.length) {
       this.emptyText = this.add.text(0, 0, 'No jobs available.', {
         color: '#888888', fontSize: '18px', fontFamily: 'monospace'
       }).setOrigin(0.5);
     } else {
-      jobs.forEach(job => {
+      this.jobs.forEach(job => {
         const descText = this.add.text(0, 0, `[${job.job_type.toUpperCase()}] ${job.description}`, {
           color: '#cccccc', fontSize: '14px', fontFamily: 'monospace', wordWrap: { width: 700 }
         });
-        const payoutText = this.add.text(0, 0, `Payout: $${job.payout.toLocaleString()}`, {
+        const payoutText = this.add.text(0, 0, `Payout $${job.payout.toLocaleString()}`, {
           color: '#ffcc00', fontSize: '14px', fontFamily: 'monospace'
         });
-        const alreadyActive = activeJobId === job.id;
-        const takeBtn = this.add.text(0, 0, alreadyActive ? '[ACTIVE]' : '[TAKE]', {
-          color: alreadyActive ? '#ffcc00' : '#00ff88',
-          fontSize: '14px', fontFamily: 'monospace',
-          backgroundColor: alreadyActive ? '#332200' : '#003322',
-          padding: { x: 6, y: 3 }
-        }).setOrigin(1, 0);
-
-        if (!alreadyActive) {
-          takeBtn.setInteractive();
-          takeBtn.on('pointerdown', () => this.takeJob(job));
-        }
-        this.jobRows.push({ descText, payoutText, takeBtn });
+        const difficultyText = this.add.text(0, 0, `Difficulty ${job.difficulty}`, {
+          color: difficultyColour(job.difficulty), fontSize: '14px', fontFamily: 'monospace'
+        });
+        const sendBtn = this.add.text(0, 0, '[SEND SQUAD]', {
+          color: '#00ff88', fontSize: '14px', fontFamily: 'monospace',
+          backgroundColor: '#003322', padding: { x: 6, y: 3 }
+        }).setOrigin(1, 0).setInteractive();
+        sendBtn.on('pointerdown', () => this.sendSquad(job));
+        this.jobRows.push({ descText, payoutText, difficultyText, sendBtn });
       });
     }
 
-    // --- Contracts section: send a driver on a headless job ---
-    this.contractsHeading = this.add.text(0, 0, 'CONTRACTS — send a driver', {
-      color: '#ff4444', fontSize: '18px', fontFamily: 'monospace', fontStyle: 'bold'
-    });
-    this.contracts.forEach(contract => {
-      const descText = this.add.text(0, 0, `[${contract.job_type.toUpperCase()}] ${contract.description}`, {
-        color: '#cccccc', fontSize: '14px', fontFamily: 'monospace', wordWrap: { width: 700 }
-      });
-      const payoutText = this.add.text(0, 0, `Payout: $${contract.payout.toLocaleString()}`, {
-        color: '#ffcc00', fontSize: '14px', fontFamily: 'monospace'
-      });
-      const difficultyText = this.add.text(0, 0, `Difficulty ${contract.difficulty}`, {
-        color: difficultyColour(contract.difficulty), fontSize: '14px', fontFamily: 'monospace'
-      });
-      const assignBtn = this.add.text(0, 0, '[ASSIGN DRIVER]', {
-        color: '#00ff88', fontSize: '14px', fontFamily: 'monospace',
-        backgroundColor: '#003322', padding: { x: 6, y: 3 }
-      }).setOrigin(1, 0).setInteractive();
-      assignBtn.on('pointerdown', () => this.assignContract(contract));
-      this.contractRows.push({ descText, payoutText, difficultyText, assignBtn });
-    });
-
-    // --- In-progress contracts with live ETA ---
+    // --- In-progress job deployments with live ETA ---
     this.inProgressHeading = this.add.text(0, 0, 'IN PROGRESS', {
       color: '#ffaa44', fontSize: '18px', fontFamily: 'monospace', fontStyle: 'bold'
     });
-    this.activeContracts.forEach(ac => {
-      const descText = this.add.text(0, 0, `${ac.driverName} (sk${ac.skill}) → [${ac.jobType.toUpperCase()}] ${ac.description}`, {
+    this.activeJobs.forEach(aj => {
+      const descText = this.add.text(0, 0,
+        `[${aj.jobType.toUpperCase()}] ${aj.description}  (${aj.vehicleCount} car${aj.vehicleCount === 1 ? '' : 's'})`, {
         color: '#cccccc', fontSize: '14px', fontFamily: 'monospace', wordWrap: { width: 700 }
       });
-      const etaText = this.add.text(0, 0, `ETA ${fmtRemaining(ac.remainingSeconds)}`, {
+      const etaText = this.add.text(0, 0, `ETA ${fmtRemaining(aj.remainingSeconds)}`, {
         color: '#ffaa44', fontSize: '14px', fontFamily: 'monospace'
       }).setOrigin(1, 0);
-      this.inProgressRows.push({ info: ac, descText, etaText });
+      this.inProgressRows.push({ info: aj, descText, etaText });
     });
 
     // Tick in-progress ETAs down once a second. Phaser clears scene timers on
@@ -170,29 +128,18 @@ export class JobBoardScene extends Phaser.Scene {
     const { width, height } = this.scale;
     const cx = width / 2;
     this.header.setPosition(cx, 30);
-    this.activeBanner?.setPosition(cx, 65);
     this.emptyText?.setPosition(cx, height / 2);
 
     const leftX = Math.max(60, width * 0.08);
     const rightX = Math.min(width - 60, width * 0.92);
-    this.jobRows.forEach((row, i) => {
-      const y = 110 + i * 90;
-      row.descText.setPosition(leftX, y);
-      row.descText.setStyle({ wordWrap: { width: rightX - leftX - 120 } });
-      row.payoutText.setPosition(leftX, y + 24);
-      row.takeBtn.setPosition(rightX, y + 10);
-    });
 
-    // Stack the contracts section below the last arena-job row.
-    let y = 110 + this.jobRows.length * 90 + 20;
-    this.contractsHeading?.setPosition(leftX, y);
-    y += 36;
-    this.contractRows.forEach(row => {
+    let y = 90;
+    this.jobRows.forEach(row => {
       row.descText.setPosition(leftX, y);
       row.descText.setStyle({ wordWrap: { width: rightX - leftX - 140 } });
       row.payoutText.setPosition(leftX, y + 24);
       row.difficultyText.setPosition(leftX + 180, y + 24);
-      row.assignBtn.setPosition(rightX, y + 10);
+      row.sendBtn.setPosition(rightX, y + 10);
       y += 78;
     });
 
@@ -217,40 +164,20 @@ export class JobBoardScene extends Phaser.Scene {
     });
   }
 
-  private async assignContract(contract: Contract): Promise<void> {
-    const driverId = await openDriverPicker(this, this.token, { title: 'ASSIGN DRIVER TO CONTRACT' });
-    if (!driverId) return; // cancelled
+  private async sendSquad(job: Job): Promise<void> {
+    const vehicleIds = await openSquadPicker(this, this.token, { title: 'SEND SQUAD ON JOB' });
+    if (!vehicleIds) return; // cancelled
     const host = window.location.hostname;
-    const res = await fetch(`http://${host}:3001/api/jobs/assign`, {
+    const res = await fetch(`http://${host}:3001/api/jobs/${job.id}/deploy`, {
       method: 'POST',
       headers: { Authorization: `Bearer ${this.token}`, 'Content-Type': 'application/json' },
-      body: JSON.stringify({ jobId: contract.id, driverId }),
+      body: JSON.stringify({ vehicleIds }),
     });
     if (res.ok) {
       this.scene.restart();
     } else {
       const body = await res.json();
-      this.errorText = this.add.text(0, 0, body.error ?? 'Failed to assign contract', {
-        color: '#ff4444', fontSize: '14px', fontFamily: 'monospace'
-      }).setOrigin(0.5);
-      this.layout();
-    }
-  }
-
-  private async takeJob(job: Job): Promise<void> {
-    const host = window.location.hostname;
-    const res = await fetch(`http://${host}:3001/api/jobs/${job.id}/take`, {
-      method: 'POST',
-      headers: { Authorization: `Bearer ${this.token}` }
-    });
-    if (res.ok) {
-      localStorage.setItem('cw_active_job', job.id);
-      localStorage.setItem('cw_active_job_desc', job.description);
-      localStorage.setItem('cw_active_job_payout', String(job.payout));
-      this.scene.start('GarageScene', { token: this.token });
-    } else {
-      const body = await res.json();
-      this.errorText = this.add.text(0, 0, body.error ?? 'Failed to take job', {
+      this.errorText = this.add.text(0, 0, body.error ?? 'Failed to deploy squad', {
         color: '#ff4444', fontSize: '14px', fontFamily: 'monospace'
       }).setOrigin(0.5);
       this.layout();

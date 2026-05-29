@@ -1,3 +1,6 @@
+// NOTE: As of Phase 5 this pure resolver is no longer wired into the API — jobs
+// run through the squad engine (resolveDueDeployments). Kept for its unit test.
+//
 // Headless job resolver — a simplified combat roll, NOT the full tick engine
 // (Phase 2 anti-rabbit-hole rule 3). A driver runs a job solo; their skill,
 // whether they have a vehicle, and the job difficulty decide the outcome.

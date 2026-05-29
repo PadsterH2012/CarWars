@@ -6,7 +6,7 @@ import { preloadVehicleSprites, bodySpriteKey } from '../game/VehicleSprite';
 type AvailabilityStatus = 'available' | 'deployed' | 'on_job' | 'in_arena' | 'wounded';
 interface Vehicle { id: string; name: string; value: number; damage_state: any; loadout: any; in_arena?: boolean; status?: AvailabilityStatus; remainingSeconds?: number; deploymentZone?: string | null; }
 interface Driver { id: string; name: string; skill: number; xp: number; assigned_vehicle_id: string | null; alive: boolean; wounded: boolean; wounded_until: string | null; title?: string; xpToNext?: number; status?: AvailabilityStatus; remainingSeconds?: number; }
-interface Deployment { id: string; zone_id: string; assignment: string; status: string; eta_seconds: number; }
+interface Deployment { id: string; zone_id: string; job_id?: string | null; assignment: string; status: string; eta_seconds: number; }
 
 // Compact ETA used by the status pills + deployments list ("1m 20s" / "45s").
 function fmtRemaining(seconds: number): string {
@@ -92,7 +92,10 @@ export class GarageScene extends Phaser.Scene {
     if (repRes.ok) this.unreadReports = (await repRes.json()).unread ?? 0;
     if (depRes.ok) {
       const rows: Deployment[] = await depRes.json();
-      this.deployments = rows.filter(d => d.status === 'in_transit');
+      // Job deployments surface on the Job Board's "in progress" list (and the
+      // vehicle/driver rows already show DEPLOYED/ON JOB), so the garage's
+      // squad-deployment panel shows only zone deployments — never a job's null zone.
+      this.deployments = rows.filter(d => d.status === 'in_transit' && !d.job_id);
     }
 
     this.mainLayer = this.add.container(0, 0);
