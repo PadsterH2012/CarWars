@@ -233,25 +233,122 @@ class WorldMapScene extends Phaser.Scene {
 
   private openTravelPanel(node: WorldNode, road: WorldRoad): void {
     this.closeTravelPanel();
-    const pw = 280, ph = 180;
+    const pw = 280, ph = 214;
     const px = (this.scale.width - pw) / 2, py = (this.scale.height - ph) / 2;
     const panel = this.add.container(px, py);
     const bg = this.add.rectangle(0, 0, pw, ph, C_PANEL_BG, 0.95).setOrigin(0, 0).setStrokeStyle(2, 0x333344, 1);
     panel.add(bg);
-    const title = this.add.text(pw / 2, 16, "Travel to " + node.name, { fontSize: "16px", fontFamily: "monospace", color: "#ffcc00", fontStyle: "bold" }).setOrigin(0.5, 0);
+    const title = this.add.text(pw / 2, 16, node.name, { fontSize: "16px", fontFamily: "monospace", color: "#ffcc00", fontStyle: "bold" }).setOrigin(0.5, 0);
     panel.add(title);
     let y = 50;
     for (const line of ["Distance: " + road.distance + " miles", "Road: " + road.roadType, "Danger: " + Math.round(road.danger * 100) + "%"]) {
       panel.add(this.add.text(20, y, line, { fontSize: "13px", fontFamily: "monospace", color: "#aaaaaa" }));
       y += 22;
     }
-    const travelBtn = this.add.text(pw / 2 - 60, ph - 40, "[TRAVEL]", { fontSize: "14px", fontFamily: "monospace", color: "#00ff88" }).setOrigin(0.5).setInteractive({ useHandCursor: true });
+    // Send a squad to operate here without moving the player (Phase 4).
+    const deployBtn = this.add.text(pw / 2, ph - 74, "[DEPLOY SQUAD]", { fontSize: "14px", fontFamily: "monospace", color: "#ffaa44", backgroundColor: "#332211", padding: { x: 8, y: 4 } }).setOrigin(0.5).setInteractive({ useHandCursor: true });
+    deployBtn.on("pointerdown", () => { this.openDeployPanel(node); });
+    panel.add(deployBtn);
+    const travelBtn = this.add.text(pw / 2 - 60, ph - 36, "[TRAVEL]", { fontSize: "14px", fontFamily: "monospace", color: "#00ff88" }).setOrigin(0.5).setInteractive({ useHandCursor: true });
     travelBtn.on("pointerdown", () => { this.doTravel(node.id); });
-    const cancelBtn = this.add.text(pw / 2 + 60, ph - 40, "[CANCEL]", { fontSize: "14px", fontFamily: "monospace", color: "#ff4444" }).setOrigin(0.5).setInteractive({ useHandCursor: true });
+    const cancelBtn = this.add.text(pw / 2 + 60, ph - 36, "[CANCEL]", { fontSize: "14px", fontFamily: "monospace", color: "#ff4444" }).setOrigin(0.5).setInteractive({ useHandCursor: true });
     cancelBtn.on("pointerdown", () => { this.closeTravelPanel(); });
     panel.add([travelBtn, cancelBtn]);
     this.travelPanel = panel;
     this.uiObjects.push(panel);
+  }
+
+  private nodeHasArena(node: WorldNode): boolean {
+    return node.kind === "arena" || (node.services ?? []).includes("arena");
+  }
+
+  // Assignment a squad takes at a node when delegated: raids for arenas, jobs
+  // where work is posted, otherwise a patrol.
+  private deployAssignment(node: WorldNode): "patrol" | "job" | "raid" {
+    if (this.nodeHasArena(node)) return "raid";
+    if ((node.services ?? []).includes("jobs")) return "job";
+    return "patrol";
+  }
+
+  // The "attend personally" choice (Phase 4 Task 4). For an arena node the
+  // player picks between fighting in person (ArenaScene) or delegating to a
+  // headless squad engagement; non-arena nodes only offer delegation.
+  private openDeployPanel(node: WorldNode): void {
+    this.closeTravelPanel();
+    const hasArena = this.nodeHasArena(node);
+    const pw = 340, ph = hasArena ? 260 : 210;
+    const px = (this.scale.width - pw) / 2, py = (this.scale.height - ph) / 2;
+    const panel = this.add.container(px, py);
+    const bg = this.add.rectangle(0, 0, pw, ph, C_PANEL_BG, 0.97).setOrigin(0, 0).setStrokeStyle(2, 0x444466, 1);
+    panel.add(bg);
+    panel.add(this.add.text(pw / 2, 14, "Deploy to " + node.name, { fontSize: "16px", fontFamily: "monospace", color: "#ffcc00", fontStyle: "bold" }).setOrigin(0.5, 0));
+
+    if (hasArena) {
+      const attendBtn = this.add.text(20, 50, "[ ATTEND PERSONALLY ]", { fontSize: "14px", fontFamily: "monospace", color: "#00ff88", backgroundColor: "#003322", padding: { x: 8, y: 5 } }).setInteractive({ useHandCursor: true });
+      attendBtn.on("pointerdown", () => { this.doAttend(node); });
+      panel.add(attendBtn);
+      panel.add(this.add.text(20, 84, "Higher chance of victory, earn XP,\nbut you risk your driver in real-time.", { fontSize: "12px", fontFamily: "monospace", color: "#88ccaa", lineSpacing: 3 }));
+
+      const delegateBtn = this.add.text(20, 134, "[ DELEGATE TO SQUAD ]", { fontSize: "14px", fontFamily: "monospace", color: "#ffaa44", backgroundColor: "#332211", padding: { x: 8, y: 5 } }).setInteractive({ useHandCursor: true });
+      delegateBtn.on("pointerdown", () => { this.doDeploy(node); });
+      panel.add(delegateBtn);
+      panel.add(this.add.text(20, 168, "Squad resolves automatically while you\ndo other things. Lower success rate.", { fontSize: "12px", fontFamily: "monospace", color: "#ddbb88", lineSpacing: 3 }));
+    } else {
+      panel.add(this.add.text(20, 52, "Send your squad to run a " + this.deployAssignment(node) + "\nhere. They resolve automatically and\nreturn with an after-action report.", { fontSize: "12px", fontFamily: "monospace", color: "#aaaaaa", lineSpacing: 3 }));
+      const deployBtn = this.add.text(20, 124, "[ DEPLOY SQUAD ]", { fontSize: "14px", fontFamily: "monospace", color: "#ffaa44", backgroundColor: "#332211", padding: { x: 8, y: 5 } }).setInteractive({ useHandCursor: true });
+      deployBtn.on("pointerdown", () => { this.doDeploy(node); });
+      panel.add(deployBtn);
+    }
+
+    const cancelBtn = this.add.text(pw - 20, ph - 28, "[CANCEL]", { fontSize: "13px", fontFamily: "monospace", color: "#ff4444" }).setOrigin(1, 0.5).setInteractive({ useHandCursor: true });
+    cancelBtn.on("pointerdown", () => { this.closeTravelPanel(); });
+    panel.add(cancelBtn);
+
+    this.travelPanel = panel;
+    this.uiObjects.push(panel);
+  }
+
+  // Fetch up to 4 of the player's intact vehicles to crew a squad.
+  private async fetchSquadVehicleIds(): Promise<string[]> {
+    const host = window.location.hostname;
+    const res = await fetch("http://" + host + ":3001/api/vehicles", { headers: { Authorization: "Bearer " + this.token } });
+    if (!res.ok) return [];
+    const vehicles = await res.json();
+    return vehicles
+      .filter((v: { damage_state?: { destroyed?: boolean }; in_arena?: boolean }) => !v.damage_state?.destroyed && !v.in_arena)
+      .slice(0, 4)
+      .map((v: { id: string }) => v.id);
+  }
+
+  private async doAttend(node: WorldNode): Promise<void> {
+    this.closeTravelPanel();
+    const vehicleIds = await this.fetchSquadVehicleIds();
+    if (!vehicleIds.length) { this.showFlash("No available vehicles to attend with", 0xff4444); return; }
+    this.scene.start("ArenaScene", {
+      token: this.token,
+      vehicleId: vehicleIds[0],
+      squadVehicleIds: vehicleIds,
+    });
+  }
+
+  private async doDeploy(node: WorldNode): Promise<void> {
+    this.closeTravelPanel();
+    const vehicleIds = await this.fetchSquadVehicleIds();
+    if (!vehicleIds.length) { this.showFlash("No available vehicles to deploy", 0xff4444); return; }
+    try {
+      const host = window.location.hostname;
+      const res = await fetch("http://" + host + ":3001/api/deploy", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Authorization: "Bearer " + this.token },
+        body: JSON.stringify({ zoneId: node.id, vehicleIds, assignment: this.deployAssignment(node) }),
+      });
+      const data = await res.json();
+      if (!res.ok) { this.showFlash(data.error ?? "Deploy failed", 0xff4444); return; }
+      this.showFlash("Squad deployed to " + node.name + " — back in ~" + data.etaSeconds + "s", 0x00ff88);
+    } catch (e) {
+      console.error("Deploy failed:", e);
+      this.showFlash("Deploy failed - network error", 0xff4444);
+    }
   }
 
   private closeTravelPanel(): void {

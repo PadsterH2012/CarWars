@@ -25,6 +25,7 @@ export class GarageScene extends Phaser.Scene {
   private garage: GarageStatus | null = null;
   private money = 0;
   private division = 0;
+  private unreadReports = 0; // squad after-action reports awaiting the player
   private selectedVehicleId = '';
   private selectedDriverId = '';
   private justFoughtVehicleId = ''; // vehicle just back from arena
@@ -45,7 +46,7 @@ export class GarageScene extends Phaser.Scene {
   async create(): Promise<void> {
     const host = window.location.hostname;
 
-    const [meRes, vRes, dRes, gRes, reqRes, bayRes] = await Promise.all([
+    const [meRes, vRes, dRes, gRes, reqRes, bayRes, repRes] = await Promise.all([
       fetch(`http://${host}:3001/api/me`, { headers: { Authorization: `Bearer ${this.token}` } }),
       fetch(`http://${host}:3001/api/vehicles`, { headers: { Authorization: `Bearer ${this.token}` } }),
       fetch(`http://${host}:3001/api/drivers`, { headers: { Authorization: `Bearer ${this.token}` } }),
@@ -53,6 +54,8 @@ export class GarageScene extends Phaser.Scene {
       fetch(`http://${host}:3001/api/drivers/requests`, { headers: { Authorization: `Bearer ${this.token}` } }),
       // Visiting the garage resolves passive income lazily (server-side on GET).
       fetch(`http://${host}:3001/api/garages`, { headers: { Authorization: `Bearer ${this.token}` } }),
+      // Resolves any due squad deployments and returns the unread report count.
+      fetch(`http://${host}:3001/api/reports/unread-count`, { headers: { Authorization: `Bearer ${this.token}` } }),
     ]);
     const me = await meRes.json();
     this.money = me.money ?? 0;
@@ -64,6 +67,7 @@ export class GarageScene extends Phaser.Scene {
     if (gRes.ok) this.gang = await gRes.json();
     if (reqRes.ok) this.driverRequests = await reqRes.json();
     if (bayRes.ok) this.garage = await bayRes.json();
+    if (repRes.ok) this.unreadReports = (await repRes.json()).unread ?? 0;
 
     this.mainLayer = this.add.container(0, 0);
 
@@ -413,6 +417,21 @@ export class GarageScene extends Phaser.Scene {
     }).setInteractive();
     worldBtn.on('pointerdown', () => this.scene.start('WorldMapScene', { token: this.token }));
     add(worldBtn);
+
+    const reportsBtn = this.add.text(leftX + 790, navY, '[REPORTS]', {
+      color: '#ffddaa', fontSize: '16px', fontFamily: 'monospace',
+      backgroundColor: '#332211', padding: { x: 8, y: 4 }
+    }).setInteractive();
+    reportsBtn.on('pointerdown', () => this.scene.start('ReportScene', { token: this.token }));
+    add(reportsBtn);
+    // Unread badge — a red pip with the count, drawn over the button's top-right.
+    if (this.unreadReports > 0) {
+      const bx = reportsBtn.x + reportsBtn.width;
+      add(this.add.circle(bx, navY - 2, 10, 0xff3333).setOrigin(0.5));
+      add(this.add.text(bx, navY - 2, String(this.unreadReports), {
+        color: '#ffffff', fontSize: '12px', fontFamily: 'monospace', fontStyle: 'bold'
+      }).setOrigin(0.5));
+    }
 
     // ── Garage bay (Phase 3) — storage cap, repair discount, passive income ──
     const bayY = navY - 36;

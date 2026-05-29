@@ -685,3 +685,40 @@ CREATE TABLE IF NOT EXISTS garages (
   storage_slots INTEGER NOT NULL DEFAULT 3,
   repair_discount REAL NOT NULL DEFAULT 0.25
 );
+
+-- ─── Phase 4 — Squad Operations (added 2026-05-29) ──────────────────────────
+-- A squad deployment sends a set of drivers + vehicles to a world node. It runs
+-- headless: after travel + engagement time elapses, the engagement is resolved
+-- LAZILY (on the next API call, never during an arena match — anti-rabbit-hole
+-- rule 3) by rules/squadEngagement.ts, which writes an after-action report.
+-- zone_id is a world node id (e.g. 'fort-grimm'), matching gangs.current_world_node_id.
+CREATE TABLE IF NOT EXISTS squad_deployments (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  player_id UUID REFERENCES players(id) ON DELETE CASCADE,
+  zone_id TEXT NOT NULL,
+  assignment TEXT NOT NULL DEFAULT 'patrol',  -- 'patrol' | 'job' | 'raid'
+  driver_ids UUID[] NOT NULL,
+  vehicle_ids UUID[] NOT NULL,
+  status TEXT NOT NULL DEFAULT 'in_transit',  -- 'in_transit' | 'resolved'
+  resolves_at TIMESTAMPTZ NOT NULL,
+  report_id UUID,                             -- engagement_reports.id, set on resolution
+  created_at TIMESTAMPTZ DEFAULT NOW()
+);
+CREATE INDEX IF NOT EXISTS idx_deployments_player ON squad_deployments(player_id);
+CREATE INDEX IF NOT EXISTS idx_deployments_pending ON squad_deployments(resolves_at) WHERE status = 'in_transit';
+
+-- After-action report for a returned squad. Written when a deployment resolves;
+-- 'read' drives the garage REPORTS notification badge. report JSONB holds the
+-- full SquadEngagementResult plus zone/encounter context for the report screen.
+CREATE TABLE IF NOT EXISTS engagement_reports (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  player_id UUID REFERENCES players(id) ON DELETE CASCADE,
+  zone_id TEXT NOT NULL,
+  squad_driver_ids UUID[] NOT NULL,
+  squad_vehicle_ids UUID[] NOT NULL,
+  outcome TEXT NOT NULL,        -- 'success' | 'partial' | 'failure' | 'routed'
+  report JSONB NOT NULL,
+  created_at TIMESTAMPTZ DEFAULT NOW(),
+  read BOOLEAN NOT NULL DEFAULT FALSE
+);
+CREATE INDEX IF NOT EXISTS idx_reports_player_unread ON engagement_reports(player_id) WHERE read = FALSE;

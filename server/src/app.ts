@@ -15,6 +15,8 @@ import { stockRouter } from './api/stock';
 import { mapsRouter } from './api/maps';
 import { worldRouter } from './api/world';
 import { garagesRouter } from './api/garages';
+import { deployRouter } from './api/deploy';
+import { reportsRouter } from './api/reports';
 import { requireAuth, AuthRequest } from './api/middleware';
 import { getDb } from './db/client';
 import { lastResults } from './ws/handler';
@@ -41,6 +43,8 @@ export function createApp() {
   app.use('/api/maps', mapsRouter);
   app.use('/api/world', worldRouter);
   app.use('/api/garages', garagesRouter);
+  app.use('/api/deploy', deployRouter);
+  app.use('/api/reports', reportsRouter);
 
   app.get('/api/me', requireAuth, async (req: AuthRequest, res) => {
     const db = getDb();
