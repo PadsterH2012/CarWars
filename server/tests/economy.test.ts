@@ -41,12 +41,11 @@ afterAll(async () => {
 });
 
 describe('economy', () => {
-  it('GET /api/jobs?zoneId=town-1 returns available jobs', async () => {
+  it('GET /api/jobs is gone (arena-job board retired)', async () => {
     const res = await request(app)
       .get('/api/jobs?zoneId=town-1')
       .set('Authorization', `Bearer ${token}`);
-    expect(res.status).toBe(200);
-    expect(res.body).toBeInstanceOf(Array);
+    expect(res.status).toBe(404);
   });
 
   it('POST /api/economy/repair deducts money and restores armor', async () => {
