@@ -706,6 +706,11 @@ CREATE TABLE IF NOT EXISTS squad_deployments (
 );
 CREATE INDEX IF NOT EXISTS idx_deployments_player ON squad_deployments(player_id);
 CREATE INDEX IF NOT EXISTS idx_deployments_pending ON squad_deployments(resolves_at) WHERE status = 'in_transit';
+-- Phase 5 — a job assignment can be stored as a deployment row: link to jobs and
+-- relax zone_id (job-linked rows derive their location from the job).
+ALTER TABLE squad_deployments ADD COLUMN IF NOT EXISTS job_id UUID REFERENCES jobs(id) ON DELETE CASCADE;
+ALTER TABLE squad_deployments ALTER COLUMN zone_id DROP NOT NULL;
+CREATE INDEX IF NOT EXISTS idx_deployments_job ON squad_deployments(job_id) WHERE job_id IS NOT NULL;
 
 -- After-action report for a returned squad. Written when a deployment resolves;
 -- 'read' drives the garage REPORTS notification badge. report JSONB holds the

@@ -4,7 +4,7 @@ import { createApp } from '../src/app';
 import { getDb, closeDb } from '../src/db/client';
 
 let app: ReturnType<typeof createApp>;
-const USERS = ['deployer1', 'deployer2', 'deployer3', 'deployer4'];
+const USERS = ['deployer1', 'deployer2', 'deployer3', 'deployer4', 'dep-jobcol'];
 
 async function register(username: string) {
   const reg = await request(app).post('/api/auth/register').send({ username, password: 'password123' });
@@ -158,5 +158,20 @@ describe('squad deployment API', () => {
     if (drv.rows[0].alive) {
       expect(drv.rows[0].free).toBe(true);
     }
+  });
+
+  it('squad_deployments accepts a job-linked row (zone_id null, job_id set)', async () => {
+    const db = getDb();
+    const { token, playerId } = await register('dep-jobcol');
+    const job = (await db.query(
+      `INSERT INTO jobs (zone_id, job_type, description, payout, division_min, headless, difficulty)
+       VALUES ('town-1','patrol','Test job',300,5,TRUE,3) RETURNING id`)).rows[0];
+    const ins = await db.query(
+      `INSERT INTO squad_deployments (player_id, job_id, assignment, driver_ids, vehicle_ids, resolves_at)
+       VALUES ($1,$2,'job','{}'::uuid[],'{}'::uuid[], NOW() + interval '1 minute') RETURNING id, zone_id, job_id`,
+      [playerId, job.id]);
+    expect(ins.rows[0].zone_id).toBeNull();
+    expect(ins.rows[0].job_id).toBe(job.id);
+    await db.query(`DELETE FROM jobs WHERE id = $1`, [job.id]);
   });
 });
