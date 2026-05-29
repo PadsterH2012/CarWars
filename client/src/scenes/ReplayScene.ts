@@ -110,10 +110,13 @@ export class ReplayScene extends Phaser.Scene {
     try {
       // Create layers FIRST — must exist before any layout/update call,
       // since onLayout may fire layout() synchronously during create().
+      // Depth ordering matches ArenaScene: floor → decorations/walls → vehicles → effects.
+      // Vehicles/effects must sit above floorContainer (0.35), since wrapping a sprite in
+      // a container clamps its depth to the container's slot in the parent display list.
       this.worldLayer = this.add.container(0, 0);
       this.floorContainer = this.add.container(0, 0).setDepth(0.35);
-      this.vehicleLayer = this.add.container(0, 0);
-      this.effectsLayer = this.add.container(0, 0);
+      this.vehicleLayer = this.add.container(0, 0).setDepth(2);
+      this.effectsLayer = this.add.container(0, 0).setDepth(3);
 
       const host = window.location.hostname;
       const headers = { Authorization: `Bearer ${this.payload.token}` };
