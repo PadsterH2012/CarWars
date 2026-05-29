@@ -7,6 +7,7 @@ import { getDb } from '../db/client';
 import { deriveStats } from '../rules/vehicle';
 import type { Pool } from 'pg';
 import { pickRivalForMatch, recordRivalOutcome, rivalEffectiveSkill, type RivalGang } from '../rules/rivals';
+import { playerOwnsGarage } from '../api/garages';
 import type { TickSnapshot } from '../rules/engine';
 
 // Best-effort replay persistence — returns the new row's id, or undefined on
@@ -392,6 +393,10 @@ async function handleMessage(ws: WebSocket, raw: string): Promise<void> {
           const myWs = [...clientPlayers.entries()].find(([w]) => clientZones.get(w) === msg.zoneId)?.[0];
           const myPid = myWs ? clientPlayers.get(myWs) : undefined;
 
+          // Safe retreat (Phase 3): garage owners regroup at their garage; everyone
+          // else is dumped back in Midville. Drives where the client navigates next.
+          const spawnAt: 'garage' | 'town' = (myPid && await playerOwnsGarage(db, myPid)) ? 'garage' : 'town';
+
           // Travel encounter: update location if player won
           if (ctx.travelContext && winnerId && myPid === winnerId) {
             await db.query(
@@ -468,7 +473,7 @@ async function handleMessage(ws: WebSocket, raw: string): Promise<void> {
               prize: 0, winnerId: null,
               snapshots: runner.getEngine().getSnapshots(),
             });
-            return { prize: 0, jobPayout: 0, salvage: 0, wages, maintenance, rivalQuote, replayId };
+            return { prize: 0, jobPayout: 0, salvage: 0, wages, maintenance, rivalQuote, replayId, spawnAt };
           }
           try {
             const pRes = await db.query(`SELECT division FROM players WHERE id = $1`, [winnerId]);
@@ -628,10 +633,10 @@ async function handleMessage(ws: WebSocket, raw: string): Promise<void> {
               result: 'win', prize, winnerId,
               snapshots: runner.getEngine().getSnapshots(),
             });
-            return { prize, jobPayout, salvage, wages, maintenance, rivalQuote, replayId };
+            return { prize, jobPayout, salvage, wages, maintenance, rivalQuote, replayId, spawnAt };
           } catch (e) {
             console.error('Failed to credit arena prize:', e);
-            return { prize: 0, jobPayout: 0, salvage: 0, wages, maintenance, rivalQuote };
+            return { prize: 0, jobPayout: 0, salvage: 0, wages, maintenance, rivalQuote, spawnAt };
           }
         },
       } : {}, msg.mapId ?? mapIdForZone(msg.zoneId));

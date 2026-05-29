@@ -362,7 +362,7 @@ export class ArenaScene extends Phaser.Scene {
         this.rival = msg.rival;
         this.showRivalBanner(msg.rival);
       } else if (msg.type === 'zone_end') {
-        this.showZoneEnd(msg.winnerId, msg.reason, msg.prize ?? 0, msg.jobPayout ?? 0, msg.salvage ?? 0, msg.wages ?? 0, msg.maintenance ?? 0, msg.rival, msg.rivalQuote, msg.replayId);
+        this.showZoneEnd(msg.winnerId, msg.reason, msg.prize ?? 0, msg.jobPayout ?? 0, msg.salvage ?? 0, msg.wages ?? 0, msg.maintenance ?? 0, msg.rival, msg.rivalQuote, msg.replayId, msg.spawnAt);
       }
     });
   }
@@ -628,7 +628,7 @@ export class ArenaScene extends Phaser.Scene {
     renderMapWalls(this.mapGraphics, walls, RENDER_OPTS);
   }
 
-  private showZoneEnd(winnerId: string | null, reason: string, prize: number, jobPayout: number, salvage: number, wages: number, maintenance: number, rival?: import('@carwars/shared').RivalInfo, rivalQuote?: string, replayId?: string): void {
+  private showZoneEnd(winnerId: string | null, reason: string, prize: number, jobPayout: number, salvage: number, wages: number, maintenance: number, rival?: import('@carwars/shared').RivalInfo, rivalQuote?: string, replayId?: string, spawnAt?: 'garage' | 'town'): void {
     if (this.zoneEnded) return;
     this.zoneEnded = true;
 
@@ -669,6 +669,7 @@ export class ArenaScene extends Phaser.Scene {
         mapId: this.mapId,
         gangPrimaryColour: this.gangPrimaryColour,
         replayId,
+        spawnAt,
       });
     });
   }

@@ -16,6 +16,9 @@ beforeAll(async () => {
     .post('/api/auth/register')
     .send({ username: 'stocktest', password: 'password123' });
   token = reg.body.token;
+  // Phase 3 — give the test player a garage (3 slots) so the no-garage 1-vehicle
+  // cap doesn't pre-empt the insufficient-funds assertion below.
+  await db.query(`INSERT INTO garages (player_id) VALUES ($1)`, [reg.body.playerId]);
 });
 
 afterAll(async () => {

@@ -3,6 +3,7 @@ import { getDb } from '../db/client';
 import { requireAuth, AuthRequest } from './middleware';
 import { deriveStats } from '../rules/vehicle';
 import { computeCapacity, isInvalid } from '../rules/capacity';
+import { vehicleLimitReached } from './garages';
 import type { VehicleLoadout } from '@carwars/shared';
 
 // Public stock-vehicle catalog from the AADA Vehicle Guides. Listing is
@@ -81,6 +82,12 @@ stockRouter.post('/:id/purchase', requireAuth, async (req: AuthRequest, res) => 
   const client = await db.connect();
   try {
     await client.query('BEGIN');
+    // Storage cap — block stock purchases once the player is at their limit
+    // (1 without a garage, 3 with). Checked in-transaction to avoid a race.
+    if (await vehicleLimitReached(client, req.playerId!)) {
+      await client.query('ROLLBACK');
+      return res.status(400).json({ error: 'Vehicle limit reached. Purchase a garage bay to store more vehicles.' });
+    }
     const debitRes = await client.query(
       `UPDATE players SET money = money - $1 WHERE id = $2 AND money >= $1 RETURNING money`,
       [cost, req.playerId]

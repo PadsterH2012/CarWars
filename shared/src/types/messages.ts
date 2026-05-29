@@ -35,6 +35,6 @@ export type ServerMessage =
   | { type: 'damage'; result: DamageResult }
   | { type: 'error'; message: string }
   | { type: 'zone_change'; destinationZoneId: string; reason: string }
-  | { type: 'zone_end'; winnerId: string | null; reason: string; prize: number; jobPayout: number; salvage: number; wages: number; maintenance: number; rival?: RivalInfo; rivalQuote?: string; replayId?: string }
+  | { type: 'zone_end'; winnerId: string | null; reason: string; prize: number; jobPayout: number; salvage: number; wages: number; maintenance: number; rival?: RivalInfo; rivalQuote?: string; replayId?: string; spawnAt?: 'garage' | 'town' }
   | { type: 'rival_info'; rival: RivalInfo }
   | { type: 'driver_info'; vehicleId: string; skill: number; maxSteer: number };

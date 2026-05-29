@@ -15,6 +15,10 @@ beforeAll(async () => {
     .post('/api/auth/register')
     .send({ username: 'vehicletest', password: 'password123' });
   token = reg.body.token;
+  // Phase 3 — give the test player a garage (3 storage slots) so the no-garage
+  // 1-vehicle cap doesn't interfere with these multi-vehicle CRUD assertions.
+  // The cap itself is covered in garages.test.ts.
+  await db.query(`INSERT INTO garages (player_id) VALUES ($1)`, [reg.body.playerId]);
 });
 
 afterAll(async () => {

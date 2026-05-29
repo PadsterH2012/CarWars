@@ -94,16 +94,22 @@ economyRouter.get('/repair/quote', async (req: AuthRequest, res) => {
   const vehicleId = req.query.vehicleId;
   if (!vehicleId || typeof vehicleId !== 'string') return res.status(400).json({ error: 'vehicleId required' });
   const db = getDb();
-  const vResult = await db.query(
-    `SELECT id, loadout, original_loadout, damage_state
-     FROM vehicles WHERE id = $1 AND player_id = $2`,
-    [vehicleId, req.playerId],
-  );
+  const [vResult, gResult] = await Promise.all([
+    db.query(
+      `SELECT id, loadout, original_loadout, damage_state
+       FROM vehicles WHERE id = $1 AND player_id = $2`,
+      [vehicleId, req.playerId],
+    ),
+    db.query(`SELECT repair_discount FROM garages WHERE player_id = $1`, [req.playerId]),
+  ]);
   if (!vResult.rows.length) return res.status(403).json({ error: 'Vehicle not found' });
   const loadout     = vResult.rows[0].loadout as VehicleLoadout;
   const origLoadout = (vResult.rows[0].original_loadout ?? loadout) as VehicleLoadout;
   const damage      = vResult.rows[0].damage_state as DamageState;
-  return res.json(computeRepairQuote(loadout, origLoadout, damage));
+  const discount    = gResult.rows.length ? Number(gResult.rows[0].repair_discount) : 0;
+  const quote = computeRepairQuote(loadout, origLoadout, damage);
+  // Per-part costs stay at full rate; the garage discount applies to the bill.
+  return res.json({ ...quote, repairDiscount: discount, discountedTotal: Math.round(quote.total * (1 - discount)) });
 });
 
 economyRouter.post('/repair', async (req: AuthRequest, res) => {
@@ -116,13 +122,14 @@ economyRouter.post('/repair', async (req: AuthRequest, res) => {
   if (!vehicleId) return res.status(400).json({ error: 'vehicleId required' });
 
   const db = getDb();
-  const [vResult, pResult] = await Promise.all([
+  const [vResult, pResult, gResult] = await Promise.all([
     db.query(
       `SELECT id, loadout, original_loadout, damage_state, player_id
        FROM vehicles WHERE id = $1 AND player_id = $2`,
       [vehicleId, req.playerId]
     ),
-    db.query(`SELECT money FROM players WHERE id = $1`, [req.playerId])
+    db.query(`SELECT money FROM players WHERE id = $1`, [req.playerId]),
+    db.query(`SELECT repair_discount FROM garages WHERE player_id = $1`, [req.playerId])
   ]);
 
   if (!vResult.rows.length) return res.status(403).json({ error: 'Vehicle not found' });
@@ -132,16 +139,19 @@ economyRouter.post('/repair', async (req: AuthRequest, res) => {
   const origLoadout  = (vehicle.original_loadout ?? loadout) as VehicleLoadout;
   const damage       = vehicle.damage_state as DamageState;
   const playerMoney  = pResult.rows[0].money as number;
+  // Garage owners get a repair discount applied to the final bill.
+  const discount     = gResult.rows.length ? Number(gResult.rows[0].repair_discount) : 0;
 
   const quote = computeRepairQuote(loadout, origLoadout, damage);
   const doArmor  = parts.includes('armor');
   const doTires  = parts.includes('tires');
   const doEngine = parts.includes('engine');
   const doAmmo   = parts.includes('ammo');
-  const cost = (doArmor ? quote.armor.cost : 0)
+  const grossCost = (doArmor ? quote.armor.cost : 0)
              + (doTires ? quote.tires.cost : 0)
              + (doEngine ? quote.engine.cost : 0)
              + (doAmmo  ? quote.ammo.cost   : 0);
+  const cost = Math.round(grossCost * (1 - discount));
 
   if (cost === 0) return res.json({ cost: 0, moneyRemaining: playerMoney, parts });
   if (playerMoney < cost) return res.status(402).json({ error: 'Insufficient funds', cost });

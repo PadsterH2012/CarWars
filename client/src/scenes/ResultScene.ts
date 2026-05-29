@@ -23,6 +23,9 @@ export interface ResultSceneData {
   mapId?: string;
   gangPrimaryColour?: number;
   replayId?: string;
+  // Safe retreat (Phase 3): 'garage' for garage owners, 'town' otherwise.
+  // Decides where the player heads after a loss/destruction.
+  spawnAt?: 'garage' | 'town';
 }
 
 export class ResultScene extends Phaser.Scene {
@@ -131,8 +134,16 @@ export class ResultScene extends Phaser.Scene {
       buttons.push({ label: '[ REPAIR & RETURN ]', color: '#00ff88', bg: '#003322',
         fn: () => this.repairAndReturn() });
     }
-    buttons.push({ label: '[ BACK TO GARAGE ]', color: '#cccccc', bg: '#222222',
-      fn: () => this.scene.start('GarageScene', { token: this.payload.token }) });
+    // Safe retreat: a destroyed player who owns no garage limps back to Midville;
+    // garage owners (and any non-destroyed outcome) regroup at their garage.
+    const retreatToTown = this.payload.result === 'destroyed' && this.payload.spawnAt === 'town';
+    if (retreatToTown) {
+      buttons.push({ label: '[ LIMP BACK TO TOWN ]', color: '#cccccc', bg: '#222222',
+        fn: () => this.scene.start('TownScene', { token: this.payload.token, zoneId: 'midville', vehicleId: this.payload.primaryVehicleId }) });
+    } else {
+      buttons.push({ label: '[ BACK TO GARAGE ]', color: '#cccccc', bg: '#222222',
+        fn: () => this.scene.start('GarageScene', { token: this.payload.token }) });
+    }
 
     const btnSpacing = 50;
     const totalH = buttons.length * btnSpacing;

@@ -4,6 +4,7 @@ import { requireAuth, AuthRequest } from './middleware';
 import { deriveStats } from '../rules/vehicle';
 import { computeCapacity, isInvalid } from '../rules/capacity';
 import { WEAPONS } from '../rules/data/weapons';
+import { vehicleLimitReached } from './garages';
 import type { VehicleLoadout, WeaponMount } from '@carwars/shared';
 
 const WORKSHOP_TRADE_IN = 0.5;   // percentage refunded when a weapon/ammo is removed
@@ -46,6 +47,12 @@ vehiclesRouter.post('/', async (req: AuthRequest, res) => {
   const client = await db.connect();
   try {
     await client.query('BEGIN');
+    // Storage cap — block new builds once the player is at their limit (1 without
+    // a garage, 3 with). Checked in-transaction to avoid a race with concurrent builds.
+    if (await vehicleLimitReached(client, req.playerId!)) {
+      await client.query('ROLLBACK');
+      return res.status(400).json({ error: 'Vehicle limit reached. Purchase a garage bay to store more vehicles.' });
+    }
     // Atomic debit: only deducts if the player has enough money. Returns the new
     // balance when successful; no rows when the player can't afford it.
     const debitRes = await client.query(

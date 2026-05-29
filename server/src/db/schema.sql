@@ -669,3 +669,19 @@ ALTER TABLE jobs ADD COLUMN IF NOT EXISTS headless BOOLEAN NOT NULL DEFAULT FALS
 ALTER TABLE jobs ADD COLUMN IF NOT EXISTS difficulty INTEGER NOT NULL DEFAULT 3;
 CREATE INDEX IF NOT EXISTS idx_jobs_assigned_driver ON jobs(assigned_driver_id);
 CREATE INDEX IF NOT EXISTS idx_jobs_pending_resolution ON jobs(resolves_at) WHERE headless = TRUE AND outcome IS NULL;
+
+-- ─── Phase 3 — Buy a Garage Bay (added 2026-05-29) ──────────────────────────
+-- A permanent, one-per-player asset. Owning a garage grants a repair discount,
+-- lazily-resolved passive income, and extra vehicle storage. accumulated_income
+-- is a lifetime counter for the garage status screen; last_income_at marks the
+-- point up to which income has already been credited (advanced in whole hours).
+CREATE TABLE IF NOT EXISTS garages (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  player_id UUID REFERENCES players(id) ON DELETE CASCADE UNIQUE,
+  name TEXT NOT NULL DEFAULT 'Your Garage',
+  purchased_at TIMESTAMPTZ DEFAULT NOW(),
+  last_income_at TIMESTAMPTZ DEFAULT NOW(),
+  accumulated_income INTEGER NOT NULL DEFAULT 0,
+  storage_slots INTEGER NOT NULL DEFAULT 3,
+  repair_discount REAL NOT NULL DEFAULT 0.25
+);

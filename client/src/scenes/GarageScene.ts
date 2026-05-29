@@ -11,6 +11,10 @@ interface DriverRequest {
   driver_id: string; driver_name: string; driver_skill: number;
   vehicle_id: string | null; vehicle_name: string | null;
 }
+interface GarageStatus {
+  owned: boolean; cost?: number; vehicleCount: number; maxVehicles: number;
+  repairDiscount?: number; accumulatedIncome?: number; incomeThisVisit?: number;
+}
 
 export class GarageScene extends Phaser.Scene {
   private token = '';
@@ -18,6 +22,7 @@ export class GarageScene extends Phaser.Scene {
   private drivers: Driver[] = [];
   private driverRequests: DriverRequest[] = [];
   private gang: Gang | null = null;
+  private garage: GarageStatus | null = null;
   private money = 0;
   private division = 0;
   private selectedVehicleId = '';
@@ -40,12 +45,14 @@ export class GarageScene extends Phaser.Scene {
   async create(): Promise<void> {
     const host = window.location.hostname;
 
-    const [meRes, vRes, dRes, gRes, reqRes] = await Promise.all([
+    const [meRes, vRes, dRes, gRes, reqRes, bayRes] = await Promise.all([
       fetch(`http://${host}:3001/api/me`, { headers: { Authorization: `Bearer ${this.token}` } }),
       fetch(`http://${host}:3001/api/vehicles`, { headers: { Authorization: `Bearer ${this.token}` } }),
       fetch(`http://${host}:3001/api/drivers`, { headers: { Authorization: `Bearer ${this.token}` } }),
       fetch(`http://${host}:3001/api/gangs/mine`, { headers: { Authorization: `Bearer ${this.token}` } }),
       fetch(`http://${host}:3001/api/drivers/requests`, { headers: { Authorization: `Bearer ${this.token}` } }),
+      // Visiting the garage resolves passive income lazily (server-side on GET).
+      fetch(`http://${host}:3001/api/garages`, { headers: { Authorization: `Bearer ${this.token}` } }),
     ]);
     const me = await meRes.json();
     this.money = me.money ?? 0;
@@ -56,6 +63,7 @@ export class GarageScene extends Phaser.Scene {
     this.drivers = await dRes.json();
     if (gRes.ok) this.gang = await gRes.json();
     if (reqRes.ok) this.driverRequests = await reqRes.json();
+    if (bayRes.ok) this.garage = await bayRes.json();
 
     this.mainLayer = this.add.container(0, 0);
 
@@ -406,6 +414,28 @@ export class GarageScene extends Phaser.Scene {
     worldBtn.on('pointerdown', () => this.scene.start('WorldMapScene', { token: this.token }));
     add(worldBtn);
 
+    // ── Garage bay (Phase 3) — storage cap, repair discount, passive income ──
+    const bayY = navY - 36;
+    const maxV = this.garage?.maxVehicles ?? 1;
+    const vCount = this.garage?.vehicleCount ?? this.vehicles.length;
+    if (this.garage?.owned) {
+      const pct = Math.round((this.garage.repairDiscount ?? 0) * 100);
+      const earned = this.garage.incomeThisVisit ?? 0;
+      add(this.add.text(leftX, bayY,
+        `GARAGE BAY · Vehicles ${vCount}/${maxV} · ${pct}% repair discount · income $${(this.garage.accumulatedIncome ?? 0).toLocaleString()}` +
+        (earned > 0 ? `  (+$${earned.toLocaleString()})` : ''),
+        { color: '#ffcc00', fontSize: '13px', fontFamily: 'monospace' }));
+    } else {
+      add(this.add.text(leftX, bayY, `Vehicles ${vCount}/${maxV} — buy a garage bay for more space`, {
+        color: '#aaaaaa', fontSize: '13px', fontFamily: 'monospace'
+      }));
+      const buyBtn = this.add.text(leftX + 430, bayY - 4, `[ BUY GARAGE BAY — $${(this.garage?.cost ?? 50000).toLocaleString()} ]`, {
+        color: '#ffcc00', fontSize: '13px', fontFamily: 'monospace',
+        backgroundColor: '#332200', padding: { x: 8, y: 4 }
+      }).setInteractive();
+      buyBtn.on('pointerdown', () => this.purchaseGarageBay(buyBtn));
+      add(buyBtn);
+    }
 
     const logoutBtn = this.add.text(10, 70, '[LOGOUT]', {
       color: '#ff6666', fontSize: '13px', fontFamily: 'monospace'
@@ -419,6 +449,23 @@ export class GarageScene extends Phaser.Scene {
     add(this.add.text(rightX - 140, height - 30, '[F] Fullscreen', {
       color: '#555', fontSize: '11px', fontFamily: 'monospace'
     }).setOrigin(0, 0.5));
+  }
+
+  // Buy a garage bay ($50k). On success, restart the scene so the storage cap,
+  // discount and income status all refresh from the server.
+  private async purchaseGarageBay(btn: Phaser.GameObjects.Text): Promise<void> {
+    const host = window.location.hostname;
+    const cost = this.garage?.cost ?? 50000;
+    if (this.money < cost) { btn.setText('[ NOT ENOUGH MONEY ]').setColor('#ff6666'); return; }
+    const res = await fetch(`http://${host}:3001/api/garages/purchase`, {
+      method: 'POST', headers: { Authorization: `Bearer ${this.token}` },
+    });
+    if (res.ok) {
+      this.scene.restart({ token: this.token });
+    } else {
+      const err = await res.json().catch(() => ({}));
+      btn.setText(`[ ${err.error ?? 'PURCHASE FAILED'} ]`).setColor('#ff6666');
+    }
   }
 
   // Fire-and-forget persistence of the player's current vehicle (and the
