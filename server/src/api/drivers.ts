@@ -1,17 +1,19 @@
 import { Router } from 'express';
 import { getDb } from '../db/client';
 import { requireAuth, AuthRequest } from './middleware';
-import { generateCandidatePool } from '../rules/driverGenerator';
+import { generateTieredPool } from '../rules/driverGenerator';
 import { generateRequestForDriver } from '../rules/requestGenerator';
 import { computeCapacity, isInvalid } from '../rules/capacity';
 import { driverTitleFromXp, xpToNextTitle } from '../rules/driverTitle';
+import { resolveDueHeadlessJobs } from './economy';
 
 export const driversRouter = Router();
 driversRouter.use(requireAuth);
 
 export const HIRE_COST = 500;
-const CANDIDATE_POOL_SIZE = 5;
 const POOL_REFRESH_COST   = 100;
+// Arena wins required before the premium hire band (skill 4-6) is offered.
+const PREMIUM_UNLOCK_WINS = 5;
 
 driversRouter.post('/', async (req: AuthRequest, res) => {
   const { name } = req.body;
@@ -59,20 +61,39 @@ driversRouter.post('/', async (req: AuthRequest, res) => {
 });
 
 driversRouter.get('/', async (req: AuthRequest, res) => {
+  // Resolve any headless jobs whose timer expired so statuses below are fresh.
+  await resolveDueHeadlessJobs(req.playerId!);
   const db = getDb();
   const result = await db.query(
-    `SELECT id, name, skill, aggression, loyalty, xp, assigned_vehicle_id, alive, wounded, wounded_until
+    `SELECT id, name, skill, aggression, loyalty, xp, assigned_vehicle_id, alive, wounded, wounded_until, available_at
      FROM drivers WHERE player_id = $1`,
     [req.playerId]
   );
+  const now = Date.now();
   // Decorate each driver with a Compendium-style title + xp-to-next so the
   // client can show 'Rick Steele — Veteran (250 PP to Expert)' without the
-  // UI having to duplicate the thresholds.
-  const rows = result.rows.map(d => ({
-    ...d,
-    title: driverTitleFromXp(d.xp),
-    xpToNext: xpToNextTitle(d.xp),
-  }));
+  // UI having to duplicate the thresholds. Also compute an availability
+  // status + remaining seconds for the garage crew panel (Phase 2).
+  const rows = result.rows.map(d => {
+    const woundedUntilMs = d.wounded_until ? new Date(d.wounded_until).getTime() : 0;
+    const availableAtMs = d.available_at ? new Date(d.available_at).getTime() : 0;
+    let status: 'available' | 'on_job' | 'wounded' = 'available';
+    let remainingSeconds = 0;
+    if (d.wounded && woundedUntilMs > now) {
+      status = 'wounded';
+      remainingSeconds = Math.ceil((woundedUntilMs - now) / 1000);
+    } else if (availableAtMs > now) {
+      status = 'on_job';
+      remainingSeconds = Math.ceil((availableAtMs - now) / 1000);
+    }
+    return {
+      ...d,
+      title: driverTitleFromXp(d.xp),
+      xpToNext: xpToNextTitle(d.xp),
+      status,
+      remainingSeconds,
+    };
+  });
   return res.json(rows);
 });
 
@@ -145,18 +166,20 @@ async function cleanupExpired(playerId: string): Promise<void> {
 // and a list of stock-vehicle ids eligible for package deals.
 async function regeneratePool(playerId: string): Promise<void> {
   const db = getDb();
-  // Look up division + eligible stock vehicles (at or below player's div)
-  const meRes = await db.query<{ division: number }>(
-    `SELECT division FROM players WHERE id = $1`, [playerId],
+  // Look up division + win count + eligible stock vehicles (at or below div)
+  const meRes = await db.query<{ division: number; wins: number }>(
+    `SELECT division, wins FROM players WHERE id = $1`, [playerId],
   );
   const division = meRes.rows[0]?.division ?? 5;
+  const wins = meRes.rows[0]?.wins ?? 0;
+  const premiumUnlocked = wins >= PREMIUM_UNLOCK_WINS;
   const stockRes = await db.query<{ id: string }>(
     `SELECT id FROM stock_vehicles WHERE division <= $1 ORDER BY random() LIMIT 30`,
     [division],
   );
   const eligibleIds = stockRes.rows.map(r => r.id);
 
-  const fresh = generateCandidatePool(CANDIDATE_POOL_SIZE, division, eligibleIds);
+  const fresh = generateTieredPool(division, eligibleIds, { premiumUnlocked });
 
   // Wipe the player's existing pool and insert new
   await db.query(`DELETE FROM hire_candidates WHERE player_id = $1`, [playerId]);
@@ -164,11 +187,11 @@ async function regeneratePool(playerId: string): Promise<void> {
     await db.query(
       `INSERT INTO hire_candidates
          (player_id, name, skill, aggression, loyalty, hire_cost,
-          vehicle_stock_id, vehicle_discount_pct, blurb)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)`,
+          vehicle_stock_id, vehicle_discount_pct, blurb, tier)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)`,
       [
         playerId, c.name, c.skill, c.aggression, c.loyalty, c.hireCost,
-        c.vehicleStockId ?? null, c.vehicleDiscountPct ?? 0, c.blurb,
+        c.vehicleStockId ?? null, c.vehicleDiscountPct ?? 0, c.blurb, c.tier,
       ],
     );
   }
@@ -181,24 +204,26 @@ driversRouter.get('/candidates', async (req: AuthRequest, res) => {
   await cleanupExpired(req.playerId!);
   let rows = (await db.query(
     `SELECT hc.id, hc.name, hc.skill, hc.aggression, hc.loyalty, hc.hire_cost,
-            hc.vehicle_stock_id, hc.vehicle_discount_pct, hc.blurb, hc.expires_at,
+            hc.vehicle_stock_id, hc.vehicle_discount_pct, hc.blurb, hc.tier, hc.expires_at,
             sv.name AS vehicle_name, sv.division AS vehicle_division, sv.cost AS vehicle_cost
      FROM hire_candidates hc
      LEFT JOIN stock_vehicles sv ON sv.id = hc.vehicle_stock_id
      WHERE hc.player_id = $1
-     ORDER BY hc.skill, hc.hire_cost`,
+     ORDER BY CASE hc.tier WHEN 'rookie' THEN 0 WHEN 'standard' THEN 1 WHEN 'premium' THEN 2 ELSE 3 END,
+              hc.skill, hc.hire_cost`,
     [req.playerId],
   )).rows;
   if (rows.length === 0) {
     await regeneratePool(req.playerId!);
     rows = (await db.query(
       `SELECT hc.id, hc.name, hc.skill, hc.aggression, hc.loyalty, hc.hire_cost,
-              hc.vehicle_stock_id, hc.vehicle_discount_pct, hc.blurb, hc.expires_at,
+              hc.vehicle_stock_id, hc.vehicle_discount_pct, hc.blurb, hc.tier, hc.expires_at,
               sv.name AS vehicle_name, sv.division AS vehicle_division, sv.cost AS vehicle_cost
        FROM hire_candidates hc
        LEFT JOIN stock_vehicles sv ON sv.id = hc.vehicle_stock_id
        WHERE hc.player_id = $1
-       ORDER BY hc.skill, hc.hire_cost`,
+       ORDER BY CASE hc.tier WHEN 'rookie' THEN 0 WHEN 'standard' THEN 1 WHEN 'premium' THEN 2 ELSE 3 END,
+                hc.skill, hc.hire_cost`,
       [req.playerId],
     )).rows;
   }

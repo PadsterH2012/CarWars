@@ -65,6 +65,43 @@ describe('driver CRUD', () => {
     expect(res.status).toBe(200);
   });
 
+  it('GET /api/drivers/candidates returns tiered candidates with a tier field', async () => {
+    const res = await request(app)
+      .get('/api/drivers/candidates')
+      .set('Authorization', `Bearer ${token}`);
+    expect(res.status).toBe(200);
+    expect(res.body.length).toBeGreaterThan(0);
+    for (const c of res.body) {
+      expect(['rookie', 'standard', 'premium']).toContain(c.tier);
+    }
+    // Rookie tier present and within skill band
+    const rookies = res.body.filter((c: any) => c.tier === 'rookie');
+    expect(rookies.length).toBeGreaterThan(0);
+    for (const r of rookies) expect(r.skill).toBeLessThanOrEqual(2);
+  });
+
+  it('premium candidates are gated behind 5 arena wins', async () => {
+    const db = getDb();
+    const p = await db.query(`SELECT id FROM players WHERE username = 'drivertest'`);
+    const pid = p.rows[0].id;
+
+    // Locked: fewer than 5 wins → no premium candidates after a fresh roll
+    await db.query(`UPDATE players SET wins = 0 WHERE id = $1`, [pid]);
+    await db.query(`DELETE FROM hire_candidates WHERE player_id = $1`, [pid]);
+    let res = await request(app)
+      .get('/api/drivers/candidates')
+      .set('Authorization', `Bearer ${token}`);
+    expect(res.body.some((c: any) => c.tier === 'premium')).toBe(false);
+
+    // Unlocked: 5+ wins → premium candidates appear after a fresh roll
+    await db.query(`UPDATE players SET wins = 5 WHERE id = $1`, [pid]);
+    await db.query(`DELETE FROM hire_candidates WHERE player_id = $1`, [pid]);
+    res = await request(app)
+      .get('/api/drivers/candidates')
+      .set('Authorization', `Bearer ${token}`);
+    expect(res.body.some((c: any) => c.tier === 'premium')).toBe(true);
+  });
+
   it('POST /api/drivers/award-xp grants XP and auto-promotes skill at threshold', async () => {
     // Create a driver at skill 3, give them 299 XP (just below threshold of 300 for skill 4)
     const createRes = await request(app)

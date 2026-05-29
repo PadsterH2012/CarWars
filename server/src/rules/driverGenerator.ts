@@ -75,6 +75,13 @@ function skillToHireCost(skill: number): number {
   return table[skill] ?? 1200;
 }
 
+// Hire tiers. Each tier draws skill from a different band and gates on
+// different conditions (see generateTieredPool):
+//   rookie   — skill 1-2, cheap, always available
+//   standard — skill 1-6, the original pool
+//   premium  — skill 4-6, only offered once the player has proven themselves
+export type DriverTier = 'rookie' | 'standard' | 'premium';
+
 export interface GeneratedCandidate {
   name: string;
   skill: number;
@@ -82,15 +89,53 @@ export interface GeneratedCandidate {
   loyalty: number;
   hireCost: number;
   blurb: string;
+  tier: DriverTier;
   // Optional vehicle package — stock vehicle id + discount applied to the
   // stock vehicle's cost if the player accepts the package deal.
   vehicleStockId?: string;
   vehicleDiscountPct?: number;
 }
 
+// Roll a skill within an inclusive [min,max] band, biased toward the lower
+// end so the top of each band stays a touch rarer than the floor.
+function rollSkillInRange(min: number, max: number): number {
+  const span = max - min;
+  // Two-roll average skews toward the middle/low end without extra tables.
+  const r = (Math.random() + Math.random()) / 2;
+  return min + Math.round(r * span);
+}
+
 // Build `count` fresh candidates. If `stockIdsByDivision[player_division]` is
 // present, a small fraction of candidates will bring a random vehicle from
 // that division at a discount.
+// Build one candidate with a fixed skill and tier. Shared by both the legacy
+// flat pool and the tiered pool so naming/flavour/package logic lives in one
+// place.
+function buildCandidate(skill: number, tier: DriverTier, eligibleStockIds: string[]): GeneratedCandidate {
+  const useNick = Math.random() < 0.15;
+  const first = pick(FIRST_NAMES);
+  const last = pick(LAST_NAMES);
+  const name = useNick
+    ? `${first} "${pick(NICKNAMES)}" ${last}`
+    : `${first} ${last}`;
+  const aggression = 1 + Math.floor(Math.random() * 6);
+  const loyalty    = 3 + Math.floor(Math.random() * 4);  // 3..6
+  const hireCost = skillToHireCost(skill);
+  const blurb = pick(BLURBS);
+
+  // 15% chance the candidate brings their own car. Skill >= 4 skews toward
+  // bringing one (veterans have built rigs over time).
+  const packageChance = skill >= 4 ? 0.3 : 0.1;
+  let vehicleStockId: string | undefined;
+  let vehicleDiscountPct: number | undefined;
+  if (eligibleStockIds.length > 0 && Math.random() < packageChance) {
+    vehicleStockId = pick(eligibleStockIds);
+    vehicleDiscountPct = 15 + Math.floor(Math.random() * 16);  // 15..30%
+  }
+
+  return { name, skill, aggression, loyalty, hireCost, blurb, tier, vehicleStockId, vehicleDiscountPct };
+}
+
 export function generateCandidatePool(
   count: number,
   playerDivision: number,
@@ -98,36 +143,38 @@ export function generateCandidatePool(
 ): GeneratedCandidate[] {
   const out: GeneratedCandidate[] = [];
   for (let i = 0; i < count; i++) {
-    const skill = rollSkill();
-    const useNick = Math.random() < 0.15;
-    const first = pick(FIRST_NAMES);
-    const last = pick(LAST_NAMES);
-    const name = useNick
-      ? `${first} "${pick(NICKNAMES)}" ${last}`
-      : `${first} ${last}`;
-    const aggression = 1 + Math.floor(Math.random() * 6);
-    const loyalty    = 3 + Math.floor(Math.random() * 4);  // 3..6
-    const hireCost = skillToHireCost(skill);
-    const blurb = pick(BLURBS);
-
-    // 15% chance the candidate brings their own car. Skill >= 4 skews toward
-    // bringing one (veterans have built rigs over time).
-    const packageChance = skill >= 4 ? 0.3 : 0.1;
-    let vehicleStockId: string | undefined;
-    let vehicleDiscountPct: number | undefined;
-    if (eligibleStockIds.length > 0 && Math.random() < packageChance) {
-      vehicleStockId = pick(eligibleStockIds);
-      vehicleDiscountPct = 15 + Math.floor(Math.random() * 16);  // 15..30%
-    }
-
-    out.push({
-      name, skill, aggression, loyalty, hireCost, blurb,
-      vehicleStockId, vehicleDiscountPct,
-    });
+    out.push(buildCandidate(rollSkill(), 'standard', eligibleStockIds));
     // Reference the player's division so lint doesn't complain when
     // future logic wants it; currently unused until we scale candidate
     // quality to player skill/rep.
     void playerDivision;
   }
+  return out;
+}
+
+// How many candidates each tier contributes to a fresh pool.
+const TIER_COUNTS = { rookie: 3, standard: 5, premium: 3 } as const;
+
+// Build a mixed-tier pool. Rookies (skill 1-2) and the standard band (skill
+// 1-6) are always offered; the premium band (skill 4-6) is only included when
+// `premiumUnlocked` (the API gates this on arena wins).
+export function generateTieredPool(
+  playerDivision: number,
+  eligibleStockIds: string[],
+  opts: { premiumUnlocked: boolean },
+): GeneratedCandidate[] {
+  const out: GeneratedCandidate[] = [];
+  for (let i = 0; i < TIER_COUNTS.rookie; i++) {
+    out.push(buildCandidate(rollSkillInRange(1, 2), 'rookie', eligibleStockIds));
+  }
+  for (let i = 0; i < TIER_COUNTS.standard; i++) {
+    out.push(buildCandidate(rollSkill(), 'standard', eligibleStockIds));
+  }
+  if (opts.premiumUnlocked) {
+    for (let i = 0; i < TIER_COUNTS.premium; i++) {
+      out.push(buildCandidate(rollSkillInRange(4, 6), 'premium', eligibleStockIds));
+    }
+  }
+  void playerDivision;
   return out;
 }

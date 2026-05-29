@@ -6,6 +6,7 @@ import { BODIES } from '../rules/data/bodies';
 import { TIRES } from '../rules/data/tires';
 import { POWER_PLANTS } from '../rules/data/power-plants';
 import type { VehicleLoadout, DamageState, ArmorDistribution } from '@carwars/shared';
+import { resolveHeadlessJob } from '../rules/headlessJob';
 
 export const economyRouter = Router();
 economyRouter.use(requireAuth);
@@ -318,4 +319,213 @@ jobsRouter.post('/:id/complete', async (req: AuthRequest, res) => {
 
   const pResult = await db.query(`SELECT money FROM players WHERE id = $1`, [req.playerId]);
   return res.json({ payout: job.payout, moneyNew: pResult.rows[0].money });
+});
+
+// ─── Phase 2 — Headless jobs ───────────────────────────────────────────────
+// Headless jobs auto-resolve: the player assigns an available driver and the
+// outcome is rolled (simplified, see rules/headlessJob.ts) when the timer
+// expires. Resolution is LAZY — it happens on the next API call, never during
+// an arena match (anti-rabbit-hole rule 4). Payouts are smaller than arena
+// fights (balance target $200-600) so arena stays the lucrative option.
+
+const HEADLESS_JOBS: Record<string, { job_type: string; description: string; payout: number; difficulty: number; division_min: number }[]> = {
+  'town-1': [
+    { job_type: 'patrol',   description: 'Patrol the eastern checkpoints overnight', payout: 250, difficulty: 2, division_min: 5 },
+    { job_type: 'scavenge', description: 'Strip a wreck on Route 9 for salvage',      payout: 400, difficulty: 4, division_min: 5 },
+    { job_type: 'enforce',  description: 'Lean on a debtor who skipped a payment',    payout: 600, difficulty: 7, division_min: 5 },
+  ],
+};
+
+// Job timer window in minutes (real-time — the game has no in-game day counter).
+const HEADLESS_MIN_MINUTES = 2;
+const HEADLESS_MAX_MINUTES = 5;
+// How long a driver is sidelined after being wounded on a headless job.
+const WOUND_RECOVERY_MINUTES = 3;
+
+// Resolve any of this player's headless jobs whose timer has expired. Idempotent
+// and safe to call from multiple endpoints (GET /drivers, /headless, /outcomes).
+export async function resolveDueHeadlessJobs(playerId: string): Promise<void> {
+  const db = getDb();
+  const due = await db.query(
+    `SELECT j.id AS job_id, j.payout, j.difficulty, j.description, j.job_type,
+            d.id AS driver_id, d.skill, d.name AS driver_name, d.assigned_vehicle_id
+     FROM jobs j JOIN drivers d ON d.id = j.assigned_driver_id
+     WHERE d.player_id = $1 AND j.headless = TRUE AND j.outcome IS NULL
+       AND j.resolves_at IS NOT NULL AND j.resolves_at <= NOW()`,
+    [playerId],
+  );
+
+  for (const row of due.rows) {
+    const outcome = resolveHeadlessJob(
+      { skill: row.skill, hasVehicle: !!row.assigned_vehicle_id },
+      { payout: row.payout, difficulty: row.difficulty },
+    );
+
+    const client = await db.connect();
+    try {
+      await client.query('BEGIN');
+
+      if (outcome.payout > 0) {
+        await client.query(`UPDATE players SET money = money + $1 WHERE id = $2`, [outcome.payout, playerId]);
+      }
+
+      // Vehicle consequences — wear chips the front armour face (feeds the
+      // existing repair economy); a wreck flags the vehicle destroyed.
+      if (row.assigned_vehicle_id) {
+        if (outcome.vehicleWrecked) {
+          await client.query(
+            `UPDATE vehicles SET damage_state = jsonb_set(COALESCE(damage_state, '{}'::jsonb), '{destroyed}', 'true')
+             WHERE id = $1`,
+            [row.assigned_vehicle_id],
+          );
+        } else if (outcome.wear > 0) {
+          await client.query(
+            `UPDATE vehicles
+               SET damage_state = jsonb_set(
+                 damage_state, '{armor,front}',
+                 to_jsonb(GREATEST(0, COALESCE((damage_state->'armor'->>'front')::int, 0) - $2)))
+             WHERE id = $1 AND damage_state ? 'armor'`,
+            [row.assigned_vehicle_id, outcome.wear],
+          );
+        }
+      }
+
+      // Driver consequences — dead, wounded (sidelined to recover), or freed.
+      if (outcome.driverDead) {
+        await client.query(`UPDATE drivers SET alive = FALSE, available_at = NOW() WHERE id = $1`, [row.driver_id]);
+      } else if (outcome.driverWounded) {
+        await client.query(
+          `UPDATE drivers SET wounded = TRUE, wounded_until = NOW() + ($2 || ' minutes')::interval, available_at = NOW()
+           WHERE id = $1`,
+          [row.driver_id, String(WOUND_RECOVERY_MINUTES)],
+        );
+      } else {
+        await client.query(`UPDATE drivers SET available_at = NOW() WHERE id = $1`, [row.driver_id]);
+      }
+
+      // Persist the after-action report (acknowledged=false until the player sees it).
+      const report = {
+        ...outcome,
+        jobDescription: row.description,
+        jobType: row.job_type,
+        driverName: row.driver_name,
+        acknowledged: false,
+      };
+      await client.query(`UPDATE jobs SET outcome = $1, completed = TRUE WHERE id = $2`, [JSON.stringify(report), row.job_id]);
+
+      await client.query(
+        `INSERT INTO gang_ledger (gang_id, event_type, amount, description, result)
+         VALUES ((SELECT id FROM gangs WHERE owner_player_id = $1), 'headless_job', $2, $3, $4)`,
+        [
+          playerId, outcome.payout,
+          `Headless job (${outcome.tier}): ${row.description}`,
+          JSON.stringify({ jobId: row.job_id, driverId: row.driver_id }),
+        ],
+      );
+
+      await client.query('COMMIT');
+    } catch (e) {
+      await client.query('ROLLBACK');
+      throw e;
+    } finally {
+      client.release();
+    }
+  }
+}
+
+// GET /api/jobs/headless?zoneId= — available headless jobs for a zone. Seeds the
+// zone pool on first visit (like the arena job board) and resolves any due jobs.
+jobsRouter.get('/headless', async (req: AuthRequest, res) => {
+  await resolveDueHeadlessJobs(req.playerId!);
+  const zoneId = (req.query.zoneId as string) || 'town-1';
+  const db = getDb();
+  const pResult = await db.query(`SELECT division FROM players WHERE id = $1`, [req.playerId]);
+  const playerDiv = pResult.rows[0]?.division ?? 5;
+
+  const existing = await db.query(
+    `SELECT id FROM jobs WHERE zone_id = $1 AND headless = TRUE AND assigned_driver_id IS NULL AND completed = FALSE LIMIT 1`,
+    [zoneId],
+  );
+  if (!existing.rows.length && HEADLESS_JOBS[zoneId]) {
+    for (const j of HEADLESS_JOBS[zoneId]) {
+      await db.query(
+        `INSERT INTO jobs (zone_id, job_type, description, payout, division_min, headless, difficulty)
+         VALUES ($1,$2,$3,$4,$5,TRUE,$6)`,
+        [zoneId, j.job_type, j.description, j.payout, j.division_min, j.difficulty],
+      );
+    }
+  }
+
+  const rows = (await db.query(
+    `SELECT id, job_type, description, payout, difficulty, division_min
+     FROM jobs WHERE zone_id = $1 AND headless = TRUE AND assigned_driver_id IS NULL
+       AND completed = FALSE AND division_min <= $2
+     ORDER BY difficulty`,
+    [zoneId, playerDiv],
+  )).rows;
+  return res.json(rows);
+});
+
+// GET /api/jobs/outcomes — unacknowledged after-action reports for this player.
+jobsRouter.get('/outcomes', async (req: AuthRequest, res) => {
+  await resolveDueHeadlessJobs(req.playerId!);
+  const db = getDb();
+  const rows = (await db.query(
+    `SELECT j.id, j.outcome
+     FROM jobs j JOIN drivers d ON d.id = j.assigned_driver_id
+     WHERE d.player_id = $1 AND j.outcome IS NOT NULL
+       AND COALESCE((j.outcome->>'acknowledged')::boolean, FALSE) = FALSE`,
+    [req.playerId],
+  )).rows;
+  return res.json(rows.map(r => ({ id: r.id, ...r.outcome })));
+});
+
+// POST /api/jobs/assign — assign an available driver to a headless job.
+jobsRouter.post('/assign', async (req: AuthRequest, res) => {
+  const { jobId, driverId } = req.body;
+  if (!jobId || !driverId) return res.status(400).json({ error: 'jobId and driverId required' });
+  const db = getDb();
+
+  const dRes = await db.query(
+    `SELECT id, alive, available_at FROM drivers WHERE id = $1 AND player_id = $2`,
+    [driverId, req.playerId],
+  );
+  if (!dRes.rows.length) return res.status(403).json({ error: 'Driver not found' });
+  const drv = dRes.rows[0];
+  if (!drv.alive) return res.status(409).json({ error: 'Driver is dead' });
+  if (drv.available_at && new Date(drv.available_at).getTime() > Date.now()) {
+    return res.status(409).json({ error: 'Driver is unavailable (on a job or wounded)' });
+  }
+
+  const jRes = await db.query(
+    `SELECT id, headless, completed, assigned_driver_id FROM jobs WHERE id = $1`, [jobId],
+  );
+  if (!jRes.rows.length) return res.status(404).json({ error: 'Job not found' });
+  const job = jRes.rows[0];
+  if (!job.headless) return res.status(400).json({ error: 'Not a headless job' });
+  if (job.completed || job.assigned_driver_id) return res.status(409).json({ error: 'Job already assigned' });
+
+  const minutes = HEADLESS_MIN_MINUTES + Math.floor(Math.random() * (HEADLESS_MAX_MINUTES - HEADLESS_MIN_MINUTES + 1));
+  const upd = await db.query(
+    `UPDATE jobs SET assigned_driver_id = $1, resolves_at = NOW() + ($2 || ' minutes')::interval
+     WHERE id = $3 AND assigned_driver_id IS NULL AND completed = FALSE
+     RETURNING resolves_at`,
+    [driverId, String(minutes), jobId],
+  );
+  if (!upd.rowCount) return res.status(409).json({ error: 'Job already assigned' });
+
+  await db.query(`UPDATE drivers SET available_at = $1 WHERE id = $2`, [upd.rows[0].resolves_at, driverId]);
+  return res.json({ ok: true, resolvesAt: upd.rows[0].resolves_at, etaMinutes: minutes });
+});
+
+// POST /api/jobs/:id/acknowledge — mark an after-action report as seen.
+jobsRouter.post('/:id/acknowledge', async (req: AuthRequest, res) => {
+  const db = getDb();
+  await db.query(
+    `UPDATE jobs j SET outcome = jsonb_set(j.outcome, '{acknowledged}', 'true')
+     FROM drivers d
+     WHERE d.id = j.assigned_driver_id AND d.player_id = $2 AND j.id = $1 AND j.outcome IS NOT NULL`,
+    [req.params.id, req.playerId],
+  );
+  return res.json({ ok: true });
 });

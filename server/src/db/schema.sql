@@ -647,3 +647,25 @@ CREATE TABLE IF NOT EXISTS match_replays (
   recorded_at TIMESTAMPTZ DEFAULT NOW()
 );
 CREATE INDEX IF NOT EXISTS idx_match_replays_player ON match_replays(player_id, recorded_at DESC);
+
+-- ─── Phase 2 — Hire Driver / headless jobs (added 2026-05-29) ───────────────
+-- Task 1: tiered hire pool. Candidates are drawn from rookie/standard/premium
+-- bands; 'tier' groups them in the garage hire modal.
+ALTER TABLE hire_candidates ADD COLUMN IF NOT EXISTS tier TEXT NOT NULL DEFAULT 'standard';
+
+-- Task 2: driver availability. A driver on a headless job is unavailable until
+-- available_at; only available drivers can be assigned or enter the arena.
+ALTER TABLE drivers ADD COLUMN IF NOT EXISTS available_at TIMESTAMPTZ DEFAULT NOW();
+
+-- Task 2: headless job assignment. A job can be assigned to a driver who runs
+-- it solo; it resolves (lazily, on the next API call) once resolves_at passes,
+-- writing the after-action report into outcome.
+ALTER TABLE jobs ADD COLUMN IF NOT EXISTS assigned_driver_id UUID REFERENCES drivers(id) ON DELETE SET NULL;
+ALTER TABLE jobs ADD COLUMN IF NOT EXISTS resolves_at TIMESTAMPTZ;
+ALTER TABLE jobs ADD COLUMN IF NOT EXISTS outcome JSONB;
+ALTER TABLE jobs ADD COLUMN IF NOT EXISTS headless BOOLEAN NOT NULL DEFAULT FALSE;
+-- Task 3: job difficulty (1-10) drives the headless success roll. Higher = harder
+-- = pays more. (Per Phase 2 HELP - job-difficulty, Option A.)
+ALTER TABLE jobs ADD COLUMN IF NOT EXISTS difficulty INTEGER NOT NULL DEFAULT 3;
+CREATE INDEX IF NOT EXISTS idx_jobs_assigned_driver ON jobs(assigned_driver_id);
+CREATE INDEX IF NOT EXISTS idx_jobs_pending_resolution ON jobs(resolves_at) WHERE headless = TRUE AND outcome IS NULL;

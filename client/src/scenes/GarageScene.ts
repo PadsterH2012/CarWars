@@ -947,8 +947,27 @@ export class GarageScene extends Phaser.Scene {
     const escHtml = (s: string): string =>
       s.replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c] as string));
 
+    // Tier tabs — candidates are grouped Rookie / Standard / Premium server-side
+    // (Phase 2 Task 1). Premium is empty until the player has 5 arena wins.
+    const TIERS = [
+      { key: 'rookie',   label: 'ROOKIE',   hint: 'skill 1-2 · cheap recruits' },
+      { key: 'standard', label: 'STANDARD', hint: 'skill 1-6 · the regular pool' },
+      { key: 'premium',  label: 'PREMIUM',  hint: 'skill 4-6 · elite (5 arena wins to unlock)' },
+    ];
+    let activeTier = 'rookie';
+
     const render = (candidates: any[]): void => {
-      const cards = candidates.map(c => {
+      const inTier = candidates.filter(c => (c.tier ?? 'standard') === activeTier);
+      const tabs = TIERS.map(t => {
+        const count = candidates.filter(c => (c.tier ?? 'standard') === t.key).length;
+        const on = t.key === activeTier;
+        return `<button data-tier="${t.key}" title="${t.hint}"
+          style="padding:8px 16px;font-family:inherit;font-size:12px;cursor:pointer;
+                 background:${on ? '#1a1a3a' : 'transparent'};color:${on ? '#00ff88' : '#889'};
+                 border:1px solid ${on ? '#00ff88' : '#2a2a44'};border-bottom:none;">${t.label} (${count})</button>`;
+      }).join('');
+      const activeMeta = TIERS.find(t => t.key === activeTier)!;
+      const cards = inTier.map(c => {
         const hasPkg = !!c.vehicle_stock_id;
         const pkgCost = hasPkg
           ? Math.round(c.vehicle_cost * (1 - c.vehicle_discount_pct / 100))
@@ -992,7 +1011,10 @@ export class GarageScene extends Phaser.Scene {
           <h2 style="margin:0;color:#ff4444;letter-spacing:2px;">HIRE DRIVERS</h2>
           <div style="font-size:11px;color:#888;">Treasury <b style="color:#ffcc00;">$${this.gang?.treasury.toLocaleString() ?? 0}</b></div>
         </div>
-        <div class="hire-grid">${cards}</div>
+        <div style="display:flex;gap:4px;border-bottom:1px solid #2a2a44;margin-bottom:14px;">${tabs}</div>
+        ${inTier.length
+          ? `<div class="hire-grid">${cards}</div>`
+          : `<div style="padding:40px;text-align:center;color:#778;font-size:12px;line-height:1.6;">No ${activeMeta.label.toLowerCase()} recruits available right now.<br><span style="color:#556;">${escHtml(activeMeta.hint)}</span></div>`}
         <div style="margin-top:16px;display:flex;justify-content:space-between;align-items:center;padding-top:12px;border-top:1px solid #2a2a44;">
           <button data-action="close" style="padding:8px 18px;font-family:inherit;font-size:12px;background:transparent;color:#888;border:1px solid #444;cursor:pointer;">[ CLOSE ]</button>
           <button data-action="refresh" style="padding:8px 18px;font-family:inherit;font-size:12px;background:#332200;color:#ffaa00;border:1px solid #664400;cursor:pointer;">[ REFRESH POOL ($100) ]</button>
@@ -1000,20 +1022,26 @@ export class GarageScene extends Phaser.Scene {
       panel.appendChild(range.createContextualFragment(html));
     };
 
+    let poolCandidates: any[] = [];
     const loadPool = async (): Promise<void> => {
       panel.textContent = 'Loading candidates\u2026';
       const r = await fetch(`http://${host}:3001/api/drivers/candidates`, {
         headers: { Authorization: `Bearer ${this.token}` },
       });
-      render(r.ok ? await r.json() : []);
+      poolCandidates = r.ok ? await r.json() : [];
+      // Default to the first tab that actually has candidates.
+      const firstWith = TIERS.find(t => poolCandidates.some(c => (c.tier ?? 'standard') === t.key));
+      activeTier = firstWith?.key ?? 'rookie';
+      render(poolCandidates);
     };
 
     const close = (): void => { overlay.remove(); };
 
     panel.addEventListener('click', async (e) => {
       const t = e.target as HTMLElement;
-      const btn = t.closest<HTMLElement>('[data-action],[data-candidate-id]');
+      const btn = t.closest<HTMLElement>('[data-action],[data-candidate-id],[data-tier]');
       if (!btn) return;
+      if (btn.dataset.tier) { activeTier = btn.dataset.tier; render(poolCandidates); return; }
       if (btn.dataset.action === 'close') { close(); return; }
       if (btn.dataset.action === 'refresh') {
         const r = await fetch(`http://${host}:3001/api/drivers/candidates/refresh`, {
