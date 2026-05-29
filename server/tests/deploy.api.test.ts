@@ -2,9 +2,10 @@ import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import request from 'supertest';
 import { createApp } from '../src/app';
 import { getDb, closeDb } from '../src/db/client';
+import { resolveDueDeployments } from '../src/api/deploy';
 
 let app: ReturnType<typeof createApp>;
-const USERS = ['deployer1', 'deployer2', 'deployer3', 'deployer4', 'dep-jobcol'];
+const USERS = ['deployer1', 'deployer2', 'deployer3', 'deployer4', 'dep-jobcol', 'dep-jobres'];
 
 async function register(username: string) {
   const reg = await request(app).post('/api/auth/register').send({ username, password: 'password123' });
@@ -173,5 +174,30 @@ describe('squad deployment API', () => {
     expect(ins.rows[0].zone_id).toBeNull();
     expect(ins.rows[0].job_id).toBe(job.id);
     await db.query(`DELETE FROM jobs WHERE id = $1`, [job.id]);
+  });
+
+  it('resolves a job-linked deployment into a report and completes the job', async () => {
+    const db = getDb();
+    const { token, playerId } = await register('dep-jobres');
+    const starter = await request(app).post('/api/me/claim-starter').set('Authorization', `Bearer ${token}`).send();
+    const vehicleId = starter.body.vehicleId as string;
+    const job = (await db.query(
+      `INSERT INTO jobs (zone_id, job_type, description, payout, division_min, headless, difficulty)
+       VALUES ('town-1','patrol','Resolve me',300,5,TRUE,3) RETURNING id`)).rows[0];
+    const driver = (await db.query(`SELECT id FROM drivers WHERE assigned_vehicle_id = $1`, [vehicleId])).rows[0];
+    const dep = (await db.query(
+      `INSERT INTO squad_deployments (player_id, job_id, assignment, driver_ids, vehicle_ids, resolves_at)
+       VALUES ($1,$2,'job',$3::uuid[],$4::uuid[], NOW() - interval '1 second') RETURNING id`,
+      [playerId, job.id, [driver.id], [vehicleId]])).rows[0];
+
+    await resolveDueDeployments(playerId);
+
+    const depAfter = (await db.query(`SELECT status, report_id FROM squad_deployments WHERE id = $1`, [dep.id])).rows[0];
+    expect(depAfter.status).toBe('resolved');
+    expect(depAfter.report_id).toBeTruthy();
+    const jobAfter = (await db.query(`SELECT completed FROM jobs WHERE id = $1`, [job.id])).rows[0];
+    expect(jobAfter.completed).toBe(true);
+    const rep = (await db.query(`SELECT outcome FROM engagement_reports WHERE id = $1`, [depAfter.report_id])).rows[0];
+    expect(['success','partial','failure','routed']).toContain(rep.outcome);
   });
 });

@@ -158,7 +158,7 @@ deployRouter.get('/', requireAuth, async (req: AuthRequest, res) => {
 export async function resolveDueDeployments(playerId: string): Promise<void> {
   const db = getDb();
   const due = await db.query(
-    `SELECT id, zone_id, assignment, driver_ids, vehicle_ids
+    `SELECT id, zone_id, job_id, assignment, driver_ids, vehicle_ids
        FROM squad_deployments
        WHERE player_id = $1 AND status = 'in_transit' AND resolves_at <= NOW()`,
     [playerId],
@@ -178,8 +178,47 @@ export async function resolveDueDeployments(playerId: string): Promise<void> {
   const division: number = gangRes.rows[0]?.division ?? 5;
 
   for (const dep of due.rows) {
-    const node = region.nodes.find(n => n.id === dep.zone_id);
-    if (!node) continue;
+    const assignment: Assignment = ASSIGNMENTS.includes(dep.assignment) ? dep.assignment : 'patrol';
+
+    // The engagement context comes from either a job (no world node) or a world
+    // node. Everything after this — the engine roll and all persistence — is
+    // shared between the two paths.
+    let ctx: {
+      difficulty: number; basePayout: number; placeName: string;
+      zoneIdForReport: string; encounter: string;
+      rival?: { id: string; name: string }; isJob: boolean; jobId?: string;
+    };
+
+    if (dep.job_id) {
+      const jr = (await db.query(
+        `SELECT id, description, payout, difficulty, zone_id, job_type FROM jobs WHERE id = $1`, [dep.job_id])).rows[0];
+      if (!jr) continue;
+      ctx = {
+        difficulty: jr.difficulty, basePayout: jr.payout, placeName: jr.description,
+        zoneIdForReport: jr.zone_id ?? 'job', encounter: `the ${jr.job_type} job`,
+        rival: undefined, isJob: true, jobId: jr.id,
+      };
+    } else {
+      const node = region.nodes.find(n => n.id === dep.zone_id);
+      if (!node) continue;
+      const difficulty = zoneDifficulty(node, region);
+
+      // Engage a rival when the stakes are high: an arena node, a tough zone, or
+      // a raid. Otherwise the squad clashes with anonymous NPC scavengers.
+      let rival: { id: string; name: string } | undefined;
+      const wantRival = node.kind === 'arena' || difficulty >= 6 || assignment === 'raid';
+      if (wantRival && gangId) {
+        const picked = await pickRivalForMatch(db, gangId, division);
+        if (picked) rival = { id: picked.id, name: picked.name };
+      }
+      ctx = {
+        difficulty, basePayout: basePayout(difficulty, assignment), placeName: node.name,
+        zoneIdForReport: dep.zone_id, isJob: false, rival,
+        encounter: rival
+          ? `${rival.name} ${node.kind === 'arena' ? 'in the arena' : 'patrol'}`
+          : `${node.kind === 'arena' ? 'arena challengers' : 'roadside scavengers'} near ${node.name}`,
+      };
+    }
 
     const driverRows = await db.query(
       `SELECT id, name, skill FROM drivers WHERE id = ANY($1::uuid[])`,
@@ -190,37 +229,21 @@ export async function resolveDueDeployments(playerId: string): Promise<void> {
       [dep.vehicle_ids],
     );
 
-    const difficulty = zoneDifficulty(node, region);
-    const assignment: Assignment = ASSIGNMENTS.includes(dep.assignment) ? dep.assignment : 'patrol';
-
-    // Engage a rival when the stakes are high: an arena node, a tough zone, or
-    // a raid. Otherwise the squad clashes with anonymous NPC scavengers.
-    let rival: { id: string; name: string } | undefined;
-    const wantRival = node.kind === 'arena' || difficulty >= 6 || assignment === 'raid';
-    if (wantRival && gangId) {
-      const picked = await pickRivalForMatch(db, gangId, division);
-      if (picked) rival = { id: picked.id, name: picked.name };
-    }
-
     const result = resolveSquadEngagement({
       squad: driverRows.rows.map(r => ({ id: r.id, name: r.name, skill: r.skill })),
       vehicles: vehicleRows.rows.map(r => ({ id: r.id, name: r.name, value: r.value })),
-      zoneDifficulty: difficulty,
+      zoneDifficulty: ctx.difficulty,
       assignment,
-      basePayout: basePayout(difficulty, assignment),
-      rival,
+      basePayout: ctx.basePayout,
+      rival: ctx.rival,
     });
 
-    const encounter = rival
-      ? `${rival.name} ${node.kind === 'arena' ? 'in the arena' : 'patrol'}`
-      : `${node.kind === 'arena' ? 'arena challengers' : 'roadside scavengers'} near ${node.name}`;
-
     const report = {
-      zone: dep.zone_id,
-      zoneName: node.name,
+      zone: ctx.zoneIdForReport,
+      zoneName: ctx.placeName,
       assignment,
-      encounter,
-      summary: buildSummary(result, node, encounter),
+      encounter: ctx.encounter,
+      summary: buildSummary(result, ctx.placeName, ctx.encounter),
       perDriver: result.perDriver,
       vehicles: result.vehicles,
       income: result.income,
@@ -285,15 +308,15 @@ export async function resolveDueDeployments(playerId: string): Promise<void> {
       }
 
       // Rival standing.
-      if (rival && gangId) {
+      if (ctx.rival && gangId) {
         const playerPrevailed = result.outcome === 'success' || result.outcome === 'partial';
-        await recordRivalOutcome(db, gangId, rival.id, playerPrevailed);
+        await recordRivalOutcome(db, gangId, ctx.rival.id, playerPrevailed);
       }
 
       const repIns = await client.query(
         `INSERT INTO engagement_reports (player_id, zone_id, squad_driver_ids, squad_vehicle_ids, outcome, report)
          VALUES ($1, $2, $3::uuid[], $4::uuid[], $5, $6) RETURNING id`,
-        [playerId, dep.zone_id, dep.driver_ids, dep.vehicle_ids, result.outcome, JSON.stringify(report)],
+        [playerId, ctx.zoneIdForReport, dep.driver_ids, dep.vehicle_ids, result.outcome, JSON.stringify(report)],
       );
 
       await client.query(
@@ -301,14 +324,18 @@ export async function resolveDueDeployments(playerId: string): Promise<void> {
         [dep.id, repIns.rows[0].id],
       );
 
+      if (ctx.isJob) {
+        await client.query('UPDATE jobs SET completed = TRUE WHERE id = $1', [ctx.jobId]);
+      }
+
       if (gangId) {
         await client.query(
           `INSERT INTO gang_ledger (gang_id, event_type, amount, description, result)
            VALUES ($1, 'squad_deployment', $2, $3, $4)`,
           [
             gangId, result.net,
-            `Squad ${assignment} (${result.outcome}) at ${node.name}`,
-            JSON.stringify({ deploymentId: dep.id, reportId: repIns.rows[0].id, zoneId: dep.zone_id }),
+            `Squad ${assignment} (${result.outcome}) at ${ctx.placeName}`,
+            JSON.stringify({ deploymentId: dep.id, reportId: repIns.rows[0].id, zoneId: ctx.zoneIdForReport }),
           ],
         );
       }
@@ -323,17 +350,17 @@ export async function resolveDueDeployments(playerId: string): Promise<void> {
   }
 }
 
-function buildSummary(result: SquadEngagementResult, node: WorldNode, encounter: string): string {
+function buildSummary(result: SquadEngagementResult, placeName: string, encounter: string): string {
   const kills = result.perDriver.reduce((s, d) => s + d.kills, 0);
   switch (result.outcome) {
     case 'success':
-      return `Your squad routed the ${encounter} near ${node.name}, scoring ${kills} kill(s) and returning with the haul intact.`;
+      return `Your squad routed the ${encounter} near ${placeName}, scoring ${kills} kill(s) and returning with the haul intact.`;
     case 'partial':
-      return `A messy win against the ${encounter} near ${node.name} — the squad held the field but took damage and salvaged only part of the prize.`;
+      return `A messy win against the ${encounter} near ${placeName} — the squad held the field but took damage and salvaged only part of the prize.`;
     case 'failure':
-      return `The squad was beaten back by the ${encounter} near ${node.name} and limped home with nothing but a repair bill.`;
+      return `The squad was beaten back by the ${encounter} near ${placeName} and limped home with nothing but a repair bill.`;
     case 'routed':
-      return `Disaster near ${node.name}: the ${encounter} overran your squad. A vehicle was wrecked and the crew scattered.`;
+      return `Disaster near ${placeName}: the ${encounter} overran your squad. A vehicle was wrecked and the crew scattered.`;
   }
 }
 
