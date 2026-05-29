@@ -9,7 +9,7 @@ let token: string;
 beforeAll(async () => {
   app = createApp();
   const db = getDb();
-  await db.query(`DELETE FROM players WHERE username = ANY(ARRAY['headlesstest','jobdeploy','jobactive'])`);
+  await db.query(`DELETE FROM players WHERE username = ANY(ARRAY['headlesstest','jobdeploy','jobactive','jobdup'])`);
   const reg = await request(app)
     .post('/api/auth/register')
     .send({ username: 'headlesstest', password: 'password123' });
@@ -18,7 +18,7 @@ beforeAll(async () => {
 
 afterAll(async () => {
   const db = getDb();
-  await db.query(`DELETE FROM players WHERE username = ANY(ARRAY['headlesstest','jobdeploy','jobactive'])`);
+  await db.query(`DELETE FROM players WHERE username = ANY(ARRAY['headlesstest','jobdeploy','jobactive','jobdup'])`);
   await closeDb();
 });
 
@@ -87,5 +87,19 @@ describe('headless jobs', () => {
     const res = await request(app).post(`/api/jobs/${jobs[0].id}/deploy`)
       .set('Authorization', `Bearer ${token}`).send({ vehicleIds: ['a','b','c','d','e'] });
     expect(res.status).toBe(400);
+  });
+
+  it('POST /api/jobs/:id/deploy rejects a second squad on a job already out', async () => {
+    const reg = await request(app).post('/api/auth/register').send({ username: 'jobdup', password: 'password123' });
+    const t = reg.body.token;
+    const starter = await request(app).post('/api/me/claim-starter').set('Authorization', `Bearer ${t}`).send();
+    const vehicleId = starter.body.vehicleId;
+    const jobs = (await request(app).get('/api/jobs/headless?zoneId=town-1').set('Authorization', `Bearer ${t}`)).body;
+    const first = await request(app).post(`/api/jobs/${jobs[0].id}/deploy`)
+      .set('Authorization', `Bearer ${t}`).send({ vehicleIds: [vehicleId] });
+    expect(first.status).toBe(201);
+    const second = await request(app).post(`/api/jobs/${jobs[0].id}/deploy`)
+      .set('Authorization', `Bearer ${t}`).send({ vehicleIds: [vehicleId] });
+    expect(second.status).toBe(409);
   });
 });
