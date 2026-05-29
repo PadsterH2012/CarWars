@@ -143,7 +143,7 @@ deployRouter.get('/', requireAuth, async (req: AuthRequest, res) => {
   await resolveDueDeployments(req.playerId!);
   const db = getDb();
   const result = await db.query(
-    `SELECT id, zone_id, assignment, status, resolves_at, report_id,
+    `SELECT id, zone_id, job_id, assignment, status, resolves_at, report_id,
             GREATEST(0, CEIL(EXTRACT(EPOCH FROM (resolves_at - NOW()))))::int AS eta_seconds
        FROM squad_deployments
        WHERE player_id = $1

@@ -521,8 +521,10 @@ class WorldMapScene extends Phaser.Scene {
         headers: { Authorization: "Bearer " + this.token },
       });
       if (!res.ok) return;
-      const rows: Array<{ id: string; zone_id: string; status: string; eta_seconds: number }> = await res.json();
-      const inTransit = rows.filter(r => r.status === "in_transit");
+      const rows: Array<{ id: string; zone_id: string; job_id: string | null; status: string; eta_seconds: number }> = await res.json();
+      // Only zone deployments belong on the world map; job-deployments (job_id set)
+      // are surfaced on the Job Board instead.
+      const inTransit = rows.filter(r => r.status === "in_transit" && !r.job_id);
       // Flash for any squad that resolved since the last poll.
       const liveIds = new Set(inTransit.map(r => r.id));
       for (const prev of this.deployments) {

@@ -5,7 +5,7 @@ import { getDb, closeDb } from '../src/db/client';
 import { resolveDueDeployments } from '../src/api/deploy';
 
 let app: ReturnType<typeof createApp>;
-const USERS = ['deployer1', 'deployer2', 'deployer3', 'deployer4', 'dep-jobcol', 'dep-jobres'];
+const USERS = ['deployer1', 'deployer2', 'deployer3', 'deployer4', 'dep-jobcol', 'dep-jobres', 'dep-jobfield'];
 
 async function register(username: string) {
   const reg = await request(app).post('/api/auth/register').send({ username, password: 'password123' });
@@ -199,5 +199,23 @@ describe('squad deployment API', () => {
     expect(jobAfter.completed).toBe(true);
     const rep = (await db.query(`SELECT outcome FROM engagement_reports WHERE id = $1`, [depAfter.report_id])).rows[0];
     expect(['success','partial','failure','routed']).toContain(rep.outcome);
+  });
+
+  it('GET /api/deploy exposes job_id so the client can filter job-deployments', async () => {
+    const db = getDb();
+    const { token, playerId } = await register('dep-jobfield');
+    const job = (await db.query(
+      `INSERT INTO jobs (zone_id, job_type, description, payout, division_min, headless, difficulty)
+       VALUES ('town-1','patrol','Field test',300,5,TRUE,3) RETURNING id`)).rows[0];
+    const dep = (await db.query(
+      `INSERT INTO squad_deployments (player_id, job_id, assignment, driver_ids, vehicle_ids, resolves_at)
+       VALUES ($1,$2,'job','{}'::uuid[],'{}'::uuid[], NOW() + interval '5 minutes') RETURNING id`,
+      [playerId, job.id])).rows[0];
+    const res = await request(app).get('/api/deploy').set('Authorization', `Bearer ${token}`);
+    expect(res.status).toBe(200);
+    const row = res.body.find((r: any) => r.id === dep.id);
+    expect(row).toBeTruthy();
+    expect(row.job_id).toBe(job.id);
+    await db.query(`DELETE FROM jobs WHERE id = $1`, [job.id]);
   });
 });
