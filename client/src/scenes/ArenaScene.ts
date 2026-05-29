@@ -363,6 +363,11 @@ export class ArenaScene extends Phaser.Scene {
         this.showRivalBanner(msg.rival);
       } else if (msg.type === 'zone_end') {
         this.showZoneEnd(msg.winnerId, msg.reason, msg.prize ?? 0, msg.jobPayout ?? 0, msg.salvage ?? 0, msg.wages ?? 0, msg.maintenance ?? 0, msg.rival, msg.rivalQuote, msg.replayId, msg.spawnAt);
+      } else if (msg.type === 'zone_join_error') {
+        // The server refused entry (a selected vehicle is deployed, or its
+        // driver is on a headless job). Without this the arena would sit on the
+        // empty default grid forever, since no zone_state ever arrives.
+        this.showJoinError(msg.error);
       }
     });
   }
@@ -672,6 +677,24 @@ export class ArenaScene extends Phaser.Scene {
         spawnAt,
       });
     });
+  }
+
+  // Server refused the join — overlay the reason and bounce back to the garage
+  // rather than leaving the player on an empty arena with no feedback.
+  private showJoinError(error: string): void {
+    this.connection.close();
+    const { width, height } = this.scale;
+    this.add.rectangle(width / 2, height / 2, width, height, 0x000000, 0.72).setScrollFactor(0).setDepth(50);
+    this.add.text(width / 2, height / 2 - 24, 'CANNOT ENTER ARENA', {
+      fontSize: '24px', fontFamily: 'monospace', color: '#ff4444', fontStyle: 'bold',
+    }).setOrigin(0.5).setScrollFactor(0).setDepth(51);
+    this.add.text(width / 2, height / 2 + 14, error, {
+      fontSize: '14px', fontFamily: 'monospace', color: '#ffcc88', align: 'center', wordWrap: { width: width * 0.7 },
+    }).setOrigin(0.5).setScrollFactor(0).setDepth(51);
+    this.add.text(width / 2, height / 2 + 58, 'Returning to garage…', {
+      fontSize: '12px', fontFamily: 'monospace', color: '#888888',
+    }).setOrigin(0.5).setScrollFactor(0).setDepth(51);
+    this.time.delayedCall(2200, () => this.scene.start('GarageScene', { token: this.token }));
   }
 
   private updateHud(): void {

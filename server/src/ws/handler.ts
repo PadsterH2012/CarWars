@@ -870,7 +870,7 @@ async function handleMessage(ws: WebSocket, raw: string): Promise<void> {
           `SELECT j.id, j.resolves_at
              FROM jobs j
              JOIN drivers d ON d.id = j.assigned_driver_id
-            WHERE j.player_id = $1 AND j.headless = TRUE AND j.outcome IS NULL
+            WHERE d.player_id = $1 AND j.headless = TRUE AND j.outcome IS NULL
               AND j.resolves_at IS NOT NULL AND j.resolves_at > NOW()
               AND d.assigned_vehicle_id = ANY($2::uuid[])`,
           [playerId, allVids]

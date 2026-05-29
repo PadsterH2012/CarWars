@@ -34,6 +34,7 @@ export type ServerMessage =
   | { type: 'zone_state'; state: ZoneState }
   | { type: 'damage'; result: DamageResult }
   | { type: 'error'; message: string }
+  | { type: 'zone_join_error'; error: string }
   | { type: 'zone_change'; destinationZoneId: string; reason: string }
   | { type: 'zone_end'; winnerId: string | null; reason: string; prize: number; jobPayout: number; salvage: number; wages: number; maintenance: number; rival?: RivalInfo; rivalQuote?: string; replayId?: string; spawnAt?: 'garage' | 'town' }
   | { type: 'rival_info'; rival: RivalInfo }
