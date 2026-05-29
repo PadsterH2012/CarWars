@@ -1,5 +1,6 @@
 import Phaser from 'phaser';
 import { bindFullscreenToggle, onLayout } from '../ui/responsive';
+import arenaMapData from '../tilemaps/arena-1.json';
 import { renderMapFloor, renderMapWalls, renderMapDecorations, type MapRenderOptions } from '../rendering/mapRenderer';
 import { buildVehicleSprite, updateVehicleSprite, preloadVehicleSprites } from '../game/VehicleSprite';
 import type { ArenaMap, CombatEvent, WreckageState, VehicleState } from '@carwars/shared';
@@ -47,10 +48,14 @@ function mapIdForZone(zoneId: string): string {
   return 'open';
 }
 
-function paletteBackground(palette: any): number {
-  if (!palette || !palette.ambient) return 0x0a0a14;
-  const c = palette.ambient;
-  return parseInt(c.replace('#', ''), 16);
+function paletteBackground(palette?: string): number {
+  switch (palette) {
+    case 'industrial': return 0x0a0e14;
+    case 'urban':      return 0x0b0810;
+    case 'desert':     return 0x140d08;
+    case 'wasteland':  return 0x080808;
+    default:           return 0x0a0a14;
+  }
 }
 
 export class ReplayScene extends Phaser.Scene {
@@ -70,6 +75,7 @@ export class ReplayScene extends Phaser.Scene {
   private worldLayer!: Phaser.GameObjects.Container;
   private effectsLayer!: Phaser.GameObjects.Container;
   private vehicleLayer!: Phaser.GameObjects.Container;
+  private tilemapLayers: Phaser.Tilemaps.TilemapLayer[] = [];
   private hudText!: Phaser.GameObjects.Text;
   private timelineBar!: Phaser.GameObjects.Rectangle;
   private timelineFill!: Phaser.GameObjects.Rectangle;
@@ -174,6 +180,9 @@ export class ReplayScene extends Phaser.Scene {
   private layout(): void {
     const { width, height } = this.scale;
 
+    // Remove old tilemap layers so they're re-created on resize
+    this.tilemapLayers.forEach(l => l.destroy());
+    this.tilemapLayers = [];
     this.worldLayer.removeAll(true);
     if (this.map) this.renderMap(this.map);
 
@@ -208,29 +217,54 @@ export class ReplayScene extends Phaser.Scene {
   private renderMap(map: ArenaMap): void {
     const mapW = map.width * PIXELS_PER_INCH;
     const mapH = map.height * PIXELS_PER_INCH;
-    const mapX = WORLD_CENTER_X - mapW / 2;
-    const mapY = WORLD_CENTER_Y - mapH / 2;
 
-    const bgColor = map.palette ? paletteBackground(map.palette) : 0x0a0a14;
+    // Tilemap background — same textured look as ArenaScene
+    this.cache.tilemap.add('replay-arena', {
+      format: Phaser.Tilemaps.Formats.TILED_JSON,
+      data: arenaMapData,
+    });
+    const gfx = this.make.graphics({ x: 0, y: 0 });
+    gfx.fillStyle(0x111122); gfx.fillRect(0, 0, 32, 32);   // tile 1: outer floor
+    gfx.fillStyle(0x1a1a33); gfx.fillRect(32, 0, 32, 32);  // tile 2: unused
+    gfx.fillStyle(0x222244); gfx.fillRect(0, 32, 32, 32);  // tile 3: arena floor
+    gfx.fillStyle(0x4444aa); gfx.fillRect(32, 32, 32, 32); // tile 4: arena wall
+    gfx.generateTexture('tiles-replay', 64, 64);
+    gfx.destroy();
+
+    const tilemap = this.make.tilemap({ key: 'replay-arena' });
+    const tileset = tilemap.addTilesetImage('arena', 'tiles-replay')!;
+    const groundLayer = tilemap.createLayer('ground', tileset);
+    const wallLayer = tilemap.createLayer('walls', tileset);
+    // Position the tilemap so its center aligns with WORLD_CENTER
+    // The tilemap is 40 tiles wide x 30 tiles tall = 1280 x 960 pixels
+    tilemap.setPosition(WORLD_CENTER_X - 640, WORLD_CENTER_Y - 480);
+
+    // If the game map has explicit dimensions, create a palette-tinted
+    // background rectangle so the tilemap tiles outside the map boundaries
+    // are hidden by the solid background colour.
+    const bgColor = paletteBackground(map.palette);
     const bg = this.add.rectangle(
       WORLD_CENTER_X, WORLD_CENTER_Y, mapW, mapH, bgColor
     );
     this.worldLayer.add(bg);
 
+    // Floor surfaces from map data — painted on top of the tilemap
+    // but below walls, so the tilemap shows through on uncovered areas.
     if (map.floor && map.floor.length > 0) {
-      const gfx = this.add.graphics();
-      renderMapFloor(gfx, map.floor, RENDER_OPTS);
-      this.worldLayer.add(gfx);
+      const ffx = this.add.graphics();
+      renderMapFloor(ffx, map.floor, RENDER_OPTS);
+      this.worldLayer.add(ffx);
     }
     if (map.decorations && map.decorations.length > 0) {
-      const gfx = this.add.graphics();
-      renderMapDecorations(gfx, map.decorations, RENDER_OPTS);
-      this.worldLayer.add(gfx);
+      const dfx = this.add.graphics();
+      renderMapDecorations(dfx, map.decorations, RENDER_OPTS);
+      this.worldLayer.add(dfx);
     }
+    // Walls drawn with the game map's layout — these are the actual collision walls
     if (map.walls && map.walls.length > 0) {
-      const gfx = this.add.graphics();
-      renderMapWalls(gfx, map.walls, RENDER_OPTS);
-      this.worldLayer.add(gfx);
+      const wfx = this.add.graphics();
+      renderMapWalls(wfx, map.walls, RENDER_OPTS);
+      this.worldLayer.add(wfx);
     }
   }
 
