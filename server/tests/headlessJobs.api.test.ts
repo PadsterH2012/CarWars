@@ -10,7 +10,7 @@ let driverId: string;
 beforeAll(async () => {
   app = createApp();
   const db = getDb();
-  await db.query(`DELETE FROM players WHERE username = 'headlesstest'`);
+  await db.query(`DELETE FROM players WHERE username = ANY(ARRAY['headlesstest','jobdeploy'])`);
   const reg = await request(app)
     .post('/api/auth/register')
     .send({ username: 'headlesstest', password: 'password123' });
@@ -24,7 +24,7 @@ beforeAll(async () => {
 
 afterAll(async () => {
   const db = getDb();
-  await db.query(`DELETE FROM players WHERE username = 'headlesstest'`);
+  await db.query(`DELETE FROM players WHERE username = ANY(ARRAY['headlesstest','jobdeploy'])`);
   await closeDb();
 });
 
@@ -127,5 +127,28 @@ describe('headless jobs', () => {
     expect(mine.driverName).toBe('Active Runner');
     expect(typeof mine.remainingSeconds).toBe('number');
     expect(mine.remainingSeconds).toBeGreaterThan(0);
+  });
+
+  it('POST /api/jobs/:id/deploy sends a squad and marks the vehicle deployed', async () => {
+    // Fresh player with a starter vehicle + auto-assigned driver
+    const reg = await request(app).post('/api/auth/register').send({ username: 'jobdeploy', password: 'password123' });
+    const t = reg.body.token;
+    const starter = await request(app).post('/api/me/claim-starter').set('Authorization', `Bearer ${t}`).send();
+    const vehicleId = starter.body.vehicleId;
+    const jobs = (await request(app).get('/api/jobs/headless?zoneId=town-1').set('Authorization', `Bearer ${t}`)).body;
+    const res = await request(app).post(`/api/jobs/${jobs[0].id}/deploy`)
+      .set('Authorization', `Bearer ${t}`).send({ vehicleIds: [vehicleId] });
+    expect(res.status).toBe(201);
+    expect(res.body.deploymentId).toBeTruthy();
+    expect(typeof res.body.etaSeconds).toBe('number');
+    const vehicles = (await request(app).get('/api/vehicles').set('Authorization', `Bearer ${t}`)).body;
+    expect(vehicles.find((v: any) => v.id === vehicleId).status).toBe('deployed');
+  });
+
+  it('POST /api/jobs/:id/deploy rejects more than 4 vehicles', async () => {
+    const jobs = (await request(app).get('/api/jobs/headless?zoneId=town-1').set('Authorization', `Bearer ${token}`)).body;
+    const res = await request(app).post(`/api/jobs/${jobs[0].id}/deploy`)
+      .set('Authorization', `Bearer ${token}`).send({ vehicleIds: ['a','b','c','d','e'] });
+    expect(res.status).toBe(400);
   });
 });

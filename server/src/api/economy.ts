@@ -7,6 +7,7 @@ import { TIRES } from '../rules/data/tires';
 import { POWER_PLANTS } from '../rules/data/power-plants';
 import type { VehicleLoadout, DamageState, ArmorDistribution } from '@carwars/shared';
 import { resolveHeadlessJob } from '../rules/headlessJob';
+import { resolveDueDeployments } from './deploy';
 
 export const economyRouter = Router();
 economyRouter.use(requireAuth);
@@ -555,6 +556,55 @@ jobsRouter.post('/assign', async (req: AuthRequest, res) => {
 
   await db.query(`UPDATE drivers SET available_at = $1 WHERE id = $2`, [upd.rows[0].resolves_at, driverId]);
   return res.json({ ok: true, resolvesAt: upd.rows[0].resolves_at, etaMinutes: minutes });
+});
+
+// ─── Phase 5 — send a squad to a job ───────────────────────────────────────
+// Commit 1–4 vehicles (with their assigned crew) to a job. Creates a job-linked
+// squad_deployments row, sidelines the crew, and the vehicles then show as
+// `deployed` on /api/vehicles. Task 2's resolveDueDeployments resolves the
+// job-linked row and marks the job completed when the timer expires.
+const JOB_SQUAD_CAP = 4;
+function jobDeploymentSeconds(difficulty: number): number { return 120 + difficulty * 30; }
+
+jobsRouter.post('/:id/deploy', async (req: AuthRequest, res) => {
+  const { id } = req.params;
+  const vehicleIds = req.body?.vehicleIds;
+  if (!Array.isArray(vehicleIds) || !vehicleIds.length) return res.status(400).json({ error: 'vehicleIds required' });
+  if (vehicleIds.length > JOB_SQUAD_CAP) return res.status(400).json({ error: `A squad is at most ${JOB_SQUAD_CAP} vehicles` });
+  const db = getDb();
+  await resolveDueDeployments(req.playerId!);
+
+  const jr = (await db.query(`SELECT id, difficulty, completed FROM jobs WHERE id = $1`, [id])).rows[0];
+  if (!jr) return res.status(404).json({ error: 'Job not found' });
+  if (jr.completed) return res.status(409).json({ error: 'Job already completed' });
+  const existing = await db.query(`SELECT 1 FROM squad_deployments WHERE job_id = $1 AND status = 'in_transit' LIMIT 1`, [id]);
+  if (existing.rows.length) return res.status(409).json({ error: 'Job already has a squad out' });
+
+  const vRes = await db.query(
+    `SELECT id FROM vehicles WHERE id = ANY($1::uuid[]) AND player_id = $2
+       AND COALESCE((damage_state->>'destroyed')::boolean,false)=false AND in_arena=false`,
+    [vehicleIds, req.playerId]);
+  if (vRes.rows.length !== vehicleIds.length) return res.status(403).json({ error: 'One or more vehicles are unavailable or not owned' });
+
+  const busy = await db.query(`SELECT 1 FROM squad_deployments WHERE player_id=$1 AND status='in_transit' AND vehicle_ids && $2::uuid[] LIMIT 1`, [req.playerId, vehicleIds]);
+  if (busy.rows.length) return res.status(409).json({ error: 'A selected vehicle is already deployed' });
+
+  const dRes = await db.query(
+    `SELECT id FROM drivers WHERE assigned_vehicle_id = ANY($1::uuid[]) AND player_id = $2
+       AND alive = true AND COALESCE(available_at, NOW()) <= NOW()`,
+    [vehicleIds, req.playerId]);
+  if (!dRes.rows.length) return res.status(409).json({ error: 'No available crew for the selected vehicles' });
+  const driverIds = dRes.rows.map(r => r.id);
+
+  const seconds = jobDeploymentSeconds(jr.difficulty);
+  const ins = await db.query(
+    `INSERT INTO squad_deployments (player_id, job_id, assignment, driver_ids, vehicle_ids, resolves_at)
+     VALUES ($1,$2,'job',$3::uuid[],$4::uuid[], NOW() + ($5 || ' seconds')::interval) RETURNING id, resolves_at`,
+    [req.playerId, id, driverIds, vehicleIds, String(seconds)]);
+  await db.query(`UPDATE drivers SET available_at = $2 WHERE id = ANY($1::uuid[])`, [driverIds, ins.rows[0].resolves_at]);
+  await db.query(`UPDATE jobs SET assigned_driver_id = $2 WHERE id = $1`, [id, driverIds[0]]);
+
+  return res.status(201).json({ deploymentId: ins.rows[0].id, etaSeconds: seconds, resolvesAt: ins.rows[0].resolves_at });
 });
 
 // POST /api/jobs/:id/acknowledge — mark an after-action report as seen.
