@@ -184,7 +184,7 @@ export async function resolveDueDeployments(playerId: string): Promise<void> {
     // node. Everything after this — the engine roll and all persistence — is
     // shared between the two paths.
     let ctx: {
-      difficulty: number; basePayout: number; placeName: string;
+      difficulty: number; basePayout: number; placeName: string; summaryPlace: string;
       zoneIdForReport: string; encounter: string;
       rival?: { id: string; name: string }; isJob: boolean; jobId?: string;
     };
@@ -193,9 +193,11 @@ export async function resolveDueDeployments(playerId: string): Promise<void> {
       const jr = (await db.query(
         `SELECT id, description, payout, difficulty, zone_id, job_type FROM jobs WHERE id = $1`, [dep.job_id])).rows[0];
       if (!jr) continue;
+      // placeName (report header) is the job's description; summaryPlace keeps the
+      // flavour line readable, and the encounter avoids a leading "the".
       ctx = {
-        difficulty: jr.difficulty, basePayout: jr.payout, placeName: jr.description,
-        zoneIdForReport: jr.zone_id ?? 'job', encounter: `the ${jr.job_type} job`,
+        difficulty: jr.difficulty, basePayout: jr.payout, placeName: jr.description, summaryPlace: 'the job site',
+        zoneIdForReport: jr.zone_id ?? 'job', encounter: `${jr.job_type} opposition`,
         rival: undefined, isJob: true, jobId: jr.id,
       };
     } else {
@@ -212,7 +214,7 @@ export async function resolveDueDeployments(playerId: string): Promise<void> {
         if (picked) rival = { id: picked.id, name: picked.name };
       }
       ctx = {
-        difficulty, basePayout: basePayout(difficulty, assignment), placeName: node.name,
+        difficulty, basePayout: basePayout(difficulty, assignment), placeName: node.name, summaryPlace: node.name,
         zoneIdForReport: dep.zone_id, isJob: false, rival,
         encounter: rival
           ? `${rival.name} ${node.kind === 'arena' ? 'in the arena' : 'patrol'}`
@@ -243,7 +245,7 @@ export async function resolveDueDeployments(playerId: string): Promise<void> {
       zoneName: ctx.placeName,
       assignment,
       encounter: ctx.encounter,
-      summary: buildSummary(result, ctx.placeName, ctx.encounter),
+      summary: buildSummary(result, ctx.summaryPlace, ctx.encounter),
       perDriver: result.perDriver,
       vehicles: result.vehicles,
       income: result.income,
