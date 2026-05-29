@@ -1,7 +1,6 @@
 import Phaser from 'phaser';
 import { bindFullscreenToggle, onLayout } from '../ui/responsive';
-import arenaMapData from '../tilemaps/arena-1.json';
-import { renderMapFloor, renderMapWalls, renderMapDecorations, type MapRenderOptions } from '../rendering/mapRenderer';
+import { renderMapFloorStretch, renderMapWalls, renderMapDecorations, type MapRenderOptions } from '../rendering/mapRenderer';
 import { buildVehicleSprite, updateVehicleSprite, preloadVehicleSprites } from '../game/VehicleSprite';
 import type { ArenaMap, CombatEvent, WreckageState, VehicleState } from '@carwars/shared';
 
@@ -75,7 +74,8 @@ export class ReplayScene extends Phaser.Scene {
   private worldLayer!: Phaser.GameObjects.Container;
   private effectsLayer!: Phaser.GameObjects.Container;
   private vehicleLayer!: Phaser.GameObjects.Container;
-  private tilemapLayers: Phaser.Tilemaps.TilemapLayer[] = [];
+  private floorContainer!: Phaser.GameObjects.Container;
+  private floorImages: Phaser.GameObjects.Image[] = [];
   private hudText!: Phaser.GameObjects.Text;
   private timelineBar!: Phaser.GameObjects.Rectangle;
   private timelineFill!: Phaser.GameObjects.Rectangle;
@@ -85,6 +85,15 @@ export class ReplayScene extends Phaser.Scene {
 
   preload(): void {
     preloadVehicleSprites(this);
+    // Tile textures for stretch-mode floor rendering — same set as ArenaScene
+    this.load.image('tile_asphalt',     '/assets/tiles/asphalt.jpg');
+    this.load.image('tile_concrete',    '/assets/tiles/concrete.jpg');
+    this.load.image('tile_dirt',        '/assets/tiles/dirt.jpg');
+    this.load.image('tile_gravel',      '/assets/tiles/gravel.jpg');
+    this.load.image('tile_sand',        '/assets/tiles/sand.jpg');
+    this.load.image('tile_scrub_grass', '/assets/tiles/scrub_grass.jpg');
+    this.load.image('tile_rust_plate',  '/assets/tiles/rust_plate.jpg');
+    this.load.image('tile_neon',        '/assets/tiles/neon.jpg');
   }
 
   init(data: ReplaySceneData): void {
@@ -102,6 +111,7 @@ export class ReplayScene extends Phaser.Scene {
       // Create layers FIRST — must exist before any layout/update call,
       // since onLayout may fire layout() synchronously during create().
       this.worldLayer = this.add.container(0, 0);
+      this.floorContainer = this.add.container(0, 0).setDepth(0.35);
       this.vehicleLayer = this.add.container(0, 0);
       this.effectsLayer = this.add.container(0, 0);
 
@@ -180,10 +190,10 @@ export class ReplayScene extends Phaser.Scene {
   private layout(): void {
     const { width, height } = this.scale;
 
-    // Remove old tilemap layers so they're re-created on resize
-    this.tilemapLayers.forEach(l => l.destroy());
-    this.tilemapLayers = [];
     this.worldLayer.removeAll(true);
+    this.floorImages.forEach(img => img.destroy());
+    this.floorImages = [];
+    this.floorContainer.removeAll(true);
     if (this.map) this.renderMap(this.map);
 
     // Re-size camera to match viewport
@@ -218,52 +228,23 @@ export class ReplayScene extends Phaser.Scene {
     const mapW = map.width * PIXELS_PER_INCH;
     const mapH = map.height * PIXELS_PER_INCH;
 
-    // Tilemap background — same textured look as ArenaScene
-    this.cache.tilemap.add('replay-arena', {
-      format: Phaser.Tilemaps.Formats.TILED_JSON,
-      data: arenaMapData,
-    });
-    const gfx = this.make.graphics({ x: 0, y: 0 });
-    gfx.fillStyle(0x111122); gfx.fillRect(0, 0, 32, 32);   // tile 1: outer floor
-    gfx.fillStyle(0x1a1a33); gfx.fillRect(32, 0, 32, 32);  // tile 2: unused
-    gfx.fillStyle(0x222244); gfx.fillRect(0, 32, 32, 32);  // tile 3: arena floor
-    gfx.fillStyle(0x4444aa); gfx.fillRect(32, 32, 32, 32); // tile 4: arena wall
-    gfx.generateTexture('tiles-replay', 64, 64);
-    gfx.destroy();
-
-    const tilemap = this.make.tilemap({ key: 'replay-arena' });
-    const tileset = tilemap.addTilesetImage('arena', 'tiles-replay')!;
-    const groundLayer = tilemap.createLayer('ground', tileset);
-    const wallLayer = tilemap.createLayer('walls', tileset);
-    // Position the tilemap so its center aligns with WORLD_CENTER
-    // The tilemap is 40 tiles wide x 30 tiles tall = 1280 x 960 pixels
-    // Phaser Tilemap has no setPosition — set on each layer instead
-    const tilemapOffsetX = WORLD_CENTER_X - 640;
-    const tilemapOffsetY = WORLD_CENTER_Y - 480;
-    this.tilemapLayers.forEach(l => l.setPosition(tilemapOffsetX, tilemapOffsetY));
-
-    // If the game map has explicit dimensions, create a palette-tinted
-    // background rectangle so the tilemap tiles outside the map boundaries
-    // are hidden by the solid background colour.
+    // Palette-tinted backdrop so areas outside the map's floor tiles still
+    // read as part of the arena rather than the void.
     const bgColor = paletteBackground(map.palette);
-    const bg = this.add.rectangle(
-      WORLD_CENTER_X, WORLD_CENTER_Y, mapW, mapH, bgColor
-    );
+    const bg = this.add.rectangle(WORLD_CENTER_X, WORLD_CENTER_Y, mapW, mapH, bgColor);
     this.worldLayer.add(bg);
 
-    // Floor surfaces from map data — painted on top of the tilemap
-    // but below walls, so the tilemap shows through on uncovered areas.
+    // Textured floor — same stretch-mode pipeline ArenaScene uses (see ArenaScene
+    // floorMode='stretch'). Each FloorTile becomes a Phaser.Image scaled to the
+    // tile rect with the matching JPEG texture (asphalt, concrete, …).
     if (map.floor && map.floor.length > 0) {
-      const ffx = this.add.graphics();
-      renderMapFloor(ffx, map.floor, RENDER_OPTS);
-      this.worldLayer.add(ffx);
+      this.floorImages = renderMapFloorStretch(this, map.floor, RENDER_OPTS, this.floorContainer);
     }
     if (map.decorations && map.decorations.length > 0) {
       const dfx = this.add.graphics();
       renderMapDecorations(dfx, map.decorations, RENDER_OPTS);
       this.worldLayer.add(dfx);
     }
-    // Walls drawn with the game map's layout — these are the actual collision walls
     if (map.walls && map.walls.length > 0) {
       const wfx = this.add.graphics();
       renderMapWalls(wfx, map.walls, RENDER_OPTS);
