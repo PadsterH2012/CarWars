@@ -2,6 +2,7 @@ import { Router } from 'express';
 import { getDb } from '../db/client';
 import { requireAuth, AuthRequest } from './middleware';
 import { resolveDueDeployments } from './deploy';
+import { resolveDueHeadlessJobs } from './economy';
 
 export const reportsRouter = Router();
 
@@ -29,12 +30,17 @@ reportsRouter.get('/', requireAuth, async (req: AuthRequest, res) => {
 // GET /api/reports/unread-count — lightweight badge poll for the garage.
 reportsRouter.get('/unread-count', requireAuth, async (req: AuthRequest, res) => {
   await resolveDueDeployments(req.playerId!);
+  await resolveDueHeadlessJobs(req.playerId!);
   const db = getDb();
-  const result = await db.query(
-    `SELECT COUNT(*)::int AS unread FROM engagement_reports WHERE player_id = $1 AND read = FALSE`,
-    [req.playerId],
-  );
-  return res.json({ unread: result.rows[0].unread });
+  const [eng, jobs] = await Promise.all([
+    db.query(`SELECT COUNT(*)::int AS n FROM engagement_reports WHERE player_id = $1 AND read = FALSE`, [req.playerId]),
+    db.query(
+      `SELECT COUNT(*)::int AS n FROM jobs j JOIN drivers d ON d.id = j.assigned_driver_id
+        WHERE d.player_id = $1 AND j.outcome IS NOT NULL
+          AND COALESCE((j.outcome->>'acknowledged')::boolean, FALSE) = FALSE`,
+      [req.playerId]),
+  ]);
+  return res.json({ unread: eng.rows[0].n + jobs.rows[0].n });
 });
 
 // POST /api/reports/:id/read — mark a single report read.

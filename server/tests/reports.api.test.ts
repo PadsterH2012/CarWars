@@ -4,7 +4,7 @@ import { createApp } from '../src/app';
 import { getDb, closeDb } from '../src/db/client';
 
 let app: ReturnType<typeof createApp>;
-const USERS = ['reporter1'];
+const USERS = ['reporter1', 'reporter-jobs'];
 
 async function register(username: string) {
   const reg = await request(app).post('/api/auth/register').send({ username, password: 'password123' });
@@ -60,6 +60,31 @@ describe('after-action reports API', () => {
     expect(mark.status).toBe(200);
     const after = await request(app).get('/api/reports/unread-count').set('Authorization', `Bearer ${token}`);
     expect(after.body.unread).toBe(0);
+  });
+
+  it('unread-count includes unacknowledged job outcomes', async () => {
+    const db = getDb();
+    const { token } = await register('reporter-jobs');
+    const drv = await request(app)
+      .post('/api/drivers')
+      .set('Authorization', `Bearer ${token}`)
+      .send({ name: 'Badge Runner' });
+    expect(drv.status).toBe(201);
+    const jobs = await request(app)
+      .get('/api/jobs/headless?zoneId=town-1')
+      .set('Authorization', `Bearer ${token}`);
+    expect(jobs.body.length).toBeGreaterThan(0);
+    const jobId = jobs.body[0].id;
+    const assign = await request(app)
+      .post('/api/jobs/assign')
+      .set('Authorization', `Bearer ${token}`)
+      .send({ jobId, driverId: drv.body.id });
+    expect(assign.status).toBe(200);
+    await db.query(`UPDATE jobs SET resolves_at = NOW() - interval '1 second' WHERE id = $1`, [jobId]);
+
+    const count = await request(app).get('/api/reports/unread-count').set('Authorization', `Bearer ${token}`);
+    expect(count.status).toBe(200);
+    expect(count.body.unread).toBeGreaterThanOrEqual(1);
   });
 
   it('404s when marking a report the player does not own', async () => {
