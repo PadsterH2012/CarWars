@@ -109,4 +109,23 @@ describe('headless jobs', () => {
       .set('Authorization', `Bearer ${token}`)).body;
     expect(after.find((o: any) => o.id === report.id)).toBeUndefined();
   });
+
+  it('GET /api/jobs/active lists in-progress contracts with ETA + driver name', async () => {
+    // Assign a fresh driver to a fresh contract so one is definitely in-flight.
+    const drv = await request(app).post('/api/drivers')
+      .set('Authorization', `Bearer ${token}`).send({ name: 'Active Runner' });
+    const jobs = (await request(app).get('/api/jobs/headless?zoneId=town-1')
+      .set('Authorization', `Bearer ${token}`)).body;
+    await request(app).post('/api/jobs/assign')
+      .set('Authorization', `Bearer ${token}`).send({ jobId: jobs[0].id, driverId: drv.body.id });
+
+    const res = await request(app).get('/api/jobs/active')
+      .set('Authorization', `Bearer ${token}`);
+    expect(res.status).toBe(200);
+    const mine = res.body.find((j: any) => j.driverId === drv.body.id);
+    expect(mine).toBeTruthy();
+    expect(mine.driverName).toBe('Active Runner');
+    expect(typeof mine.remainingSeconds).toBe('number');
+    expect(mine.remainingSeconds).toBeGreaterThan(0);
+  });
 });

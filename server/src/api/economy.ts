@@ -499,6 +499,26 @@ jobsRouter.get('/outcomes', async (req: AuthRequest, res) => {
   return res.json(rows.map(r => ({ id: r.id, ...r.outcome })));
 });
 
+// GET /api/jobs/active — this player's in-progress headless contracts (driver
+// assigned, not yet resolved). Used by the Contracts "in progress" section.
+jobsRouter.get('/active', async (req: AuthRequest, res) => {
+  await resolveDueHeadlessJobs(req.playerId!);
+  const db = getDb();
+  const rows = (await db.query(
+    `SELECT j.id, j.job_type, j.description, j.payout, j.resolves_at,
+            d.id AS driver_id, d.name AS driver_name, d.skill
+       FROM jobs j JOIN drivers d ON d.id = j.assigned_driver_id
+      WHERE d.player_id = $1 AND j.headless = TRUE AND j.outcome IS NULL
+      ORDER BY j.resolves_at ASC`,
+    [req.playerId],
+  )).rows;
+  return res.json(rows.map(r => ({
+    id: r.id, jobType: r.job_type, description: r.description, payout: r.payout,
+    driverId: r.driver_id, driverName: r.driver_name, skill: r.skill,
+    remainingSeconds: Math.max(0, Math.ceil((new Date(r.resolves_at).getTime() - Date.now()) / 1000)),
+  })));
+});
+
 // POST /api/jobs/assign — assign an available driver to a headless job.
 jobsRouter.post('/assign', async (req: AuthRequest, res) => {
   const { jobId, driverId } = req.body;
