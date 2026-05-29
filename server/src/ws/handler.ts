@@ -846,6 +846,42 @@ async function handleMessage(ws: WebSocket, raw: string): Promise<void> {
       }
     }
 
+    // ── Deployment check: reject if vehicle is out on a squad deployment or headless job ──
+    {
+      const db = getDb();
+      const uuidRe = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+      const allVids = [msg.vehicleId, ...(squadIds ?? [])].filter((id: string) => uuidRe.test(id));
+      if (allVids.length) {
+        const depRes = await db.query(
+          `SELECT sd.vehicle_ids, sd.resolves_at, sd.zone_id
+             FROM squad_deployments sd
+            WHERE sd.player_id = $1 AND sd.status = 'in_transit' AND sd.resolves_at > NOW()
+              AND sd.vehicle_ids && $2::uuid[]`,
+          [playerId, allVids]
+        );
+        if (depRes.rows.length) {
+          const deployedIds = depRes.rows.flatMap((r: any) =>
+            (r.vehicle_ids as string[]).filter((id: string) => allVids.includes(id))
+          );
+          send(ws, { type: 'zone_join_error', error: `Vehicle ${deployedIds[0].slice(0,8)}… is currently deployed — recall it first` });
+          return;
+        }
+        const jobRes = await db.query(
+          `SELECT j.id, j.resolves_at
+             FROM jobs j
+             JOIN drivers d ON d.id = j.assigned_driver_id
+            WHERE j.player_id = $1 AND j.headless = TRUE AND j.outcome IS NULL
+              AND j.resolves_at IS NOT NULL AND j.resolves_at > NOW()
+              AND d.assigned_vehicle_id = ANY($2::uuid[])`,
+          [playerId, allVids]
+        );
+        if (jobRes.rows.length) {
+          send(ws, { type: 'zone_join_error', error: `This vehicle’s driver is on a headless job — wait for it to complete` });
+          return;
+        }
+      }
+    }
+
     // Load driver skill for this vehicle (only for real DB vehicles with valid UUID)
     let joinedSkill = 3;
     {

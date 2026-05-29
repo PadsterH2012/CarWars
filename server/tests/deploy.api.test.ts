@@ -4,7 +4,7 @@ import { createApp } from '../src/app';
 import { getDb, closeDb } from '../src/db/client';
 
 let app: ReturnType<typeof createApp>;
-const USERS = ['deployer1', 'deployer2'];
+const USERS = ['deployer1', 'deployer2', 'deployer3', 'deployer4'];
 
 async function register(username: string) {
   const reg = await request(app).post('/api/auth/register').send({ username, password: 'password123' });
@@ -58,6 +58,69 @@ describe('squad deployment API', () => {
       .send({ zoneId: 'nowhere', vehicleIds: [vehicleId] });
 
     expect(res.status).toBe(404);
+  });
+
+  it('marks a deployed vehicle as "deployed" on GET /api/vehicles with an ETA', async () => {
+    const { token } = await register('deployer3');
+    const starter = await request(app).post('/api/me/claim-starter').set('Authorization', `Bearer ${token}`).send();
+    const vehicleId = starter.body.vehicleId as string;
+
+    // Before deploy: available.
+    const before = await request(app).get('/api/vehicles').set('Authorization', `Bearer ${token}`);
+    const vBefore = before.body.find((v: { id: string }) => v.id === vehicleId);
+    expect(vBefore.status).toBe('available');
+    expect(vBefore.remainingSeconds).toBe(0);
+
+    const dep = await request(app)
+      .post('/api/deploy')
+      .set('Authorization', `Bearer ${token}`)
+      .send({ zoneId: 'rustwater-truck-stop', vehicleIds: [vehicleId], assignment: 'patrol' });
+    expect(dep.status).toBe(201);
+
+    // After deploy: the same vehicle reads as deployed, with a positive ETA and zone.
+    const after = await request(app).get('/api/vehicles').set('Authorization', `Bearer ${token}`);
+    const vAfter = after.body.find((v: { id: string }) => v.id === vehicleId);
+    expect(vAfter.status).toBe('deployed');
+    expect(vAfter.remainingSeconds).toBeGreaterThan(0);
+    expect(vAfter.deploymentZone).toBe('rustwater-truck-stop');
+  });
+
+  it('resolves a due deployment exactly once under concurrent requests', async () => {
+    const db = getDb();
+    const { token, playerId } = await register('deployer4');
+    const starter = await request(app).post('/api/me/claim-starter').set('Authorization', `Bearer ${token}`).send();
+    const vehicleId = starter.body.vehicleId as string;
+
+    const dep = await request(app)
+      .post('/api/deploy')
+      .set('Authorization', `Bearer ${token}`)
+      .send({ zoneId: 'rustwater-truck-stop', vehicleIds: [vehicleId], assignment: 'patrol' });
+    expect(dep.status).toBe(201);
+    const deploymentId = dep.body.deploymentId as string;
+
+    await db.query(`UPDATE squad_deployments SET resolves_at = NOW() - interval '1 second' WHERE id = $1`, [deploymentId]);
+
+    // Fire several resolution-triggering endpoints at once (each calls
+    // resolveDueDeployments). The atomic claim must keep this to one report.
+    const auth = { Authorization: `Bearer ${token}` };
+    await Promise.all([
+      request(app).get('/api/vehicles').set(auth),
+      request(app).get('/api/deploy').set(auth),
+      request(app).get('/api/reports/unread-count').set(auth),
+      request(app).get('/api/vehicles').set(auth),
+      request(app).get('/api/reports').set(auth),
+    ]);
+
+    const reports = await db.query(
+      `SELECT COUNT(*)::int AS n FROM engagement_reports WHERE player_id = $1`, [playerId],
+    );
+    expect(reports.rows[0].n).toBe(1);
+
+    const ledger = await db.query(
+      `SELECT COUNT(*)::int AS n FROM gang_ledger
+        WHERE event_type = 'squad_deployment' AND result->>'deploymentId' = $1`, [deploymentId],
+    );
+    expect(ledger.rows[0].n).toBe(1);
   });
 
   it('resolves a due deployment into an after-action report and frees the crew', async () => {

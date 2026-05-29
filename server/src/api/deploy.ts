@@ -234,6 +234,16 @@ export async function resolveDueDeployments(playerId: string): Promise<void> {
     try {
       await client.query('BEGIN');
 
+      // Claim this deployment atomically. resolveDueDeployments runs from
+      // several endpoints (and several can fire concurrently in one page load),
+      // so without this a deployment could be resolved twice — double payout +
+      // duplicate report. SKIP LOCKED lets a rival caller bow out cleanly.
+      const claim = await client.query(
+        `SELECT id FROM squad_deployments WHERE id = $1 AND status = 'in_transit' FOR UPDATE SKIP LOCKED`,
+        [dep.id],
+      );
+      if (!claim.rows.length) { await client.query('ROLLBACK'); continue; }
+
       // Money: credit income, debit field repairs (net effect = report.net).
       if (result.income !== 0 || result.repairCost !== 0) {
         await client.query(`UPDATE players SET money = GREATEST(0, money + $1) WHERE id = $2`, [result.net, playerId]);

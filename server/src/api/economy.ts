@@ -375,6 +375,15 @@ export async function resolveDueHeadlessJobs(playerId: string): Promise<void> {
     try {
       await client.query('BEGIN');
 
+      // Claim this job atomically — resolveDueHeadlessJobs can fire from several
+      // endpoints at once (GET /drivers, /vehicles, /outcomes), and without a
+      // lock a job could resolve twice (double payout + duplicate report).
+      const claim = await client.query(
+        `SELECT id FROM jobs WHERE id = $1 AND outcome IS NULL FOR UPDATE SKIP LOCKED`,
+        [row.job_id],
+      );
+      if (!claim.rows.length) { await client.query('ROLLBACK'); continue; }
+
       if (outcome.payout > 0) {
         await client.query(`UPDATE players SET money = money + $1 WHERE id = $2`, [outcome.payout, playerId]);
       }

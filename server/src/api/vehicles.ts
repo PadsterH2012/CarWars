@@ -5,6 +5,8 @@ import { deriveStats } from '../rules/vehicle';
 import { computeCapacity, isInvalid } from '../rules/capacity';
 import { WEAPONS } from '../rules/data/weapons';
 import { vehicleLimitReached } from './garages';
+import { resolveDueDeployments } from './deploy';
+import { resolveDueHeadlessJobs } from './economy';
 import type { VehicleLoadout, WeaponMount } from '@carwars/shared';
 
 const WORKSHOP_TRADE_IN = 0.5;   // percentage refunded when a weapon/ammo is removed
@@ -83,12 +85,64 @@ vehiclesRouter.post('/', async (req: AuthRequest, res) => {
 });
 
 vehiclesRouter.get('/', async (req: AuthRequest, res) => {
+  // Resolve any due squad deployments / headless jobs first so the status
+  // fields below reflect freshly-returned vehicles (mirrors GET /api/drivers).
+  await resolveDueDeployments(req.playerId!);
+  await resolveDueHeadlessJobs(req.playerId!);
+
   const db = getDb();
+  // Each vehicle is decorated with an availability status so the garage and
+  // world-map can show who's out and when they're back:
+  //   in_arena → in a live arena match (existing flag)
+  //   deployed → out on a squad deployment (squad_deployments.in_transit)
+  //   on_job   → its crew is on a headless job (jobs.headless, unresolved)
+  //   available otherwise.
   const result = await db.query(
-    `SELECT id, name, loadout, damage_state, value FROM vehicles WHERE player_id = $1`,
+    `SELECT v.id, v.name, v.loadout, v.damage_state, v.value, v.in_arena,
+            dep.zone_id     AS deployment_zone,
+            dep.resolves_at AS deployment_resolves_at,
+            job.resolves_at AS job_resolves_at
+       FROM vehicles v
+       LEFT JOIN LATERAL (
+         SELECT sd.zone_id, sd.resolves_at FROM squad_deployments sd
+          WHERE sd.player_id = v.player_id AND sd.status = 'in_transit'
+            AND v.id = ANY(sd.vehicle_ids)
+          ORDER BY sd.resolves_at DESC LIMIT 1
+       ) dep ON TRUE
+       LEFT JOIN LATERAL (
+         SELECT j.resolves_at FROM jobs j
+           JOIN drivers d ON d.id = j.assigned_driver_id
+          WHERE d.assigned_vehicle_id = v.id AND j.headless = TRUE
+            AND j.outcome IS NULL AND j.resolves_at IS NOT NULL AND j.resolves_at > NOW()
+          ORDER BY j.resolves_at DESC LIMIT 1
+       ) job ON TRUE
+      WHERE v.player_id = $1
+      ORDER BY v.created_at`,
     [req.playerId]
   );
-  return res.json(result.rows);
+
+  const now = Date.now();
+  const rows = result.rows.map(v => {
+    const depMs = v.deployment_resolves_at ? new Date(v.deployment_resolves_at).getTime() : 0;
+    const jobMs = v.job_resolves_at ? new Date(v.job_resolves_at).getTime() : 0;
+    let status: 'available' | 'in_arena' | 'deployed' | 'on_job' = 'available';
+    let remainingSeconds = 0;
+    let deploymentZone: string | null = null;
+    if (v.in_arena) {
+      status = 'in_arena';
+    } else if (depMs > now) {
+      status = 'deployed';
+      remainingSeconds = Math.ceil((depMs - now) / 1000);
+      deploymentZone = v.deployment_zone ?? null;
+    } else if (jobMs > now) {
+      status = 'on_job';
+      remainingSeconds = Math.ceil((jobMs - now) / 1000);
+    }
+    // Drop the raw join columns; expose a tidy status triple instead.
+    const { deployment_zone, deployment_resolves_at, job_resolves_at, ...rest } = v;
+    return { ...rest, status, remainingSeconds, deploymentZone };
+  });
+  return res.json(rows);
 });
 
 vehiclesRouter.get('/:id', async (req: AuthRequest, res) => {

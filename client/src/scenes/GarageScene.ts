@@ -3,8 +3,27 @@ import { paintEmblem, EMBLEM_IDS, type EmblemId } from '../game/CoatOfArms';
 import { bindFullscreenToggle, onLayout } from '../ui/responsive';
 import { preloadVehicleSprites, bodySpriteKey } from '../game/VehicleSprite';
 
-interface Vehicle { id: string; name: string; value: number; damage_state: any; loadout: any; in_arena?: boolean; }
-interface Driver { id: string; name: string; skill: number; xp: number; assigned_vehicle_id: string | null; alive: boolean; wounded: boolean; wounded_until: string | null; title?: string; xpToNext?: number; }
+type AvailabilityStatus = 'available' | 'deployed' | 'on_job' | 'in_arena' | 'wounded';
+interface Vehicle { id: string; name: string; value: number; damage_state: any; loadout: any; in_arena?: boolean; status?: AvailabilityStatus; remainingSeconds?: number; deploymentZone?: string | null; }
+interface Driver { id: string; name: string; skill: number; xp: number; assigned_vehicle_id: string | null; alive: boolean; wounded: boolean; wounded_until: string | null; title?: string; xpToNext?: number; status?: AvailabilityStatus; remainingSeconds?: number; }
+interface Deployment { id: string; zone_id: string; assignment: string; status: string; eta_seconds: number; }
+
+// Compact ETA used by the status pills + deployments list ("1m 20s" / "45s").
+function fmtRemaining(seconds: number): string {
+  if (seconds <= 0) return 'now';
+  const m = Math.floor(seconds / 60);
+  const s = seconds % 60;
+  return m > 0 ? `${m}m ${s}s` : `${s}s`;
+}
+
+// Status → dot colour for the vehicle/driver rows.
+const STATUS_DOT: Record<AvailabilityStatus, number> = {
+  available: 0x00ff88,
+  deployed: 0xffaa00,
+  on_job: 0xff8800,
+  in_arena: 0x44aaff,
+  wounded: 0xff4444,
+};
 interface Gang { id: string; name: string; primary_colour: number; secondary_colour: number; emblem_id: EmblemId; treasury: number; reputation: number; }
 interface DriverRequest {
   id: string; kind: string; description: string; cost: number;
@@ -26,6 +45,7 @@ export class GarageScene extends Phaser.Scene {
   private money = 0;
   private division = 0;
   private unreadReports = 0; // squad after-action reports awaiting the player
+  private deployments: Deployment[] = []; // squads currently out (in_transit)
   private selectedVehicleId = '';
   private selectedDriverId = '';
   private justFoughtVehicleId = ''; // vehicle just back from arena
@@ -46,7 +66,7 @@ export class GarageScene extends Phaser.Scene {
   async create(): Promise<void> {
     const host = window.location.hostname;
 
-    const [meRes, vRes, dRes, gRes, reqRes, bayRes, repRes] = await Promise.all([
+    const [meRes, vRes, dRes, gRes, reqRes, bayRes, repRes, depRes] = await Promise.all([
       fetch(`http://${host}:3001/api/me`, { headers: { Authorization: `Bearer ${this.token}` } }),
       fetch(`http://${host}:3001/api/vehicles`, { headers: { Authorization: `Bearer ${this.token}` } }),
       fetch(`http://${host}:3001/api/drivers`, { headers: { Authorization: `Bearer ${this.token}` } }),
@@ -56,6 +76,8 @@ export class GarageScene extends Phaser.Scene {
       fetch(`http://${host}:3001/api/garages`, { headers: { Authorization: `Bearer ${this.token}` } }),
       // Resolves any due squad deployments and returns the unread report count.
       fetch(`http://${host}:3001/api/reports/unread-count`, { headers: { Authorization: `Bearer ${this.token}` } }),
+      // Active squad deployments (in_transit) for the status panel + ETAs.
+      fetch(`http://${host}:3001/api/deploy`, { headers: { Authorization: `Bearer ${this.token}` } }),
     ]);
     const me = await meRes.json();
     this.money = me.money ?? 0;
@@ -68,6 +90,10 @@ export class GarageScene extends Phaser.Scene {
     if (reqRes.ok) this.driverRequests = await reqRes.json();
     if (bayRes.ok) this.garage = await bayRes.json();
     if (repRes.ok) this.unreadReports = (await repRes.json()).unread ?? 0;
+    if (depRes.ok) {
+      const rows: Deployment[] = await depRes.json();
+      this.deployments = rows.filter(d => d.status === 'in_transit');
+    }
 
     this.mainLayer = this.add.container(0, 0);
 
@@ -195,9 +221,19 @@ export class GarageScene extends Phaser.Scene {
         add(nameText);
         add(this.add.text(textX + 230, y, `$${v.value.toLocaleString()}`, { color: '#888888', fontSize: '14px', fontFamily: 'monospace' }));
 
+        // Availability dot on the thumbnail corner: green=idle, amber=deployed,
+        // orange=on a job, blue=in arena. Destroyed cars keep their red name.
+        const vStatus: AvailabilityStatus = v.status ?? 'available';
+        if (!isDestroyed) {
+          add(this.add.circle(leftX + thumbBoxW - 2, y + 4, 5, STATUS_DOT[vStatus] ?? 0x00ff88).setStrokeStyle(1, 0x000000, 0.6));
+        }
+
         const driver = driverByVid.get(v.id);
-        const driverStr = driver ? `Driver: ${driver.name} (sk${driver.skill})` : '\u26A0 NO DRIVER';
-        const driverColor = driver ? '#88ccff' : '#ffaa44';
+        let driverStr = driver ? `Driver: ${driver.name} (sk${driver.skill})` : '\u26A0 NO DRIVER';
+        if (vStatus === 'deployed') driverStr += `  \u00B7 DEPLOYED ${fmtRemaining(v.remainingSeconds ?? 0)}`;
+        else if (vStatus === 'on_job') driverStr += `  \u00B7 ON JOB ${fmtRemaining(v.remainingSeconds ?? 0)}`;
+        else if (vStatus === 'in_arena') driverStr += '  \u00B7 IN ARENA';
+        const driverColor = (vStatus === 'deployed' || vStatus === 'on_job') ? '#ffaa44' : (driver ? '#88ccff' : '#ffaa44');
         add(this.add.text(textX, y + 20, driverStr, {
           color: driverColor, fontSize: '11px', fontFamily: 'monospace'
         }));
@@ -240,13 +276,16 @@ export class GarageScene extends Phaser.Scene {
         }
         add(workBtn);
 
-        const fightBtn = this.add.text(btn2, btnTop, isDestroyed ? '[DESTROYED]' : '[FIGHT]', {
-          color: isDestroyed ? '#444444' : '#00ff88',
+        // A vehicle out on a deployment / job / arena match can't start a new fight.
+        const isBusy = vStatus === 'deployed' || vStatus === 'on_job' || vStatus === 'in_arena';
+        const fightLabel = isDestroyed ? '[DESTROYED]' : isBusy ? '[BUSY]' : '[FIGHT]';
+        const fightBtn = this.add.text(btn2, btnTop, fightLabel, {
+          color: (isDestroyed || isBusy) ? '#444444' : '#00ff88',
           fontSize: '12px', fontFamily: 'monospace',
-          backgroundColor: isDestroyed ? '#221111' : '#003322',
+          backgroundColor: (isDestroyed || isBusy) ? '#221111' : '#003322',
           padding: { x: 4, y: 2 }
         });
-        if (!isDestroyed) {
+        if (!isDestroyed && !isBusy) {
           fightBtn.setInteractive();
           fightBtn.on('pointerdown', () => {
             this.persistSelection(v.id, driver?.id ?? null);
@@ -299,7 +338,8 @@ export class GarageScene extends Phaser.Scene {
       livingDrivers.forEach((d, i) => {
         const y = firstRowY + i * ROW_H;
         const assignedVehicle = this.vehicles.find(v => v.id === d.assigned_vehicle_id);
-        // Row 1: driver name (left) with wound indicator + assignment button (right-aligned)
+        // Row 1: driver name (left) with status indicator + assignment button (right-aligned).
+        // Availability comes from the server: wounded > on_job (deployment/headless) > idle.
         let woundStr = '';
         if (d.wounded && d.wounded_until) {
           const remaining = new Date(d.wounded_until).getTime() - Date.now();
@@ -308,8 +348,12 @@ export class GarageScene extends Phaser.Scene {
             woundStr = ' [WOUNDED ' + mins + 'm]';
           }
         }
-        add(this.add.text(crewX, y, d.name + woundStr, {
-          color: woundStr ? '#ff4444' : '#ffffff', fontSize: '13px', fontFamily: 'monospace'
+        const onJob = !woundStr && d.status === 'on_job';
+        const statusStr = woundStr || (onJob ? ` [ON JOB ${fmtRemaining(d.remainingSeconds ?? 0)}]` : '');
+        const dotStatus: AvailabilityStatus = woundStr ? 'wounded' : (onJob ? 'on_job' : 'available');
+        add(this.add.circle(crewX - 10, y + 7, 4, STATUS_DOT[dotStatus]).setStrokeStyle(1, 0x000000, 0.6));
+        add(this.add.text(crewX, y, d.name + statusStr, {
+          color: statusStr ? (woundStr ? '#ff4444' : '#ffaa44') : '#ffffff', fontSize: '13px', fontFamily: 'monospace'
         }));
         const assignStr = assignedVehicle ? `▶ ${assignedVehicle.name}` : 'unassigned';
         const assignBtn = this.add.text(crewX + CREW_PANEL_W, y, assignStr, {
@@ -329,6 +373,22 @@ export class GarageScene extends Phaser.Scene {
         if (i < livingDrivers.length - 1) {
           add(this.add.rectangle(crewX, y + 40, CREW_PANEL_W, 1, 0x333344, 0.8).setOrigin(0, 0));
         }
+      });
+    }
+
+    // ── Active deployments (Phase 4 / issue #7) ──────────────────────────────
+    // Squads currently out on the world map, with live ETAs. Anchored below the
+    // crew list in the right column.
+    if (this.deployments.length > 0) {
+      const depY = firstRowY + Math.max(1, livingDrivers.length) * 50 + 14;
+      add(this.add.text(crewX, depY, `⚙ ACTIVE DEPLOYMENTS (${this.deployments.length})`, {
+        color: '#ffaa44', fontSize: '12px', fontFamily: 'monospace', fontStyle: 'bold'
+      }));
+      this.deployments.slice(0, 4).forEach((dep, i) => {
+        const eta = dep.eta_seconds > 0 ? fmtRemaining(dep.eta_seconds) : 'resolving…';
+        add(this.add.text(crewX, depY + 20 + i * 16, `• ${dep.zone_id} — ${dep.assignment} — ${eta}`, {
+          color: '#ddbb88', fontSize: '11px', fontFamily: 'monospace'
+        }));
       });
     }
 
@@ -643,7 +703,8 @@ export class GarageScene extends Phaser.Scene {
       if (d.alive && d.assigned_vehicle_id) driverByVehicleId.set(d.assigned_vehicle_id, d);
     }
     const eligible = this.vehicles.filter(v =>
-      !v.damage_state?.destroyed && !v.in_arena && driverByVehicleId.has(v.id)
+      !v.damage_state?.destroyed && !v.in_arena && driverByVehicleId.has(v.id) &&
+      (v.status ?? 'available') === 'available'
     );
     if (!eligible.find(v => v.id === primaryId)) {
       const lastMap = localStorage.getItem('cw_selected_map') ?? 'truck-stop';
