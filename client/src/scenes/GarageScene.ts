@@ -725,6 +725,25 @@ export class GarageScene extends Phaser.Scene {
       mechanic: 'iq', leadership: 'iq', medical: 'iq', fire_aid: 'ht',
       barter: 'iq', navigation: 'iq', streetwise: 'iq',
     };
+    const SKILL_INFO: Record<string, { cover: string; bonus: string }> = {
+      driving_light:    { cover: 'Subcompact, Compact, Light/Med Cycle',     bonus: '+1 HC per 3 lvls' },
+      driving_standard: { cover: 'Mid-Sized, Sedan, Luxury, Station Wagon, Trike', bonus: '+1 HC per 3 lvls' },
+      driving_heavy:    { cover: 'Pickup, Van, Camper, Hvy Cycle',           bonus: '+1 HC per 3 lvls' },
+      driving_mega:     { cover: 'Truck, Trailer, Bus',                      bonus: '+1 HC per 3 lvls' },
+      gunnery_guns:     { cover: 'MG, VMG, AC, RR, HMG',                     bonus: '-1 to-hit per 2 lvls; -1 link penalty per 3' },
+      gunnery_heavy:    { cover: 'GL, ATG, BC',                              bonus: '-1 to-hit per 2 lvls; -1 link penalty per 3' },
+      gunnery_rockets:  { cover: 'LTR, MR, HR, RL, MML',                     bonus: '-1 to-hit per 2 lvls; -1 link penalty per 3' },
+      gunnery_lasers:   { cover: 'LL, ML, L, HL',                            bonus: '-1 to-hit per 2 lvls; -1 link penalty per 3' },
+      gunnery_flamers:  { cover: 'LFT, FT',                                  bonus: '-1 to-hit per 2 lvls; -1 link penalty per 3' },
+      gunnery_tactical: { cover: 'Spikedropper, Oil Jet, Oil Slick, Mine',   bonus: '-1 to-hit per 2 lvls; -1 link penalty per 3' },
+      mechanic:         { cover: 'Repair costs, upgrade options',             bonus: '-2% repair cost per lvl' },
+      leadership:       { cover: 'Squad size, driver loyalty',                bonus: '+1 squad size at 5/10' },
+      medical:          { cover: 'Driver wound recovery',                     bonus: 'Faster recovery rate' },
+      fire_aid:         { cover: 'Fire suppression',                          bonus: '-1 fire dmg per 3 lvls' },
+      barter:           { cover: 'Trade prices (buy/sell/repair)',            bonus: 'Better prices per lvl' },
+      navigation:       { cover: 'Fuel efficiency, travel speed',             bonus: 'Less fuel, faster travel' },
+      streetwise:       { cover: 'Contract quality, hire quality',            bonus: 'Better jobs & recruits' },
+    };
     const upgradeCost = (level: number, skillId: string): number => {
       const diff = SKILL_DIFFICULTY[skillId] ?? 1;
       const attrKey = SKILL_ATTR[skillId] ?? 'dx';
@@ -746,6 +765,21 @@ export class GarageScene extends Phaser.Scene {
       padding: '20px', width: 'min(520px, 92vw)',
       boxShadow: '0 10px 40px rgba(0,0,0,0.6)',
     });
+    const tooltip = document.createElement('div');
+    Object.assign(tooltip.style, {
+      position: 'fixed', display: 'none', zIndex: '210',
+      background: '#11112a', border: '1px solid #4466aa', borderRadius: '4px',
+      color: '#ccc', fontFamily: "'Courier New', monospace",
+      fontSize: '11px', padding: '10px 14px', maxWidth: '320px',
+      pointerEvents: 'none', lineHeight: '1.5',
+    });
+    overlay.appendChild(tooltip);
+    overlay.addEventListener('mousemove', (e: MouseEvent) => {
+      const tx = Math.min(e.clientX + 14, window.innerWidth - 340);
+      const ty = Math.min(e.clientY + 14, window.innerHeight - 140);
+      tooltip.style.left = tx + 'px';
+      tooltip.style.top = ty + 'px';
+    });
     overlay.appendChild(panel);
     document.body.appendChild(overlay);
 
@@ -756,6 +790,31 @@ export class GarageScene extends Phaser.Scene {
 
     const esc = (s: string): string =>
       s.replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c] as string));
+
+    const skillTip = (id: string, show: boolean): void => {
+      if (!show) { tooltip.style.display = 'none'; return; }
+      const info = SKILL_INFO[id];
+      const lvl = skills[id] ?? 0;
+      const bText = id.startsWith('driving_') ? `Active: +${Math.floor(lvl / 3)} HC`
+        : id.startsWith('gunnery_') ? `Active: -${Math.floor(lvl / 2)} to-hit, -${Math.floor(lvl / 3)} link penalty`
+        : id === 'mechanic' ? `Active: -${lvl * 2}% repair cost`
+        : id === 'fire_aid' ? `Active: -${Math.floor(lvl / 3)} fire dmg`
+        : id === 'leadership' ? (lvl >= 10 ? 'Active: +2 squad size' : lvl >= 5 ? 'Active: +1 squad size' : 'No bonus yet')
+        : '';
+      tooltip.innerHTML = '<b style="color:#88ccff;">' + esc(SKILL_LABELS[id] ?? id) + '</b>' +
+        '<br><span style="color:#888;">Covers:</span> ' + esc(info.cover) +
+        '<br><span style="color:#888;">Per level:</span> ' + esc(info.bonus) +
+        (bText ? '<br><span style="color:#44ff88;">' + esc(bText) + '</span>' : '');
+      tooltip.style.display = 'block';
+    };
+    const attachSkillHover = (): void => {
+      const rows = panel.querySelectorAll('[data-skill-id]');
+      for (let i = 0; i < rows.length; i++) {
+        const el = rows[i] as HTMLElement;
+        el.addEventListener('mouseenter', () => skillTip(el.dataset.skillId ?? '', true));
+        el.addEventListener('mouseleave', () => skillTip('', false));
+      }
+    };
 
     const render = (): void => {
       panel.innerHTML = '';
@@ -777,7 +836,7 @@ export class GarageScene extends Phaser.Scene {
         const label = esc(SKILL_LABELS[id] ?? id);
         const safeId = esc(id);
         return `
-          <div style="display:flex;align-items:center;gap:10px;padding:5px 0;border-bottom:1px dotted #2a2a44;">
+          <div data-skill-id="${safeId}" style="display:flex;align-items:center;gap:10px;padding:5px 0;border-bottom:1px dotted #2a2a44;cursor:help;">
             <div style="width:110px;font-size:11px;color:#aac;">${label}</div>
             <div style="font-family:monospace;font-size:13px;letter-spacing:1px;">${barHtml(level)}</div>
             <div style="width:20px;color:#88ccff;font-size:13px;text-align:right;">${level}</div>
@@ -816,6 +875,7 @@ export class GarageScene extends Phaser.Scene {
         <div style="margin-top:16px;text-align:right;">
           <button data-action="close" style="padding:6px 18px;font-family:inherit;font-size:12px;background:transparent;color:#888;border:1px solid #444;cursor:pointer;">[ CLOSE ]</button>
         </div>`;
+      attachSkillHover();
     };
 
     panel.addEventListener('click', async (e) => {
