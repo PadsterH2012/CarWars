@@ -586,7 +586,9 @@ export class GarageScene extends Phaser.Scene {
       return;
     }
     const quote = await quoteRes.json();
-    if (quote.total === 0) {
+    // A vehicle with only free-ammo weapons (lasers, grenades) may have
+    // rounds depleted but quote.total === 0. Open the modal for those too.
+    if (quote.total === 0 && quote.ammo.rounds === 0) {
       alert('Vehicle is in pristine condition — nothing to repair.');
       return;
     }
@@ -610,9 +612,10 @@ export class GarageScene extends Phaser.Scene {
     const esc = (s: string): string =>
       s.replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c] as string));
 
-    const row = (label: string, detail: string, cost: number, key: string): string => `
-      <label style="display:grid;grid-template-columns:20px 1fr auto;gap:10px;align-items:center;padding:8px 0;border-bottom:1px dotted #2a2a44;cursor:${cost > 0 ? 'pointer' : 'default'};">
-        <input type="checkbox" name="part" value="${key}" ${cost > 0 ? 'checked' : 'disabled'} style="cursor:inherit;"/>
+    // hasWork defaults to cost > 0, but free-ammo repairs pass rounds > 0 explicitly
+    const row = (label: string, detail: string, cost: number, key: string, hasWork = cost > 0): string => `
+      <label style="display:grid;grid-template-columns:20px 1fr auto;gap:10px;align-items:center;padding:8px 0;border-bottom:1px dotted #2a2a44;cursor:${hasWork ? 'pointer' : 'default'};">
+        <input type="checkbox" name="part" value="${key}" ${hasWork ? 'checked' : 'disabled'} style="cursor:inherit;"/>
         <div>
           <div style="color:#ccc;font-size:12px;">${esc(label)}</div>
           ${detail ? `<div style="color:#888;font-size:10px;">${esc(detail)}</div>` : ''}
@@ -634,7 +637,7 @@ export class GarageScene extends Phaser.Scene {
         ${row('Armour', `${quote.armor.pts} pts missing`, quote.armor.cost, 'armor')}
         ${row('Tires',  quote.tires.count > 0 ? `${quote.tires.count} blown × $${quote.tires.eachCost} each` : 'none blown', quote.tires.cost, 'tires')}
         ${row('Engine', quote.engine.damaged ? 'damaged (half install cost)' : 'no damage', quote.engine.cost, 'engine')}
-        ${row('Ammo refill', quote.ammo.rounds > 0 ? `${quote.ammo.rounds} rounds across ${quote.ammo.byMount.length} mount(s)` : 'full load', quote.ammo.cost, 'ammo')}
+        ${row('Ammo refill', quote.ammo.rounds > 0 ? `${quote.ammo.rounds} rounds across ${quote.ammo.byMount.length} mount(s)` : 'full load', quote.ammo.cost, 'ammo', quote.ammo.rounds > 0)}
         <div style="display:flex;justify-content:space-between;align-items:center;padding:12px 0 4px;border-top:1px solid #2a2a44;margin-top:8px;">
           <span style="color:#ccc;font-size:13px;">TOTAL SELECTED</span>
           <span id="repair-total" style="color:#ffcc00;font-size:16px;font-weight:bold;">$${quote.total.toLocaleString()}</span>
@@ -657,19 +660,23 @@ export class GarageScene extends Phaser.Scene {
       return { parts, total };
     };
 
+    // True when the selected parts include at least one free repair (rounds depleted, cost = 0).
+    const hasFreeWork = (parts: string[]): boolean =>
+      parts.includes('ammo') && quote.ammo.rounds > 0 && quote.ammo.cost === 0;
+
     panel.addEventListener('change', () => {
-      const { total } = selectedTotal();
+      const { parts, total } = selectedTotal();
       const totalEl = panel.querySelector('#repair-total');
       const btn = panel.querySelector<HTMLButtonElement>('#btn-repair');
       if (totalEl) totalEl.textContent = '$' + total.toLocaleString();
       if (btn) {
-        const ok = aff(total) && total > 0;
+        const ok = (aff(total) && total > 0) || hasFreeWork(parts);
         btn.disabled = !ok;
         btn.style.cursor = ok ? 'pointer' : 'not-allowed';
         btn.style.background = ok ? '#332200' : '#221100';
         btn.style.color = ok ? '#ffcc00' : '#555';
         btn.style.borderColor = ok ? '#ffcc00' : '#555';
-        btn.textContent = total === 0 ? '[ NOTHING SELECTED ]' : (ok ? '[ REPAIR ]' : '[ NO FUNDS ]');
+        btn.textContent = ok ? '[ REPAIR ]' : total === 0 ? '[ NOTHING SELECTED ]' : '[ NO FUNDS ]';
       }
     });
 
@@ -679,7 +686,7 @@ export class GarageScene extends Phaser.Scene {
       if (btn.dataset.action === 'cancel') { overlay.remove(); return; }
       if (btn.dataset.action === 'repair') {
         const { parts, total } = selectedTotal();
-        if (total === 0) return;
+        if (total === 0 && !hasFreeWork(parts)) return;
         const r = await fetch(`http://${host}:3001/api/economy/repair`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${this.token}` },

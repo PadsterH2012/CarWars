@@ -153,7 +153,14 @@ economyRouter.post('/repair', async (req: AuthRequest, res) => {
              + (doAmmo  ? quote.ammo.cost   : 0);
   const cost = Math.round(grossCost * (1 - discount));
 
-  if (cost === 0) return res.json({ cost: 0, moneyRemaining: playerMoney, parts });
+  // Allow zero-cost repairs (e.g. free-ammo weapons like lasers/grenades) to
+  // proceed to the DB update. Only skip when there is genuinely nothing to do.
+  const hasWork =
+    (doArmor && quote.armor.pts > 0) ||
+    (doTires && quote.tires.count > 0) ||
+    (doEngine && quote.engine.damaged) ||
+    (doAmmo && quote.ammo.rounds > 0);
+  if (!hasWork) return res.json({ cost: 0, moneyRemaining: playerMoney, parts });
   if (playerMoney < cost) return res.status(402).json({ error: 'Insufficient funds', cost });
 
   // Build repaired states — each part only if it's in the filter

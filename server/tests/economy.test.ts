@@ -134,4 +134,47 @@ describe('economy', () => {
     const vRes = await db.query(`SELECT loadout FROM vehicles WHERE id = $1`, [vehicleId]);
     expect(vRes.rows[0].loadout.mounts[0].ammo).toBe(50);
   });
+
+  it('repair restores free-ammo weapons (ammoCost=0) at zero cost', async () => {
+    const db = getDb();
+    // Swap the existing vehicle's weapon to a grenade launcher (ammoCost: 0, shotsPerMag: 10)
+    // and deplete its ammo to 2, simulating a post-match state.
+    const glLoadout = {
+      chassisId: 'mid', engineId: 'medium', suspensionId: 'standard',
+      tires: [{ id: 't0', blown: false }, { id: 't1', blown: false },
+              { id: 't2', blown: false }, { id: 't3', blown: false }],
+      mounts: [{ id: 'm0', arc: 'front', weaponId: 'gl', ammo: 10 }],
+      armor: { front: 6, back: 4, left: 4, right: 4, top: 2, underbody: 2 },
+      totalCost: 5000,
+    };
+    // Set both loadout (depleted) and original_loadout (full) directly in the DB.
+    const depleted = { ...glLoadout, mounts: [{ id: 'm0', arc: 'front', weaponId: 'gl', ammo: 2 }] };
+    await db.query(
+      `UPDATE vehicles SET loadout = $1, original_loadout = $2,
+         damage_state = $3
+       WHERE id = $4`,
+      [JSON.stringify(depleted), JSON.stringify(glLoadout),
+       JSON.stringify({ armor: { front: 6, back: 4, left: 4, right: 4, top: 2, underbody: 2 }, engineDamaged: false, driverWounded: false, tiresBlown: [], destroyed: false }),
+       vehicleId],
+    );
+    await db.query(`UPDATE players SET money = 25000 WHERE id = $1`, [playerId]);
+
+    const moneyBefore = (await db.query(`SELECT money FROM players WHERE id = $1`, [playerId])).rows[0].money;
+
+    const res = await request(app)
+      .post('/api/economy/repair')
+      .set('Authorization', `Bearer ${token}`)
+      .send({ vehicleId, parts: ['ammo'] });
+
+    expect(res.status).toBe(200);
+    expect(res.body.cost).toBe(0); // grenades are free to refill
+
+    // Ammo must be restored to original 10 rounds.
+    const vRes = await db.query(`SELECT loadout FROM vehicles WHERE id = $1`, [vehicleId]);
+    expect(vRes.rows[0].loadout.mounts[0].ammo).toBe(10);
+
+    // Money unchanged (free repair).
+    const moneyAfter = (await db.query(`SELECT money FROM players WHERE id = $1`, [playerId])).rows[0].money;
+    expect(moneyAfter).toBe(moneyBefore);
+  });
 });
