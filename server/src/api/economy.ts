@@ -70,7 +70,7 @@ function computeRepairQuote(loadout: VehicleLoadout, origLoadout: VehicleLoadout
   let ammoRounds = 0, ammoCost = 0;
   for (const origMount of origLoadout.mounts ?? []) {
     const curMount = loadout.mounts?.find(m => m.id === origMount.id);
-    const shortage = origMount.ammo - (curMount?.ammo ?? 0);
+    if (!curMount) continue; const shortage = origMount.ammo - curMount.ammo;
     if (shortage <= 0) continue;
     const weaponDef = WEAPONS.find(w => w.id === origMount.weaponId);
     if (!weaponDef) continue;
