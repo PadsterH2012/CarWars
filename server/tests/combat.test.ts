@@ -173,10 +173,8 @@ describe('to-hit modifiers', () => {
       stats: { ...attacker.stats, damageState: { ...attacker.stats.damageState, driverWounded: true } }
     };
     const mg = WEAPONS.find(w => w.id === 'mg')!;
-    // Use a fixed-distance shot within short range — only driverWounded modifier applies
-    // attacker speed=10, target speed=5 → diff=5 (<15), not wounded normally
-    // wound adds +2, so modifier should be exactly 2
-    const result = resolveToHit(woundedAttacker, target, mg, 4);
+    // Pass gunneryLevel=0 to isolate the wounded modifier (skill 0→1 gives 0 modifier)
+    const result = resolveToHit(woundedAttacker, target, mg, 4, 0);
     expect(result.modifier).toBe(2);
   });
 
@@ -195,8 +193,8 @@ describe('to-hit modifiers', () => {
       }
     };
     const mg = WEAPONS.find(w => w.id === 'mg')!;
-    // attacker not wounded, speeds: 10 vs 5 (diff<15), within short range → only +1 from size
-    const result = resolveToHit(attacker, subcompactTarget, mg, 4);
+    // Pass gunneryLevel=0 to isolate the size modifier
+    const result = resolveToHit(attacker, subcompactTarget, mg, 4, 0);
     expect(result.modifier).toBe(1);
   });
 
@@ -209,8 +207,8 @@ describe('to-hit modifiers', () => {
       }
     };
     const mg = WEAPONS.find(w => w.id === 'mg')!;
-    // attacker not wounded, speeds: 10 vs 5 (diff<15), within short range → only -1 from size
-    const result = resolveToHit(attacker, vanTarget, mg, 4);
+    // Pass gunneryLevel=0 to isolate the size modifier
+    const result = resolveToHit(attacker, vanTarget, mg, 4, 0);
     expect(result.modifier).toBe(-1);
   });
 
@@ -218,8 +216,8 @@ describe('to-hit modifiers', () => {
     const fastTarget = { ...target, speed: 65 };
     const mg = WEAPONS.find(w => w.id === 'mg')!;
     // attacker speed=10, target speed=65: diff=55 (>30 mph → +2), also target >60 (+1) → total +3
-    // But attacker not wounded, within short range → modifier = 3
-    const result = resolveToHit(attacker, fastTarget, mg, 4);
+    // Pass gunneryLevel=0 to isolate speed modifiers
+    const result = resolveToHit(attacker, fastTarget, mg, 4, 0);
     expect(result.modifier).toBe(3);
   });
 });
@@ -314,25 +312,27 @@ describe('vehicular fire on armor breach', () => {
   });
 });
 
-describe('driver skill → to-hit modifier', () => {
-  it('skillToHitModifier maps skill 3 to 0 (baseline)', async () => {
+describe('gunnery skill → to-hit modifier', () => {
+  it('level 0 gives no bonus, level 6 gives -3', async () => {
     const { skillToHitModifier } = await import('../src/rules/combat');
-    expect(skillToHitModifier(3)).toBe(0);
+    expect(skillToHitModifier(0)).toBe(0);
+    expect(skillToHitModifier(6)).toBe(-3);
   });
 
-  it('rookies (skill 1) suffer +2 penalty; aces (skill 5) gain -2 bonus', async () => {
+  it('each 2 levels grants -1 to-hit bonus', async () => {
     const { skillToHitModifier } = await import('../src/rules/combat');
-    expect(skillToHitModifier(1)).toBe(2);
-    expect(skillToHitModifier(2)).toBe(1);
-    expect(skillToHitModifier(4)).toBe(-1);
+    expect(skillToHitModifier(1)).toBe(0);
+    expect(skillToHitModifier(2)).toBe(-1);
+    expect(skillToHitModifier(3)).toBe(-1);
+    expect(skillToHitModifier(4)).toBe(-2);
     expect(skillToHitModifier(5)).toBe(-2);
     expect(skillToHitModifier(6)).toBe(-3);
   });
 
-  it('skill is clamped to the 1–6 range', async () => {
+  it('is not clamped — high values continue scaling', async () => {
     const { skillToHitModifier } = await import('../src/rules/combat');
-    expect(skillToHitModifier(0)).toBe(2);   // clamps to 1
-    expect(skillToHitModifier(99)).toBe(-3); // clamps to 6
+    expect(skillToHitModifier(8)).toBe(-4);
+    expect(skillToHitModifier(10)).toBe(-5);
   });
 
   it('higher-skill attacker lands more hits against the same target', () => {

@@ -679,6 +679,20 @@ async function handleMessage(ws: WebSocket, raw: string): Promise<void> {
           console.error('Rival selection failed:', e);
         }
         const rivalSkill = rival ? rivalEffectiveSkill(rival, rivalGrudge) : 3;
+        const rivalGunnery = {
+          gunnery_guns:     Math.max(1, rivalSkill - 1),
+          gunnery_heavy:    Math.max(0, rivalSkill - 2),
+          gunnery_rockets:  Math.max(0, rivalSkill - 3),
+          gunnery_lasers:   Math.max(0, rivalSkill - 2),
+          gunnery_flamers:  Math.max(0, rivalSkill - 3),
+          gunnery_tactical: Math.max(0, rivalSkill - 4),
+        };
+        const rivalDriving = {
+          driving_light:    Math.max(1, rivalSkill - 1),
+          driving_standard: rivalSkill,
+          driving_heavy:    Math.max(0, rivalSkill - 2),
+        };
+        const rivalSkills = { ...rivalGunnery, ...rivalDriving };
 
         // If the rival has a lineup for the player's division, field those
         // stock blueprints. Otherwise fall back to the generic test vehicle so
@@ -709,13 +723,13 @@ async function handleMessage(ws: WebSocket, raw: string): Promise<void> {
               runner.getEngine().addVehicle(
                 makeVehicleFromLoadout(name, 'ai-team', sp.x, sp.y, sp.facing, `${rival!.name}: ${entry.name}`, entry.loadout),
               );
-              runner.setVehicleSkill(name, rivalSkill);
+              runner.setVehicleSkill(name, rivalSkill, rivalSkills);
               return;
             }
           }
           // Fallback — generic AI rig
           runner.getEngine().addVehicle(makeTestVehicle(name, 'ai-team', sp.x, sp.y, sp.facing, 70));
-          runner.setVehicleSkill(name, rivalSkill);
+          runner.setVehicleSkill(name, rivalSkill, rivalSkills);
         });
       } else if (isHighway) {
         runner.getEngine().addVehicle(makeTestVehicle('npc-1', 'npc-traffic', -5, -60, 0));
@@ -788,12 +802,12 @@ async function handleMessage(ws: WebSocket, raw: string): Promise<void> {
         const uuidRe = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
         if (uuidRe.test(mateId)) {
           const dr = await db.query(
-            `SELECT skill, aggression, loyalty FROM drivers WHERE assigned_vehicle_id = $1 AND alive = TRUE LIMIT 1`,
+            `SELECT skill, aggression, loyalty, skills, attributes FROM drivers WHERE assigned_vehicle_id = $1 AND alive = TRUE LIMIT 1`,
             [mateId]
           );
           if (!dr.rows.length) continue; // squadmate without a driver — skip
           await db.query(`UPDATE vehicles SET in_arena = TRUE WHERE id = $1 AND player_id = $2`, [mateId, playerId]);
-          const { skill, aggression, loyalty } = dr.rows[0];
+          const { skill, aggression, loyalty, skills, attributes } = dr.rows[0];
           const placed: VehicleState = {
             ...mateVehicle,
             position: { x: pos.x, y: pos.y },
@@ -802,7 +816,7 @@ async function handleMessage(ws: WebSocket, raw: string): Promise<void> {
           };
           runner.getEngine().removeVehicle(mateId);
           runner.getEngine().addVehicle(placed);
-          runner.setVehicleDriver(mateId, { skill, aggression, loyalty });
+          runner.setVehicleDriver(mateId, { skill, aggression, loyalty, skills, attributes });
         }
       }
     }
@@ -876,13 +890,13 @@ async function handleMessage(ws: WebSocket, raw: string): Promise<void> {
       if (uuidRe.test(msg.vehicleId)) {
         const db = getDb();
         const driverRes = await db.query(
-          `SELECT skill, aggression, loyalty FROM drivers WHERE assigned_vehicle_id = $1 AND alive = TRUE LIMIT 1`,
+          `SELECT skill, aggression, loyalty, skills, attributes FROM drivers WHERE assigned_vehicle_id = $1 AND alive = TRUE LIMIT 1`,
           [msg.vehicleId]
         );
         if (driverRes.rows.length) {
-          const { skill, aggression, loyalty } = driverRes.rows[0];
+          const { skill, aggression, loyalty, skills, attributes } = driverRes.rows[0];
           joinedSkill = skill;
-          runner.setVehicleDriver(msg.vehicleId, { skill, aggression, loyalty });
+          runner.setVehicleDriver(msg.vehicleId, { skill, aggression, loyalty, skills, attributes });
         }
       }
     }
@@ -892,7 +906,15 @@ async function handleMessage(ws: WebSocket, raw: string): Promise<void> {
     // Inform the joining client of their driver skill and max steer
     {
       const maxSteer = skillToMaxSteer(joinedSkill);
-      const infoMsg: ServerMessage = { type: 'driver_info', vehicleId: msg.vehicleId, skill: joinedSkill, maxSteer };
+      const joinedDriverStats = runner.getDriverStats(msg.vehicleId);
+      const infoMsg: ServerMessage = {
+        type: 'driver_info',
+        vehicleId: msg.vehicleId,
+        skill: joinedSkill,
+        gunnerySkills: joinedDriverStats.skills ?? {},
+        drivingSkills: joinedDriverStats.skills ?? {},
+        maxSteer,
+      };
       if (ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify(infoMsg));
     }
 

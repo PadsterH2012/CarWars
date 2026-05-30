@@ -1,7 +1,7 @@
 import type { ZoneState, VehicleState, VehicleStats, HazardObject, DamageState, ArmorLocation, ArenaMap, CombatEvent, WreckageObject, WreckageCause, WreckageState } from '@carwars/shared';
 import { computeMovement, classifyManeuver, resolveControlTable, computeSpinAngle, resolveCollision } from './movement';
 import { resolveToHit, resolveDamage, isWeaponInArc, hasLineOfSight, roll2d6, rollDamage, getAttackLocation } from './combat';
-import { accessoryToHitBonus, accessorySkillBonus } from './accessoryEffects';
+import { accessoryToHitBonus } from './accessoryEffects';
 import { WEAPONS } from './data/weapons';
 import { resolveWallCollisions } from './collision';
 
@@ -88,10 +88,12 @@ export interface TurnEngine {
 const TICKS_PER_TURN = 10; // 100ms ticks × 10 = 1 second = 1 Compendium turn
 
 export interface TurnEngineOptions {
-  // Optional resolver: given a vehicleId, return the driver's skill (1–6).
-  // Engine uses this to apply skill-based to-hit modifiers. If omitted or it
-  // returns undefined, skill defaults to 3 (neutral).
+  // Legacy flat skill resolver — kept for backward compat, not used for to-hit.
   getDriverSkill?: (vehicleId: string) => number | undefined;
+  // Per-category gunnery skill: returns the driver's level for a weapon category.
+  getGunnerySkill?: (vehicleId: string, weaponCategory: string) => number | undefined;
+  // Per-body driving skill: returns the driver's level for a vehicle body type.
+  getDrivingSkill?: (vehicleId: string, bodyType: string) => number | undefined;
 }
 
 export function createTurnEngine(initialState: ZoneState, map?: ArenaMap, opts: TurnEngineOptions = {}): TurnEngine {
@@ -356,7 +358,9 @@ export function createTurnEngine(initialState: ZoneState, map?: ArenaMap, opts: 
           const steerSign   = hazardSteerSign.get(vehicle.id) ?? 0;
           hazardAccum.set(vehicle.id, 0);
           hazardSteerSign.delete(vehicle.id);
-          const control = resolveControlTable(vehicle.stats.handlingClass, accumulated);
+          const drivingLevel = opts.getDrivingSkill?.(vehicle.id, vehicle.stats.loadout?.bodyType) ?? 0;
+          const hcBonus = Math.floor(drivingLevel / 3);
+          const control = resolveControlTable(vehicle.stats.handlingClass, accumulated, undefined, hcBonus);
 
           if (control.effect === 'none') return vehicle;
 
@@ -441,10 +445,9 @@ export function createTurnEngine(initialState: ZoneState, map?: ArenaMap, opts: 
           const distance = Math.sqrt(dx * dx + dy * dy);
           if (distance > weapon.longRange) return;
 
-          const baseSkill = opts.getDriverSkill?.(attacker.id) ?? 3;
-          const attackerSkill = baseSkill + accessorySkillBonus(attacker.stats.loadout);
+          const gunneryLevel = opts.getGunnerySkill?.(attacker.id, weapon.category) ?? 3;
           const accBonus = accessoryToHitBonus(attacker.stats.loadout, mount);
-          const toHit = resolveToHit(attacker, target, weapon, distance, attackerSkill, accBonus);
+          const toHit = resolveToHit(attacker, target, weapon, distance, gunneryLevel, accBonus);
           const distStr = distance.toFixed(1);
           if (!toHit.hit) {
             console.log(`[t${state.tick}] MISS  ${attacker.id} → ${target.id} (${weapon.id}, dist=${distStr})`);

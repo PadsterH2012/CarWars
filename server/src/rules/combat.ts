@@ -104,14 +104,12 @@ export function hasLineOfSight(
   );
 }
 
-// Driver-skill modifier to the to-hit target number (Compendium-inspired).
-// Higher skill → lower target number (easier to hit). Skill 3 is the neutral
-// baseline; the AI's default skill is 3 so pre-existing tests stay balanced.
-//   skill 1 (rookie):  +2 (harder)       skill 4 (expert):  -1
-//   skill 2 (app.):    +1                skill 5 (ace):     -2
-//   skill 3 (pro):      0  (baseline)    skill 6 (master):  -3
-export function skillToHitModifier(skill: number): number {
-  return 3 - Math.max(1, Math.min(6, skill));
+/**
+ * Gunnery skill modifier to the to-hit target number.
+ * Each 2 levels = -1 (easier to hit). Level 0 → 0, Level 2 → -1, Level 6 → -3.
+ */
+export function skillToHitModifier(gunneryLevel: number): number {
+  return gunneryLevel >= 2 ? -Math.floor(gunneryLevel / 2) : 0;
 }
 
 export function resolveToHit(
@@ -119,7 +117,7 @@ export function resolveToHit(
   target: VehicleState,
   weapon: WeaponDef,
   distance: number,
-  attackerSkill: number = 3,
+  gunneryLevel: number = 3,
   accessoryBonus: number = 0,  // negative = easier hit (HRC, SWC, targeting laser)
 ): ToHitResult {
   // Dropped weapons are not aimed — they are never resolved through this function
@@ -157,7 +155,7 @@ export function resolveToHit(
   if (attacker.stats.damageState.driverWounded) targetNumber += 2;
 
   // Driver skill modifier — applied last so it shows up clearly in the modifier field
-  targetNumber += skillToHitModifier(attackerSkill);
+  targetNumber += skillToHitModifier(gunneryLevel);
 
   // Targeting computer / cyberlink modifiers from installed accessories
   targetNumber += accessoryBonus;

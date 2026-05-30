@@ -1,6 +1,31 @@
 import { WebSocket } from 'ws';
 import type { ServerMessage, ArenaMap, SquadOrder, RivalInfo } from '@carwars/shared';
 import { createTurnEngine, TurnEngine } from '../rules/engine';
+
+const WEAPON_CATEGORY_TO_SKILL: Record<string, string> = {
+  small_bore: 'gunnery_guns',
+  large_bore: 'gunnery_heavy',
+  rocket:     'gunnery_rockets',
+  laser:      'gunnery_lasers',
+  flamer:     'gunnery_flamers',
+  dropped:    'gunnery_tactical',
+};
+
+const BODY_TO_DRIVING_SKILL: Record<string, string> = {
+  subcompact:    'driving_light',
+  compact:       'driving_light',
+  light_cycle:   'driving_light',
+  med_cycle:     'driving_light',
+  mid_sized:     'driving_standard',
+  sedan:         'driving_standard',
+  luxury:        'driving_standard',
+  station_wagon: 'driving_standard',
+  trike:         'driving_standard',
+  pickup:        'driving_heavy',
+  camper:        'driving_heavy',
+  van:           'driving_heavy',
+  hvy_cycle:     'driving_heavy',
+};
 import { computeAiInput } from '../ai/driver';
 import { getMap } from '../rules/maps';
 import { totalSalvageFor } from '../rules/salvage';
@@ -31,7 +56,13 @@ export class ZoneRunner {
   // Per-vehicle driver personality — skill affects AI competence + to-hit;
   // aggression biases tactic selection (close vs snipe) and anchor-role bids;
   // loyalty affects squad cohesion (support bids, retreat compliance).
-  private vehicleDrivers = new Map<string, { skill: number; aggression: number; loyalty: number }>();
+  private vehicleDrivers = new Map<string, {
+    skill: number;
+    aggression: number;
+    loyalty: number;
+    skills?: Record<string, number>;
+    attributes?: Record<string, number>;
+  }>();
   // Per-match combat stats per vehicle — accumulated from every tick's
   // combatEvents. Feeds the prestige-point award at zone-end so drivers are
   // credited for damage dealt + hits soaked, not just kills.
@@ -71,9 +102,11 @@ export class ZoneRunner {
     this.engine = createTurnEngine(
       { id: zoneId, type: zoneType, tick: 0, vehicles: [], hazardObjects: [] },
       this.map,
-      // Give the engine read-access to our per-vehicle driver skill so the
-      // to-hit resolution picks it up without plumbing through every call.
-      { getDriverSkill: (vehicleId: string) => this.vehicleDrivers.get(vehicleId)?.skill },
+      {
+        getDriverSkill: (vehicleId: string) => this.vehicleDrivers.get(vehicleId)?.skill,
+        getGunnerySkill: (vehicleId: string, category: string) => this.getGunnerySkill(vehicleId, category),
+        getDrivingSkill: (vehicleId: string, bodyType: string) => this.getDrivingSkill(vehicleId, bodyType),
+      },
     );
   }
 
@@ -127,26 +160,51 @@ export class ZoneRunner {
     else this.autopilotVehicles.delete(vehicleId);
   }
 
-  // Back-compat wrapper — callers that only know skill (rivals, legacy spawn
-  // paths) get neutral aggression/loyalty defaults.
-  setVehicleSkill(vehicleId: string, skill: number): void {
+  setVehicleSkill(vehicleId: string, skill: number, skills?: Record<string, number>): void {
     const existing = this.vehicleDrivers.get(vehicleId);
     this.vehicleDrivers.set(vehicleId, {
       skill,
+      skills: skills ?? existing?.skills,
       aggression: existing?.aggression ?? 3,
       loyalty:    existing?.loyalty    ?? 5,
     });
   }
 
-  setVehicleDriver(vehicleId: string, stats: { skill: number; aggression: number; loyalty: number }): void {
+  setVehicleDriver(vehicleId: string, stats: {
+    skill: number;
+    aggression: number;
+    loyalty: number;
+    skills?: Record<string, number>;
+    attributes?: Record<string, number>;
+  }): void {
     this.vehicleDrivers.set(vehicleId, stats);
+  }
+
+  getGunnerySkill(vehicleId: string, weaponCategory: string): number {
+    const driver = this.vehicleDrivers.get(vehicleId);
+    if (!driver) return 3;
+    if (driver.skills) {
+      const skillId = WEAPON_CATEGORY_TO_SKILL[weaponCategory];
+      if (skillId) return driver.skills[skillId] ?? 0;
+    }
+    return Math.ceil((driver.skill ?? 3) / 2);
+  }
+
+  getDrivingSkill(vehicleId: string, bodyType: string): number {
+    const driver = this.vehicleDrivers.get(vehicleId);
+    if (!driver) return 3;
+    if (driver.skills) {
+      const skillId = BODY_TO_DRIVING_SKILL[bodyType];
+      if (skillId) return driver.skills[skillId] ?? 0;
+    }
+    return Math.floor((driver.skill ?? 3) / 2);
   }
 
   getDriverSkill(vehicleId: string): number {
     return this.vehicleDrivers.get(vehicleId)?.skill ?? 3;
   }
 
-  getDriverStats(vehicleId: string): { skill: number; aggression: number; loyalty: number } {
+  getDriverStats(vehicleId: string): { skill: number; aggression: number; loyalty: number; skills?: Record<string, number>; attributes?: Record<string, number> } {
     return this.vehicleDrivers.get(vehicleId) ?? { skill: 3, aggression: 3, loyalty: 5 };
   }
 

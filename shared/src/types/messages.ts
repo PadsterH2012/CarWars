@@ -38,4 +38,4 @@ export type ServerMessage =
   | { type: 'zone_change'; destinationZoneId: string; reason: string }
   | { type: 'zone_end'; winnerId: string | null; reason: string; prize: number; jobPayout: number; salvage: number; wages: number; maintenance: number; rival?: RivalInfo; rivalQuote?: string; replayId?: string; spawnAt?: 'garage' | 'town' }
   | { type: 'rival_info'; rival: RivalInfo }
-  | { type: 'driver_info'; vehicleId: string; skill: number; maxSteer: number };
+  | { type: 'driver_info'; vehicleId: string; skill: number; gunnerySkills?: Record<string, number>; drivingSkills?: Record<string, number>; maxSteer: number };

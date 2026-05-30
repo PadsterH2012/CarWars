@@ -146,14 +146,16 @@ export interface ControlResult {
  * @param hc Current handling class
  * @param hazardAccumulator D-points accumulated this turn
  * @param forcedRoll Optional forced 2d6 roll (for testing); uses random if omitted
+ * @param hcBonus Optional driving skill HC bonus (does not modify stored vehicle stats)
  */
-export function resolveControlTable(hc: number, hazardAccumulator: number, forcedRoll?: number): ControlResult {
+export function resolveControlTable(hc: number, hazardAccumulator: number, forcedRoll?: number, hcBonus?: number): ControlResult {
   if (hazardAccumulator === 0) return { effect: 'none', severity: 0 };
 
   const roll = forcedRoll ?? (Math.floor(Math.random() * 6) + 1 + Math.floor(Math.random() * 6) + 1);
+  const effectiveHc = hc + (hcBonus ?? 0);
   // Baseline offset of 7 so HC=3/D=2 (normal AI steering) passes ~72% of turns.
   // Without it, HC - D ≤ 1 always, meaning every turn causes at least a fishtail.
-  const result = roll + hazardAccumulator - hc - 7;
+  const result = roll + hazardAccumulator - effectiveHc - 7;
 
   if (result <= 0)  return { effect: 'none', severity: 0 };
   if (result === 1) return { effect: 'fishtail', severity: 1 };
