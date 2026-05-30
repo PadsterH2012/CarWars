@@ -727,3 +727,67 @@ CREATE TABLE IF NOT EXISTS engagement_reports (
   read BOOLEAN NOT NULL DEFAULT FALSE
 );
 CREATE INDEX IF NOT EXISTS idx_reports_player_unread ON engagement_reports(player_id) WHERE read = FALSE;
+
+-- ─── Phase 6 — Driver Skill System (added 2026-05-30) ───────────────────────
+-- Task 1: attributes/skills/xp_pool JSONB columns on drivers + players;
+--         starting_attributes/starting_skills on hire_candidates.
+
+DO $$ BEGIN
+  IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='drivers' AND column_name='attributes') THEN
+    ALTER TABLE drivers ADD COLUMN attributes JSONB NOT NULL DEFAULT '{}';
+  END IF;
+END $$;
+DO $$ BEGIN
+  IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='drivers' AND column_name='skills') THEN
+    ALTER TABLE drivers ADD COLUMN skills JSONB NOT NULL DEFAULT '{}';
+  END IF;
+END $$;
+DO $$ BEGIN
+  IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='drivers' AND column_name='xp_pool') THEN
+    ALTER TABLE drivers ADD COLUMN xp_pool INTEGER NOT NULL DEFAULT 0;
+  END IF;
+END $$;
+
+DO $$ BEGIN
+  IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='players' AND column_name='attributes') THEN
+    ALTER TABLE players ADD COLUMN attributes JSONB NOT NULL DEFAULT '{}';
+  END IF;
+END $$;
+DO $$ BEGIN
+  IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='players' AND column_name='skills') THEN
+    ALTER TABLE players ADD COLUMN skills JSONB NOT NULL DEFAULT '{}';
+  END IF;
+END $$;
+DO $$ BEGIN
+  IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='players' AND column_name='xp_pool') THEN
+    ALTER TABLE players ADD COLUMN xp_pool INTEGER NOT NULL DEFAULT 0;
+  END IF;
+END $$;
+
+DO $$ BEGIN
+  IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='hire_candidates' AND column_name='starting_attributes') THEN
+    ALTER TABLE hire_candidates ADD COLUMN starting_attributes JSONB NOT NULL DEFAULT '{}';
+  END IF;
+END $$;
+DO $$ BEGIN
+  IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='hire_candidates' AND column_name='starting_skills') THEN
+    ALTER TABLE hire_candidates ADD COLUMN starting_skills JSONB NOT NULL DEFAULT '{}';
+  END IF;
+END $$;
+
+-- Backfill existing drivers: default attributes, copy xp → xp_pool, distribute
+-- skills from existing skill integer (ceil/2 driving, floor/2 gunnery).
+-- WHERE guard makes this idempotent.
+UPDATE drivers SET
+  attributes = '{"st":10,"dx":10,"iq":10,"ht":10}'::jsonb,
+  xp_pool = xp,
+  skills = CASE skill
+    WHEN 1 THEN '{"driving_standard":1}'::jsonb
+    WHEN 2 THEN '{"driving_standard":1,"gunnery_guns":1}'::jsonb
+    WHEN 3 THEN '{"driving_standard":2,"gunnery_guns":1}'::jsonb
+    WHEN 4 THEN '{"driving_standard":2,"gunnery_guns":2}'::jsonb
+    WHEN 5 THEN '{"driving_standard":3,"gunnery_guns":2}'::jsonb
+    WHEN 6 THEN '{"driving_standard":3,"gunnery_guns":3}'::jsonb
+    ELSE        '{"driving_standard":1}'::jsonb
+  END
+WHERE attributes = '{}'::jsonb;

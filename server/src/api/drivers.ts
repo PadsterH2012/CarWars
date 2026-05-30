@@ -188,11 +188,13 @@ async function regeneratePool(playerId: string): Promise<void> {
     await db.query(
       `INSERT INTO hire_candidates
          (player_id, name, skill, aggression, loyalty, hire_cost,
-          vehicle_stock_id, vehicle_discount_pct, blurb, tier)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)`,
+          vehicle_stock_id, vehicle_discount_pct, blurb, tier,
+          starting_attributes, starting_skills)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)`,
       [
         playerId, c.name, c.skill, c.aggression, c.loyalty, c.hireCost,
         c.vehicleStockId ?? null, c.vehicleDiscountPct ?? 0, c.blurb, c.tier,
+        JSON.stringify(c.startingAttributes), JSON.stringify(c.startingSkills),
       ],
     );
   }
@@ -262,13 +264,18 @@ driversRouter.post('/candidates/:id/hire', async (req: AuthRequest, res) => {
   const db = getDb();
   const cRes = await db.query(
     `SELECT id, name, skill, aggression, loyalty, hire_cost,
-            vehicle_stock_id, vehicle_discount_pct
+            vehicle_stock_id, vehicle_discount_pct,
+            starting_attributes, starting_skills
      FROM hire_candidates
      WHERE id = $1 AND player_id = $2 AND expires_at > NOW()`,
     [req.params.id, req.playerId],
   );
   if (!cRes.rows.length) return res.status(404).json({ error: 'Candidate not found or expired' });
   const cand = cRes.rows[0];
+  const DEFAULT_ATTRS = { st: 10, dx: 10, iq: 10, ht: 10 };
+  const hireAttrs = (cand.starting_attributes && Object.keys(cand.starting_attributes).length > 0)
+    ? cand.starting_attributes : DEFAULT_ATTRS;
+  const hireSkills = cand.starting_skills ?? {};
 
   // Compute package totals — if the candidate brings a vehicle, look up stock
   // and apply the discount pct.
@@ -298,12 +305,13 @@ driversRouter.post('/candidates/:id/hire', async (req: AuthRequest, res) => {
       return res.status(400).json({ error: 'Insufficient funds', totalCost });
     }
 
-    // Insert the driver with the candidate's generated stats
+    // Insert the driver with the candidate's generated stats + attributes/skills
     const drvRes = await client.query(
-      `INSERT INTO drivers (player_id, name, skill, aggression, loyalty)
-       VALUES ($1, $2, $3, $4, $5)
+      `INSERT INTO drivers (player_id, name, skill, aggression, loyalty, attributes, skills, xp_pool)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
        RETURNING id, name, skill, aggression, loyalty, xp, assigned_vehicle_id, alive`,
-      [req.playerId, cand.name, cand.skill, cand.aggression, cand.loyalty],
+      [req.playerId, cand.name, cand.skill, cand.aggression, cand.loyalty,
+       JSON.stringify(hireAttrs), JSON.stringify(hireSkills), 0],
     );
     const driver = drvRes.rows[0];
     // Backfill gang_id

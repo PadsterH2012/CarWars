@@ -54,6 +54,42 @@ function pick<T>(arr: readonly T[]): T {
   return arr[Math.floor(Math.random() * arr.length)];
 }
 
+// ─── Attributes ────────────────────────────────────────────────────────────
+
+export interface Attributes {
+  st: number;
+  dx: number;
+  iq: number;
+  ht: number;
+}
+
+function roll3d6Clamped(min: number, max: number): number {
+  const raw = (Math.floor(Math.random() * 6) + 1) +
+              (Math.floor(Math.random() * 6) + 1) +
+              (Math.floor(Math.random() * 6) + 1);
+  return Math.max(min, Math.min(max, raw));
+}
+
+export function generateAttributes(): Attributes {
+  return {
+    st: roll3d6Clamped(8, 12),
+    dx: roll3d6Clamped(8, 12),
+    iq: roll3d6Clamped(8, 12),
+    ht: roll3d6Clamped(8, 12),
+  };
+}
+
+// Starting skill distribution: ceil(skill/2) in driving_standard,
+// floor(skill/2) in gunnery_guns. Mirrors the SQL backfill for consistency.
+export function generateStartingSkills(skill: number): Record<string, number> {
+  const out: Record<string, number> = {};
+  const driving = Math.ceil(skill / 2);
+  const gunnery = Math.floor(skill / 2);
+  if (driving > 0) out['driving_standard'] = driving;
+  if (gunnery > 0) out['gunnery_guns'] = gunnery;
+  return out;
+}
+
 // Skill distribution — weighted so skill 3 is the mean; skill 6 is rare.
 // Returns a skill integer 1..6.
 function rollSkill(): number {
@@ -90,6 +126,8 @@ export interface GeneratedCandidate {
   hireCost: number;
   blurb: string;
   tier: DriverTier;
+  startingAttributes: Attributes;
+  startingSkills: Record<string, number>;
   // Optional vehicle package — stock vehicle id + discount applied to the
   // stock vehicle's cost if the player accepts the package deal.
   vehicleStockId?: string;
@@ -133,7 +171,10 @@ function buildCandidate(skill: number, tier: DriverTier, eligibleStockIds: strin
     vehicleDiscountPct = 15 + Math.floor(Math.random() * 16);  // 15..30%
   }
 
-  return { name, skill, aggression, loyalty, hireCost, blurb, tier, vehicleStockId, vehicleDiscountPct };
+  const startingAttributes = generateAttributes();
+  const startingSkills = generateStartingSkills(skill);
+
+  return { name, skill, aggression, loyalty, hireCost, blurb, tier, startingAttributes, startingSkills, vehicleStockId, vehicleDiscountPct };
 }
 
 export function generateCandidatePool(
