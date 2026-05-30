@@ -586,12 +586,6 @@ export class GarageScene extends Phaser.Scene {
       return;
     }
     const quote = await quoteRes.json();
-    // A vehicle with only free-ammo weapons (lasers, grenades) may have
-    // rounds depleted but quote.total === 0. Open the modal for those too.
-    if (quote.total === 0 && quote.ammo.rounds === 0) {
-      alert('Vehicle is in pristine condition — nothing to repair.');
-      return;
-    }
 
     const overlay = document.createElement('div');
     Object.assign(overlay.style, {
