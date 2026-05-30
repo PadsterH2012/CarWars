@@ -561,36 +561,23 @@ async function handleMessage(ws: WebSocket, raw: string): Promise<void> {
             } finally {
               client.release();
             }
-            // Fan prestige points out to every squad driver after the prize
-            // transaction commits. Compendium formula:
-            //   PP = 5 × damage-dealt + 5 × hits-taken + (winning? 10 : 0)
-            // Damage/hits are accumulated across the whole match by the
-            // runner (matchStats). Previously 10/kill + 20/survive — flat,
-            // under-rewarding damage + tanking.
+            // Award XP to winning squad: survive +5, enemy kills ×3, win +15, contract +10
+            const finalState = runner.getEngine().getState();
+            const enemyKills = (finalState.wreckage ?? []).filter(w => w.playerId !== winnerId).length;
             const winnerWs = [...clientPlayers.entries()].find(([, pid]) => pid === winnerId)?.[0];
             const winningSquad = (winnerWs ? clientSquads.get(winnerWs) : null) ?? (winnerVehicleId ? [winnerVehicleId] : []);
+            const xpPerDriver = 5 + enemyKills * 3 + 15 + (jobPayout > 0 ? 10 : 0);
             if (winningSquad.length > 0) {
               for (const vid of winningSquad) {
-                const stats = runner.getMatchStats(vid);
-                const xp = 5 * stats.damageDealt + 5 * stats.hitsTaken + 10;
-                if (xp <= 0) continue;
                 const dRes = await db.query(
                   `SELECT id FROM drivers WHERE assigned_vehicle_id = $1 AND alive = TRUE LIMIT 1`,
                   [vid]
                 );
                 if (!dRes.rows.length) continue;
-                const xpRes = await db.query(
-                  `UPDATE drivers SET xp = xp + $1 WHERE id = $2 RETURNING xp, skill`,
-                  [xp, dRes.rows[0].id]
+                await db.query(
+                  `UPDATE drivers SET xp = xp + $1, xp_pool = xp_pool + $1 WHERE id = $2`,
+                  [xpPerDriver, dRes.rows[0].id]
                 );
-                if (xpRes.rows.length) {
-                  const { xp: newXp, skill: currentSkill } = xpRes.rows[0];
-                  let newSkill = currentSkill;
-                  while (newSkill < 6 && newXp >= newSkill * 100) newSkill++;
-                  if (newSkill > currentSkill) {
-                    await db.query(`UPDATE drivers SET skill = $1 WHERE id = $2`, [newSkill, dRes.rows[0].id]);
-                  }
-                }
               }
             }
 

@@ -102,8 +102,7 @@ describe('driver CRUD', () => {
     expect(res.body.some((c: any) => c.tier === 'premium')).toBe(true);
   });
 
-  it('POST /api/drivers/award-xp grants XP and auto-promotes skill at threshold', async () => {
-    // Create a driver at skill 3, give them 299 XP (just below threshold of 300 for skill 4)
+  it('POST /api/drivers/award-xp adds XP to pool (no auto-promote)', async () => {
     const createRes = await request(app)
       .post('/api/drivers')
       .set('Authorization', `Bearer ${token}`)
@@ -113,7 +112,6 @@ describe('driver CRUD', () => {
     const db = getDb();
     await db.query(`UPDATE drivers SET xp = 299, skill = 3 WHERE id = $1`, [driverId]);
 
-    // Award 10 XP — should cross the 300 threshold (skill 3 → 4 at skill * 100 XP)
     const res = await request(app)
       .post('/api/drivers/award-xp')
       .set('Authorization', `Bearer ${token}`)
@@ -121,6 +119,7 @@ describe('driver CRUD', () => {
 
     expect(res.status).toBe(200);
     expect(res.body.newXp).toBe(309);
-    expect(res.body.newSkill).toBe(4); // auto-promoted
+    expect(res.body.newSkill).toBe(3); // no auto-promote — XP pools separately
+    expect(res.body.promoted).toBe(false);
   });
 });

@@ -99,11 +99,6 @@ driversRouter.get('/', async (req: AuthRequest, res) => {
   return res.json(rows);
 });
 
-// XP threshold for each skill level: skill N → N+1 requires N * 100 XP
-function xpThreshold(skill: number): number {
-  return skill * 100;
-}
-
 driversRouter.post('/award-xp', async (req: AuthRequest, res) => {
   const { driverId, xp } = req.body;
   if (!driverId || typeof xp !== 'number' || xp < 0) {
@@ -120,19 +115,12 @@ driversRouter.post('/award-xp', async (req: AuthRequest, res) => {
   const driver = result.rows[0];
   if (!driver.alive) return res.status(409).json({ error: 'Driver is dead' });
 
-  const newXp = driver.xp + xp;
-  let newSkill = driver.skill;
-  // Auto-promote while XP crosses threshold and skill is below 6
-  while (newSkill < 6 && newXp >= xpThreshold(newSkill)) {
-    newSkill++;
-  }
-
   await db.query(
-    `UPDATE drivers SET xp = $1, skill = $2 WHERE id = $3`,
-    [newXp, newSkill, driverId]
+    `UPDATE drivers SET xp = xp + $1, xp_pool = xp_pool + $1 WHERE id = $2`,
+    [xp, driverId]
   );
 
-  return res.json({ newXp, newSkill, promoted: newSkill > driver.skill });
+  return res.json({ newXp: driver.xp + xp, newSkill: driver.skill, promoted: false });
 });
 
 driversRouter.post('/assign', async (req: AuthRequest, res) => {
