@@ -139,6 +139,67 @@ driversRouter.post('/assign', async (req: AuthRequest, res) => {
   return res.json({ ok: true });
 });
 
+// ─── XP spend ─────────────────────────────────────────────────────────────
+
+const SKILL_DIFFICULTY: Record<string, number> = {
+  driving_light: 1, driving_standard: 1, driving_heavy: 1, driving_mega: 1,
+  gunnery_guns: 1, gunnery_heavy: 3, gunnery_rockets: 2, gunnery_lasers: 2,
+  gunnery_flamers: 3, gunnery_tactical: 3,
+  mechanic: 1, leadership: 2, medical: 3, fire_aid: 3, barter: 1, navigation: 1, streetwise: 2,
+};
+
+const SKILL_ATTR: Record<string, string> = {
+  driving_light: 'dx', driving_standard: 'dx', driving_heavy: 'dx', driving_mega: 'dx',
+  gunnery_guns: 'dx', gunnery_heavy: 'st', gunnery_rockets: 'dx', gunnery_lasers: 'dx',
+  gunnery_flamers: 'dx', gunnery_tactical: 'dx',
+  mechanic: 'iq', leadership: 'iq', medical: 'iq', fire_aid: 'ht',
+  barter: 'iq', navigation: 'iq', streetwise: 'iq',
+};
+
+function skillUpgradeCost(level: number, skillId: string, attrs: Record<string, number>): number {
+  const diff = SKILL_DIFFICULTY[skillId] ?? 1;
+  const attrKey = SKILL_ATTR[skillId] ?? 'dx';
+  const attrVal = attrs[attrKey] ?? 10;
+  const discount = Math.min(1.5, Math.max(0.5, 1.5 - attrVal / 20));
+  return Math.round(Math.pow(level + 1, 2) * 50 * diff * discount);
+}
+
+// POST /api/drivers/:id/spend-xp — deduct from xp_pool and increment the skill level
+driversRouter.post('/:id/spend-xp', async (req: AuthRequest, res) => {
+  const { skillId } = req.body;
+  if (typeof skillId !== 'string' || !SKILL_DIFFICULTY[skillId]) {
+    return res.status(400).json({ error: 'Invalid skillId' });
+  }
+
+  const db = getDb();
+  const dRes = await db.query(
+    `SELECT id, xp_pool, skills, attributes, alive FROM drivers WHERE id = $1 AND player_id = $2`,
+    [req.params.id, req.playerId]
+  );
+  if (!dRes.rows.length) return res.status(403).json({ error: 'Driver not found' });
+  const driver = dRes.rows[0];
+  if (!driver.alive) return res.status(409).json({ error: 'Driver is dead' });
+
+  const attrs: Record<string, number> = driver.attributes ?? {};
+  const skills: Record<string, number> = driver.skills ?? {};
+  const currentLevel = skills[skillId] ?? 0;
+  const cost = skillUpgradeCost(currentLevel, skillId, attrs);
+
+  if (driver.xp_pool < cost) {
+    return res.status(400).json({ error: 'Insufficient XP', cost, xpPool: driver.xp_pool });
+  }
+
+  const newSkills = { ...skills, [skillId]: currentLevel + 1 };
+  const newXpPool = driver.xp_pool - cost;
+
+  await db.query(
+    `UPDATE drivers SET xp_pool = $1, skills = $2 WHERE id = $3`,
+    [newXpPool, JSON.stringify(newSkills), req.params.id]
+  );
+
+  return res.json({ xpPool: newXpPool, skills: newSkills, skillId, newLevel: currentLevel + 1, cost });
+});
+
 // ─── Hire-list candidate pool ──────────────────────────────────────────────
 
 // Drop any candidates for this player whose expiry has passed. Returns the
