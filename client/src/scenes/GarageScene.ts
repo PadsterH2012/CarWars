@@ -5,7 +5,8 @@ import { preloadVehicleSprites, bodySpriteKey } from '../game/VehicleSprite';
 
 type AvailabilityStatus = 'available' | 'deployed' | 'on_job' | 'in_arena' | 'wounded';
 interface Vehicle { id: string; name: string; value: number; damage_state: any; loadout: any; in_arena?: boolean; status?: AvailabilityStatus; remainingSeconds?: number; deploymentZone?: string | null; }
-interface Driver { id: string; name: string; skill: number; xp: number; assigned_vehicle_id: string | null; alive: boolean; wounded: boolean; wounded_until: string | null; title?: string; xpToNext?: number; status?: AvailabilityStatus; remainingSeconds?: number; }
+interface DriverAttributes { st: number; dx: number; iq: number; ht: number; }
+interface Driver { id: string; name: string; skill: number; xp: number; xp_pool?: number; assigned_vehicle_id: string | null; alive: boolean; wounded: boolean; wounded_until: string | null; title?: string; xpToNext?: number; status?: AvailabilityStatus; remainingSeconds?: number; attributes?: DriverAttributes; skills?: Record<string, number>; }
 interface Deployment { id: string; zone_id: string; job_id?: string | null; assignment: string; status: string; eta_seconds: number; }
 
 // Compact ETA used by the status pills + deployments list ("1m 20s" / "45s").
@@ -355,9 +356,11 @@ export class GarageScene extends Phaser.Scene {
         const statusStr = woundStr || (onJob ? ` [ON JOB ${fmtRemaining(d.remainingSeconds ?? 0)}]` : '');
         const dotStatus: AvailabilityStatus = woundStr ? 'wounded' : (onJob ? 'on_job' : 'available');
         add(this.add.circle(crewX - 10, y + 7, 4, STATUS_DOT[dotStatus]).setStrokeStyle(1, 0x000000, 0.6));
-        add(this.add.text(crewX, y, d.name + statusStr, {
+        const nameBtn = this.add.text(crewX, y, d.name + statusStr, {
           color: statusStr ? (woundStr ? '#ff4444' : '#ffaa44') : '#ffffff', fontSize: '13px', fontFamily: 'monospace'
-        }));
+        }).setInteractive();
+        nameBtn.on('pointerdown', () => this.showDriverCard(d));
+        add(nameBtn);
         const assignStr = assignedVehicle ? `▶ ${assignedVehicle.name}` : 'unassigned';
         const assignBtn = this.add.text(crewX + CREW_PANEL_W, y, assignStr, {
           color: assignedVehicle ? '#88ccff' : '#ffaa44', fontSize: '11px', fontFamily: 'monospace',
@@ -698,6 +701,147 @@ export class GarageScene extends Phaser.Scene {
 
     overlay.addEventListener('click', (e) => { if (e.target === overlay) overlay.remove(); });
 
+    render();
+  }
+
+  private showDriverCard(driver: Driver): void {
+    const SKILL_LABELS: Record<string, string> = {
+      driving_light: 'Light Drive', driving_standard: 'Std Drive', driving_heavy: 'Hvy Drive', driving_mega: 'Mega Drive',
+      gunnery_guns: 'Guns', gunnery_heavy: 'Hvy Guns', gunnery_rockets: 'Rockets', gunnery_lasers: 'Lasers',
+      gunnery_flamers: 'Flamers', gunnery_tactical: 'Tactical',
+      mechanic: 'Mechanic', leadership: 'Leadership', medical: 'Medical', fire_aid: 'Fire Aid',
+      barter: 'Barter', navigation: 'Navigation', streetwise: 'Streetwise',
+    };
+    const SKILL_DIFFICULTY: Record<string, number> = {
+      driving_light: 1, driving_standard: 1, driving_heavy: 1, driving_mega: 1,
+      gunnery_guns: 1, gunnery_heavy: 3, gunnery_rockets: 2, gunnery_lasers: 2,
+      gunnery_flamers: 3, gunnery_tactical: 3,
+      mechanic: 1, leadership: 2, medical: 3, fire_aid: 3, barter: 1, navigation: 1, streetwise: 2,
+    };
+    const SKILL_ATTR: Record<string, string> = {
+      driving_light: 'dx', driving_standard: 'dx', driving_heavy: 'dx', driving_mega: 'dx',
+      gunnery_guns: 'dx', gunnery_heavy: 'st', gunnery_rockets: 'dx', gunnery_lasers: 'dx',
+      gunnery_flamers: 'dx', gunnery_tactical: 'dx',
+      mechanic: 'iq', leadership: 'iq', medical: 'iq', fire_aid: 'ht',
+      barter: 'iq', navigation: 'iq', streetwise: 'iq',
+    };
+    const upgradeCost = (level: number, skillId: string): number => {
+      const diff = SKILL_DIFFICULTY[skillId] ?? 1;
+      const attrKey = SKILL_ATTR[skillId] ?? 'dx';
+      const attrVal = (driver.attributes as any)?.[attrKey] ?? 10;
+      const discount = Math.min(1.5, Math.max(0.5, 1.5 - attrVal / 20));
+      return Math.round(Math.pow(level + 1, 2) * 50 * diff * discount);
+    };
+
+    const overlay = document.createElement('div');
+    Object.assign(overlay.style, {
+      position: 'fixed', inset: '0', zIndex: '200',
+      background: 'rgba(0,0,0,0.82)',
+      display: 'flex', alignItems: 'center', justifyContent: 'center',
+      fontFamily: "'Courier New', monospace",
+    });
+    const panel = document.createElement('div');
+    Object.assign(panel.style, {
+      background: '#0f0f22', border: '2px solid #4466aa', color: '#ccc',
+      padding: '20px', width: 'min(520px, 92vw)',
+      boxShadow: '0 10px 40px rgba(0,0,0,0.6)',
+    });
+    overlay.appendChild(panel);
+    document.body.appendChild(overlay);
+
+    const attrs = driver.attributes ?? { st: 10, dx: 10, iq: 10, ht: 10 };
+    const skills = driver.skills ?? {};
+    const xpPool = driver.xp_pool ?? 0;
+    const host = window.location.hostname;
+
+    const esc = (s: string): string =>
+      s.replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c] as string));
+
+    const render = (): void => {
+      panel.innerHTML = '';
+      const topSkills = Object.entries(skills)
+        .sort(([, a], [, b]) => b - a)
+        .slice(0, 6);
+
+      const barHtml = (level: number, max = 10): string => {
+        const filled = Math.min(level, max);
+        return '<span style="color:#4488ff">' + '█'.repeat(filled) + '</span>' +
+               '<span style="color:#333">' + '░'.repeat(max - filled) + '</span>';
+      };
+
+      const skillRows = topSkills.map(([id, level]) => {
+        const cost = upgradeCost(level, id);
+        const canAfford = xpPool >= cost;
+        // SKILL_LABELS values and id are from controlled dictionaries — still escaped defensively
+        const label = esc(SKILL_LABELS[id] ?? id);
+        const safeId = esc(id);
+        return `
+          <div style="display:flex;align-items:center;gap:10px;padding:5px 0;border-bottom:1px dotted #2a2a44;">
+            <div style="width:110px;font-size:11px;color:#aac;">${label}</div>
+            <div style="font-family:monospace;font-size:13px;letter-spacing:1px;">${barHtml(level)}</div>
+            <div style="width:20px;color:#88ccff;font-size:13px;text-align:right;">${level}</div>
+            <button data-skill="${safeId}" data-level="${level}" data-cost="${cost}"
+              style="margin-left:auto;padding:2px 10px;font-family:inherit;font-size:11px;
+                     background:${canAfford ? '#1a2a44' : '#111'};
+                     color:${canAfford ? '#88ccff' : '#444'};
+                     border:1px solid ${canAfford ? '#4466aa' : '#333'};
+                     cursor:${canAfford ? 'pointer' : 'not-allowed'};">
+              +1 (${cost} XP)
+            </button>
+          </div>`;
+      }).join('');
+
+      const noSkills = topSkills.length === 0
+        ? '<div style="color:#555;font-size:11px;padding:8px 0;">No skills yet</div>'
+        : skillRows;
+
+      panel.innerHTML = `
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:14px;">
+          <h2 style="margin:0;color:#88ccff;letter-spacing:2px;">${esc(driver.name)}</h2>
+          <div style="font-size:11px;color:#888;">${esc(driver.title ?? '')}</div>
+        </div>
+        <div style="display:flex;gap:20px;padding:8px 0;margin-bottom:12px;border-bottom:1px solid #2a2a44;">
+          <div style="text-align:center;"><div style="color:#ff8844;font-size:18px;font-weight:bold;">${attrs.st}</div><div style="color:#666;font-size:10px;">ST</div></div>
+          <div style="text-align:center;"><div style="color:#44ff88;font-size:18px;font-weight:bold;">${attrs.dx}</div><div style="color:#666;font-size:10px;">DX</div></div>
+          <div style="text-align:center;"><div style="color:#ffcc44;font-size:18px;font-weight:bold;">${attrs.iq}</div><div style="color:#666;font-size:10px;">IQ</div></div>
+          <div style="text-align:center;"><div style="color:#ff6688;font-size:18px;font-weight:bold;">${attrs.ht}</div><div style="color:#666;font-size:10px;">HT</div></div>
+          <div style="margin-left:auto;text-align:right;">
+            <div style="color:#ffcc00;font-size:16px;font-weight:bold;">${xpPool} XP</div>
+            <div style="color:#666;font-size:10px;">pool</div>
+          </div>
+        </div>
+        <div style="margin-bottom:8px;font-size:11px;color:#aac;">SKILLS</div>
+        ${noSkills}
+        <div style="margin-top:16px;text-align:right;">
+          <button data-action="close" style="padding:6px 18px;font-family:inherit;font-size:12px;background:transparent;color:#888;border:1px solid #444;cursor:pointer;">[ CLOSE ]</button>
+        </div>`;
+    };
+
+    panel.addEventListener('click', async (e) => {
+      const btn = (e.target as HTMLElement).closest<HTMLButtonElement>('button');
+      if (!btn) return;
+      if (btn.dataset.action === 'close') { overlay.remove(); return; }
+      const skillId = btn.dataset.skill;
+      if (!skillId) return;
+      const cost = Number(btn.dataset.cost);
+      if ((driver.xp_pool ?? 0) < cost) return;
+      const r = await fetch(`http://${host}:3001/api/drivers/${driver.id}/spend-xp`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${this.token}` },
+        body: JSON.stringify({ skillId }),
+      });
+      if (r.ok) {
+        const updated = await r.json();
+        driver.xp_pool = updated.xpPool;
+        driver.skills = updated.skills;
+        render();
+      } else {
+        const err = await r.json().catch(() => ({}));
+        alert(err.error ?? 'Upgrade failed');
+      }
+    });
+
+    overlay.addEventListener('click', (e) => { if (e.target === overlay) overlay.remove(); });
     render();
   }
 

@@ -66,7 +66,8 @@ driversRouter.get('/', async (req: AuthRequest, res) => {
   await resolveDueDeployments(req.playerId!);
   const db = getDb();
   const result = await db.query(
-    `SELECT id, name, skill, aggression, loyalty, xp, assigned_vehicle_id, alive, wounded, wounded_until, available_at
+    `SELECT id, name, skill, aggression, loyalty, xp, xp_pool, assigned_vehicle_id, alive, wounded, wounded_until, available_at,
+            attributes, skills
      FROM drivers WHERE player_id = $1`,
     [req.playerId]
   );
