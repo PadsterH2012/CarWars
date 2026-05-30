@@ -759,9 +759,10 @@ export class GarageScene extends Phaser.Scene {
 
     const render = (): void => {
       panel.innerHTML = '';
-      const topSkills = Object.entries(skills)
-        .sort(([, a], [, b]) => b - a)
-        .slice(0, 6);
+      const allSkillIds = Object.keys(SKILL_LABELS);
+      const topSkills = allSkillIds
+        .map(id => [id, skills[id] ?? 0] as [string, number])
+        .sort(([, a], [, b]) => b - a);
 
       const barHtml = (level: number, max = 10): string => {
         const filled = Math.min(level, max);
@@ -791,8 +792,8 @@ export class GarageScene extends Phaser.Scene {
           </div>`;
       }).join('');
 
-      const noSkills = topSkills.length === 0
-        ? '<div style="color:#555;font-size:11px;padding:8px 0;">No skills yet</div>'
+      const noSkills = topSkills.every(([, v]) => v === 0)
+        ? '<div style="color:#555;font-size:11px;padding:8px 0;">No skills yet \u2014 earn XP by fighting!</div>'
         : skillRows;
 
       panel.innerHTML = `
