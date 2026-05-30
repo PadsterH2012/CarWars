@@ -79,14 +79,32 @@ export function generateAttributes(): Attributes {
   };
 }
 
-// Starting skill distribution: ceil(skill/2) in driving_standard,
-// floor(skill/2) in gunnery_guns. Mirrors the SQL backfill for consistency.
-export function generateStartingSkills(skill: number): Record<string, number> {
+// Starting skill distribution: 5-8 points spread across driving/gunnery/mechanic,
+// biased by attributes (DX → driving+gunnery, ST → heavy gunnery, IQ → mechanic).
+export function generateStartingSkills(skill: number, attrs: Attributes): Record<string, number> {
+  void skill; // legacy int retained for hire-cost/tier; not used here
+  const pool = 5 + Math.floor(Math.random() * 4); // 5–8
   const out: Record<string, number> = {};
-  const driving = Math.ceil(skill / 2);
-  const gunnery = Math.floor(skill / 2);
-  if (driving > 0) out['driving_standard'] = driving;
-  if (gunnery > 0) out['gunnery_guns'] = gunnery;
+
+  const dxBonus = Math.max(0, attrs.dx - 10);
+  const stBonus = Math.max(0, attrs.st - 10);
+  const iqBonus = Math.max(0, attrs.iq - 10);
+
+  const weights: [string, number][] = [
+    ['driving_standard', 2 + dxBonus * 0.4],
+    ['gunnery_guns',     2 + dxBonus * 0.3],
+    ['gunnery_heavy',    0.3 + stBonus * 0.5],
+    ['mechanic',         0.2 + iqBonus * 0.5],
+  ];
+
+  for (let i = 0; i < pool; i++) {
+    const total = weights.reduce((s, [, w]) => s + w, 0);
+    let r = Math.random() * total;
+    for (const [id, w] of weights) {
+      r -= w;
+      if (r <= 0) { out[id] = (out[id] ?? 0) + 1; break; }
+    }
+  }
   return out;
 }
 
@@ -172,7 +190,7 @@ function buildCandidate(skill: number, tier: DriverTier, eligibleStockIds: strin
   }
 
   const startingAttributes = generateAttributes();
-  const startingSkills = generateStartingSkills(skill);
+  const startingSkills = generateStartingSkills(skill, startingAttributes);
 
   return { name, skill, aggression, loyalty, hireCost, blurb, tier, startingAttributes, startingSkills, vehicleStockId, vehicleDiscountPct };
 }
