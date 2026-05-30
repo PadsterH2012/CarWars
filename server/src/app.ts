@@ -175,13 +175,18 @@ export function createApp() {
     }
   });
 
-  app.post('/api/me/award-xp', requireAuth, async (req: AuthRequest, res) => {
-    const { xp } = req.body ?? {};
-    if (typeof xp !== 'number' || xp < 0) return res.status(400).json({ error: 'Non-negative xp required' });
-    const db = getDb();
-    await db.query(`UPDATE players SET xp_pool = xp_pool + $1 WHERE id = $2`, [xp, req.playerId]);
-    return res.json({ ok: true });
-  });
+  // Debug-only: award XP to the player's pool directly. Disabled in production
+  // because it would let any authenticated player grant themselves arbitrary XP.
+  // Production XP comes exclusively from the match runner in ws/handler.ts.
+  if (process.env.NODE_ENV !== 'production') {
+    app.post('/api/me/award-xp', requireAuth, async (req: AuthRequest, res) => {
+      const { xp } = req.body ?? {};
+      if (typeof xp !== 'number' || xp < 0) return res.status(400).json({ error: 'Non-negative xp required' });
+      const db = getDb();
+      await db.query(`UPDATE players SET xp_pool = xp_pool + $1 WHERE id = $2`, [xp, req.playerId]);
+      return res.json({ ok: true });
+    });
+  }
 
   app.post('/api/me/select-driver', requireAuth, async (req: AuthRequest, res) => {
     const { driverId } = req.body ?? {};
