@@ -730,12 +730,12 @@ export class GarageScene extends Phaser.Scene {
       driving_standard: { cover: 'Mid-Sized, Sedan, Luxury, Station Wagon, Trike', bonus: '+1 HC per 3 lvls' },
       driving_heavy:    { cover: 'Pickup, Van, Camper, Hvy Cycle',           bonus: '+1 HC per 3 lvls' },
       driving_mega:     { cover: 'Truck, Trailer, Bus',                      bonus: '+1 HC per 3 lvls' },
-      gunnery_guns:     { cover: 'MG, VMG, AC, RR, HMG',                     bonus: '-1 to-hit per 2 lvls; -1 link penalty per 3' },
-      gunnery_heavy:    { cover: 'GL, ATG, BC',                              bonus: '-1 to-hit per 2 lvls; -1 link penalty per 3' },
-      gunnery_rockets:  { cover: 'LTR, MR, HR, RL, MML',                     bonus: '-1 to-hit per 2 lvls; -1 link penalty per 3' },
-      gunnery_lasers:   { cover: 'LL, ML, L, HL',                            bonus: '-1 to-hit per 2 lvls; -1 link penalty per 3' },
-      gunnery_flamers:  { cover: 'LFT, FT',                                  bonus: '-1 to-hit per 2 lvls; -1 link penalty per 3' },
-      gunnery_tactical: { cover: 'Spikedropper, Oil Jet, Oil Slick, Mine',   bonus: '-1 to-hit per 2 lvls; -1 link penalty per 3' },
+      gunnery_guns:     { cover: 'MG, VMG, AC, RR, HMG',                     bonus: '+1 accuracy per 2 lvls; -1 link penalty per 3' },
+      gunnery_heavy:    { cover: 'GL, ATG, BC',                              bonus: '+1 accuracy per 2 lvls; -1 link penalty per 3' },
+      gunnery_rockets:  { cover: 'LTR, MR, HR, RL, MML',                     bonus: '+1 accuracy per 2 lvls; -1 link penalty per 3' },
+      gunnery_lasers:   { cover: 'LL, ML, L, HL',                            bonus: '+1 accuracy per 2 lvls; -1 link penalty per 3' },
+      gunnery_flamers:  { cover: 'LFT, FT',                                  bonus: '+1 accuracy per 2 lvls; -1 link penalty per 3' },
+      gunnery_tactical: { cover: 'Spikedropper, Oil Jet, Oil Slick, Mine',   bonus: '+1 accuracy per 2 lvls; -1 link penalty per 3' },
       mechanic:         { cover: 'Repair costs, upgrade options',             bonus: '-2% repair cost per lvl' },
       leadership:       { cover: 'Squad size, driver loyalty',                bonus: '+1 squad size at 5/10' },
       medical:          { cover: 'Driver wound recovery',                     bonus: 'Faster recovery rate' },
@@ -796,7 +796,7 @@ export class GarageScene extends Phaser.Scene {
       const info = SKILL_INFO[id];
       const lvl = skills[id] ?? 0;
       const bText = id.startsWith('driving_') ? `Active: +${Math.floor(lvl / 3)} HC`
-        : id.startsWith('gunnery_') ? `Active: -${Math.floor(lvl / 2)} to-hit, -${Math.floor(lvl / 3)} link penalty`
+        : id.startsWith('gunnery_') ? `Active: +${Math.floor(lvl / 2)} accuracy, -${Math.floor(lvl / 3)} link penalty`
         : id === 'mechanic' ? `Active: -${lvl * 2}% repair cost`
         : id === 'fire_aid' ? `Active: -${Math.floor(lvl / 3)} fire dmg`
         : id === 'leadership' ? (lvl >= 10 ? 'Active: +2 squad size' : lvl >= 5 ? 'Active: +1 squad size' : 'No bonus yet')
