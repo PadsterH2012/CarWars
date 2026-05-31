@@ -641,6 +641,26 @@ ALTER TABLE gangs ADD COLUMN IF NOT EXISTS generated_world JSONB;
 
 ALTER TABLE gangs ADD COLUMN IF NOT EXISTS generated_gangs JSONB;
 
+-- Rival simulation: track when each gang last had rival actions simulated
+-- (added 2026-05-31 — Phase 5c rival gang actions)
+ALTER TABLE gangs ADD COLUMN IF NOT EXISTS last_rival_sim_at TIMESTAMPTZ;
+
+CREATE TABLE IF NOT EXISTS gang_action_log (
+  id              UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  player_id       UUID REFERENCES players(id) ON DELETE CASCADE,
+  action_type     TEXT NOT NULL,
+  gang_id         TEXT NOT NULL,
+  gang_name       TEXT NOT NULL,
+  settlement_id   TEXT NOT NULL,
+  settlement_name TEXT NOT NULL,
+  description     TEXT NOT NULL,
+  read            BOOLEAN NOT NULL DEFAULT FALSE,
+  created_at      TIMESTAMPTZ DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_gang_action_log_player
+  ON gang_action_log(player_id, created_at DESC);
+
 CREATE TABLE IF NOT EXISTS zone_influence (
   settlement_id TEXT NOT NULL,
   gang_id       TEXT NOT NULL,
