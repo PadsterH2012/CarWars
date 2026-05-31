@@ -166,6 +166,22 @@ CREATE TABLE IF NOT EXISTS player_rival_rep (
 );
 CREATE INDEX IF NOT EXISTS idx_rival_rep_player_gang ON player_rival_rep(player_gang_id);
 
+-- Phase 5b: drop rival_gangs FK on rival_id so generated gang IDs can be stored
+DO $$
+DECLARE
+  cname TEXT;
+BEGIN
+  SELECT constraint_name INTO cname
+  FROM information_schema.table_constraints
+  WHERE table_name = 'player_rival_rep'
+    AND constraint_type = 'FOREIGN KEY'
+    AND constraint_name LIKE '%rival_id%'
+  LIMIT 1;
+  IF cname IS NOT NULL THEN
+    EXECUTE 'ALTER TABLE player_rival_rep DROP CONSTRAINT ' || quote_ident(cname);
+  END IF;
+END $$;
+
 -- Gang ledger — append-only record of every income and expense that hits the gang
 -- treasury. Gives the garage a 'last 10 entries' statement and the post-match
 -- screen an authoritative breakdown of where money went.
@@ -622,6 +638,19 @@ END $$;
 -- (added 2026-05-31 — Phase 5a world generation, task 5)
 ALTER TABLE gangs ADD COLUMN IF NOT EXISTS world_seed INTEGER;
 ALTER TABLE gangs ADD COLUMN IF NOT EXISTS generated_world JSONB;
+
+ALTER TABLE gangs ADD COLUMN IF NOT EXISTS generated_gangs JSONB;
+
+CREATE TABLE IF NOT EXISTS zone_influence (
+  settlement_id TEXT NOT NULL,
+  gang_id       TEXT NOT NULL,
+  influence     INTEGER NOT NULL DEFAULT 0,
+  last_action_at TIMESTAMPTZ DEFAULT NOW(),
+  PRIMARY KEY (settlement_id, gang_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_zone_influence_gang       ON zone_influence(gang_id);
+CREATE INDEX IF NOT EXISTS idx_zone_influence_settlement ON zone_influence(settlement_id);
 
 -- Player profile expansion: persisted selections + stat counters
 -- (added 2026-05-28 — Player Persistence Plan, task 2)
