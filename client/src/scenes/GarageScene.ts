@@ -45,6 +45,8 @@ export class GarageScene extends Phaser.Scene {
   private garage: GarageStatus | null = null;
   private money = 0;
   private division = 0;
+  private playerAttributes: { st: number; dx: number; iq: number; ht: number } = { st: 10, dx: 10, iq: 10, ht: 10 };
+  private playerXpPool = 0;
   private unreadReports = 0; // squad after-action reports awaiting the player
   private deployments: Deployment[] = []; // squads currently out (in_transit)
   private selectedVehicleId = '';
@@ -85,6 +87,8 @@ export class GarageScene extends Phaser.Scene {
     this.division = me.division ?? 0;
     this.selectedVehicleId = me.selected_vehicle_id ?? '';
     this.selectedDriverId = me.selected_driver_id ?? '';
+    this.playerAttributes = me.attributes ?? { st: 10, dx: 10, iq: 10, ht: 10 };
+    this.playerXpPool = me.xp_pool ?? 0;
     this.vehicles = await vRes.json();
     this.drivers = await dRes.json();
     if (gRes.ok) this.gang = await gRes.json();
@@ -786,6 +790,8 @@ export class GarageScene extends Phaser.Scene {
     const attrs = driver.attributes ?? { st: 10, dx: 10, iq: 10, ht: 10 };
     const skills = driver.skills ?? {};
     const xpPool = driver.xp_pool ?? 0;
+    let playerAttrs = { ...this.playerAttributes };
+    let playerXpPool = this.playerXpPool;
     const host = window.location.hostname;
 
     const esc = (s: string): string =>
@@ -860,14 +866,40 @@ export class GarageScene extends Phaser.Scene {
           <h2 style="margin:0;color:#88ccff;letter-spacing:2px;">${esc(driver.name)}</h2>
           <div style="font-size:11px;color:#888;">${esc(driver.title ?? '')}</div>
         </div>
-        <div style="display:flex;gap:20px;padding:8px 0;margin-bottom:12px;border-bottom:1px solid #2a2a44;">
+        <div style="margin-bottom:4px;font-size:10px;color:#666;">DRIVER STATS</div>
+        <div style="display:flex;gap:20px;padding:8px 0;margin-bottom:4px;border-bottom:1px solid #2a2a44;">
           <div style="text-align:center;"><div style="color:#ff8844;font-size:18px;font-weight:bold;">${attrs.st}</div><div style="color:#666;font-size:10px;">ST</div></div>
           <div style="text-align:center;"><div style="color:#44ff88;font-size:18px;font-weight:bold;">${attrs.dx}</div><div style="color:#666;font-size:10px;">DX</div></div>
           <div style="text-align:center;"><div style="color:#ffcc44;font-size:18px;font-weight:bold;">${attrs.iq}</div><div style="color:#666;font-size:10px;">IQ</div></div>
           <div style="text-align:center;"><div style="color:#ff6688;font-size:18px;font-weight:bold;">${attrs.ht}</div><div style="color:#666;font-size:10px;">HT</div></div>
           <div style="margin-left:auto;text-align:right;">
             <div style="color:#ffcc00;font-size:16px;font-weight:bold;">${xpPool} XP</div>
-            <div style="color:#666;font-size:10px;">pool</div>
+            <div style="color:#666;font-size:10px;">driver pool</div>
+          </div>
+        </div>
+        <div style="margin-bottom:4px;font-size:10px;color:#666;">PLAYER ATTRIBUTES <span style="color:#444;">(click to upgrade)</span></div>
+        <div style="display:flex;gap:20px;padding:8px 0;margin-bottom:12px;border-bottom:1px solid #2a2a44;">
+          ${(['st','dx','iq','ht'] as const).map((k, i) => {
+            const colors = ['#ff8844','#44ff88','#ffcc44','#ff6688'];
+            const labels = ['ST','DX','IQ','HT'];
+            const val = playerAttrs[k];
+            const cost = Math.pow(val + 1, 2) * 10;
+            const can = playerXpPool >= cost && val < 20;
+            return `<div style="text-align:center;">
+              <button data-pattr="${k}" data-cost="${cost}"
+                style="background:transparent;border:1px solid ${can ? colors[i] + '55' : 'transparent'};
+                       cursor:${can ? 'pointer' : 'default'};color:${colors[i]};font-size:18px;font-weight:bold;
+                       font-family:inherit;padding:2px 8px;display:block;width:100%;
+                       ${!can ? 'opacity:0.6;' : ''}"
+                title="${can ? `Upgrade to ${val+1} (${cost} XP)` : val >= 20 ? 'Max level' : `Need ${cost} XP`}"
+                ${can ? '' : 'disabled'}>${val}
+              </button>
+              <div style="color:#666;font-size:10px;">${labels[i]}</div>
+            </div>`;
+          }).join('')}
+          <div style="margin-left:auto;text-align:right;">
+            <div style="color:#bb88ff;font-size:16px;font-weight:bold;">${playerXpPool} XP</div>
+            <div style="color:#666;font-size:10px;">player pool</div>
           </div>
         </div>
         <div style="margin-bottom:8px;font-size:11px;color:#aac;">SKILLS</div>
@@ -882,6 +914,30 @@ export class GarageScene extends Phaser.Scene {
       const btn = (e.target as HTMLElement).closest<HTMLButtonElement>('button');
       if (!btn) return;
       if (btn.dataset.action === 'close') { overlay.remove(); return; }
+
+      const pattrKey = btn.dataset.pattr;
+      if (pattrKey) {
+        const cost = Number(btn.dataset.cost);
+        if (playerXpPool < cost) return;
+        const r = await fetch(`http://${host}:3001/api/me/upgrade-attr`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${this.token}` },
+          body: JSON.stringify({ attrKey: pattrKey }),
+        });
+        if (r.ok) {
+          const updated = await r.json();
+          playerXpPool = updated.xpPool;
+          playerAttrs = updated.attributes;
+          this.playerXpPool = playerXpPool;
+          this.playerAttributes = playerAttrs;
+          render();
+        } else {
+          const err = await r.json().catch(() => ({}));
+          alert(err.error ?? 'Attribute upgrade failed');
+        }
+        return;
+      }
+
       const skillId = btn.dataset.skill;
       if (!skillId) return;
       const cost = Number(btn.dataset.cost);
