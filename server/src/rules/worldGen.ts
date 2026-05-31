@@ -188,7 +188,8 @@ export function generateWorld(seed: number): GeneratedWorld {
   const cutoff     = Math.max(1, Math.floor(small.length * 0.25));
   const candidates = small.slice(0, cutoff);
   const startIdx   = Math.floor(rng() * candidates.length);
-  const playerStart = candidates[startIdx] ?? settlements[settlements.length - 1];
+  const playerStart = candidates[startIdx];
+  if (!playerStart) throw new Error(`generateWorld(${seed}): no small settlement found for player start`);
 
   return {
     seed,
