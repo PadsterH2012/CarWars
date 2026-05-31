@@ -90,6 +90,8 @@ class WorldMapScene extends Phaser.Scene {
   private selectedNodeId: string | null = null;
   private travelPanel: Phaser.GameObjects.Container | null = null;
 
+  private influenceBySettlement: Record<string, { gangId: string; influence: number }[]> = {};
+
   // Persistent "squads currently out" indicator (markers + list + countdown).
   private deployments: ActiveDeployment[] = [];
   private deploymentLayer: Phaser.GameObjects.Container | null = null;
@@ -111,6 +113,7 @@ class WorldMapScene extends Phaser.Scene {
     this.selectedNodeId = null;
     this.travelPanel = null;
     this.uiObjects = [];
+    this.influenceBySettlement = {};
     this.deployments = [];
     this.deploymentLayer = null;
     this.deploymentTimer = null;
@@ -128,6 +131,8 @@ class WorldMapScene extends Phaser.Scene {
       this.showError("Failed to load world map");
       return;
     }
+
+    await this.fetchInfluence();
 
     // Fetch actual player location from server
     await this.fetchCurrentLocation();
@@ -181,6 +186,21 @@ class WorldMapScene extends Phaser.Scene {
     }
   }
 
+  private async fetchInfluence(): Promise<void> {
+    try {
+      const host = window.location.hostname;
+      const res  = await fetch(`http://${host}:3001/api/territory/influence`, {
+        headers: { Authorization: `Bearer ${this.token}` },
+      });
+      if (res.ok) {
+        const data = await res.json();
+        this.influenceBySettlement = data.bySettlement ?? {};
+      }
+    } catch (e) {
+      console.error('WorldMapScene fetchInfluence failed:', e);
+    }
+  }
+
   private computeTransform(): void {
     if (!this.region || this.region.settlements.length === 0) return;
     const xs = this.region.settlements.map(n => n.x);
@@ -225,7 +245,24 @@ class WorldMapScene extends Phaser.Scene {
       const pos = this.toScreen(node.x, node.y);
       const c = this.add.container(pos.x, pos.y);
       const r = node.kind === "city" ? 14 : 10;
-      const dot = this.add.circle(0, 0, r, nodeColour(node.kind)).setStrokeStyle(2, 0, 0.5);
+      const colour = nodeColour(node.kind);
+      // Tint by dominant gang influence
+      let finalColour = colour;
+      const influence = this.influenceBySettlement[node.id];
+      if (influence && influence.length > 0) {
+        const dominant = influence[0];
+        // Derive a stable colour from the gang ID string (simple hash)
+        const hash = dominant.gangId.split('').reduce(
+          (h, c) => ((h << 5) - h + c.charCodeAt(0)) | 0, 0
+        );
+        const gangColour = Math.abs(hash) % 0xffffff;
+        // 30% gang tint over base node colour
+        const r2 = Math.round(((colour >> 16 & 0xff) * 0.7) + ((gangColour >> 16 & 0xff) * 0.3));
+        const g  = Math.round(((colour >>  8 & 0xff) * 0.7) + ((gangColour >>  8 & 0xff) * 0.3));
+        const b  = Math.round(((colour       & 0xff) * 0.7) + ((gangColour       & 0xff) * 0.3));
+        finalColour = (r2 << 16) | (g << 8) | b;
+      }
+      const dot = this.add.circle(0, 0, r, finalColour).setStrokeStyle(2, 0, 0.5);
       const lbl = this.add.text(0, r + 6, node.name, { fontSize: "12px", fontFamily: "monospace", color: "#cccccc" }).setOrigin(0.5, 0);
       if (node.id === this.currentNodeId) {
         const ring = this.add.circle(0, 0, r + 6).setStrokeStyle(2, C_CURRENT_RING, 0.9);
