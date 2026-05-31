@@ -1,4 +1,5 @@
 import type { Pool } from 'pg';
+import type { GeneratedGang } from './gangGen';
 
 // Rival data shape as stored in the rival_gangs table.
 export interface RivalGang {
@@ -103,4 +104,44 @@ export async function recordRivalOutcome(
 // base_skill + floor(grudge / 20), capped at 6.
 export function rivalEffectiveSkill(rival: RivalGang, grudge: number): number {
   return Math.min(6, rival.base_skill + Math.floor(grudge / 20));
+}
+
+// Adapt a GeneratedGang to the RivalGang shape the arena expects.
+// Generated gangs have no lineup, so the arena falls back to generic AI vehicles.
+export function adaptGeneratedGang(gang: GeneratedGang): RivalGang {
+  return {
+    id:               gang.id,
+    name:             gang.name,
+    description:      'A rival gang from the wasteland',
+    base_skill:       3,
+    primary_colour:   gang.primary_colour,
+    secondary_colour: gang.secondary_colour,
+    emblem_id:        'default',
+    min_division:     5,
+    boast_lines:      [],
+    defeat_lines:     [],
+    lineup:           {},
+  };
+}
+
+// Pick a generated gang as arena rival, preferring those with zone_influence
+// in the player's current settlement.
+export async function pickGeneratedRivalForMatch(
+  db: Pool,
+  currentSettlementId: string,
+  generatedGangs: GeneratedGang[],
+): Promise<RivalGang | null> {
+  if (!generatedGangs.length) return null;
+
+  const res = await db.query<{ gang_id: string; influence: number }>(
+    `SELECT gang_id, influence FROM zone_influence
+       WHERE settlement_id = $1 ORDER BY influence DESC`,
+    [currentSettlementId],
+  );
+
+  const gangMap    = new Map(generatedGangs.map(g => [g.id, g]));
+  const localGangs = res.rows.map(r => gangMap.get(r.gang_id)).filter((g): g is GeneratedGang => !!g);
+  const candidates = localGangs.length ? localGangs : generatedGangs;
+  const picked     = candidates[Math.floor(Math.random() * candidates.length)];
+  return adaptGeneratedGang(picked);
 }

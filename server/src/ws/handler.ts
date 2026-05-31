@@ -6,7 +6,8 @@ import { ZoneRunner } from '../world/zone-runner';
 import { getDb } from '../db/client';
 import { deriveStats } from '../rules/vehicle';
 import type { Pool } from 'pg';
-import { pickRivalForMatch, recordRivalOutcome, rivalEffectiveSkill, type RivalGang } from '../rules/rivals';
+import { pickRivalForMatch, pickGeneratedRivalForMatch, recordRivalOutcome, rivalEffectiveSkill, type RivalGang } from '../rules/rivals';
+import type { GeneratedGang } from '../rules/gangGen';
 import { playerOwnsGarage } from '../api/garages';
 import type { TickSnapshot } from '../rules/engine';
 
@@ -667,7 +668,25 @@ async function handleMessage(ws: WebSocket, raw: string): Promise<void> {
             );
             if (res.rows.length) {
               const { division, gang_id } = res.rows[0];
-              rival = await pickRivalForMatch(db, gang_id, division);
+
+              // Fetch generated gangs for Phase 5b rival selection
+              const gangRowRes = await db.query<{
+                generated_gangs: GeneratedGang[] | null;
+                current_world_node_id: string;
+              }>(
+                `SELECT generated_gangs, current_world_node_id FROM gangs WHERE id = $1`,
+                [gang_id],
+              );
+              const generatedGangs: GeneratedGang[] = gangRowRes.rows[0]?.generated_gangs ?? [];
+              const currentSettlementId             = gangRowRes.rows[0]?.current_world_node_id ?? '';
+
+              // Prefer generated gangs with local territory presence
+              if (generatedGangs.length && currentSettlementId) {
+                rival = await pickGeneratedRivalForMatch(db, currentSettlementId, generatedGangs);
+              }
+              if (!rival) {
+                rival = await pickRivalForMatch(db, gang_id, division);
+              }
               if (rival) {
                 const gRes = await db.query<{ grudge: number }>(
                   `SELECT grudge FROM player_rival_rep WHERE player_gang_id = $1 AND rival_id = $2`,
