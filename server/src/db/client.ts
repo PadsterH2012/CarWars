@@ -1,5 +1,7 @@
 import { Pool } from 'pg';
 import { generateWorld } from '../rules/worldGen';
+import { generateGangs } from '../rules/gangGen';
+import { seedGangInfluence } from '../rules/worldLoader';
 
 let pool: Pool | null = null;
 
@@ -28,11 +30,15 @@ export async function migrateGeneratedWorlds(): Promise<void> {
   for (const row of result.rows) {
     const seed  = row.world_seed ?? Math.floor(Math.random() * 2147483647);
     const world = generateWorld(seed);
+    const gangs = generateGangs(world, seed);
     await db.query(
-      `UPDATE gangs SET world_seed = $1, generated_world = $2, current_world_node_id = $3
-         WHERE owner_player_id = $4`,
-      [seed, JSON.stringify(world), world.playerStartSettlementId, row.owner_player_id],
+      `UPDATE gangs SET world_seed = $1, generated_world = $2, generated_gangs = $3,
+                        current_world_node_id = $4
+         WHERE owner_player_id = $5`,
+      [seed, JSON.stringify(world), JSON.stringify(gangs),
+       world.playerStartSettlementId, row.owner_player_id],
     );
+    await seedGangInfluence(db, world, gangs);
     console.log(`[migrate] Generated world (seed ${seed}) for gang owner ${row.owner_player_id}`);
   }
   if (!result.rows.length) {
