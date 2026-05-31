@@ -306,12 +306,19 @@ async function removeClientFromZone(ws: WebSocket): Promise<void> {
             // had excess > 3, which wounds the driver for a real-time recovery.
             const driverWounded = wreck.remainingDP <= 0 && alive?.stats.damageState.driverWounded;
             if (driverWounded) {
+              const skillRes = await db.query(
+                `SELECT skills FROM drivers WHERE assigned_vehicle_id = $1 AND alive = TRUE LIMIT 1`,
+                [id]
+              );
+              const driverSkills: Record<string, number> = skillRes.rows[0]?.skills ?? {};
+              const medLevel = driverSkills.medical ?? 0;
+              const recoveryMinutes = Math.max(1, Math.round(10 / Math.max(1, medLevel)));
               await db.query(
-                `UPDATE drivers SET wounded = TRUE, wounded_until = NOW() + INTERVAL '10 minutes'
+                `UPDATE drivers SET wounded = TRUE, wounded_until = NOW() + INTERVAL '${recoveryMinutes} minutes'
                  WHERE assigned_vehicle_id = $1 AND alive = TRUE`,
                 [id]
               );
-              console.log(`[driver-wound] driver of vehicle ${id} wounded — 10min recovery`);
+              console.log(`[driver-wound] driver of vehicle ${id} wounded — ${recoveryMinutes}min recovery (medical lvl ${medLevel})`);
             }
           }
         }

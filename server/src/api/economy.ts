@@ -89,6 +89,16 @@ function computeRepairQuote(loadout: VehicleLoadout, origLoadout: VehicleLoadout
   };
 }
 
+async function driverMechanicLevel(db: ReturnType<typeof getDb>, vehicleId: string, playerId: string): Promise<number> {
+  const res = await db.query(
+    `SELECT skills FROM drivers WHERE assigned_vehicle_id = $1 AND player_id = $2 AND alive = TRUE LIMIT 1`,
+    [vehicleId, playerId]
+  );
+  if (!res.rows.length) return 0;
+  const skills: Record<string, number> = res.rows[0].skills ?? {};
+  return skills.mechanic ?? 0;
+}
+
 // GET /api/economy/repair/quote?vehicleId=X — itemised cost, no DB mutation
 economyRouter.get('/repair/quote', async (req: AuthRequest, res) => {
   const vehicleId = req.query.vehicleId;
@@ -107,9 +117,16 @@ economyRouter.get('/repair/quote', async (req: AuthRequest, res) => {
   const origLoadout = (vResult.rows[0].original_loadout ?? loadout) as VehicleLoadout;
   const damage      = vResult.rows[0].damage_state as DamageState;
   const discount    = gResult.rows.length ? Number(gResult.rows[0].repair_discount) : 0;
+  const mechLevel = req.query.skipMech ? 0 : await driverMechanicLevel(db, vehicleId, req.playerId);
+  const mechDiscount = Math.min(0.5, mechLevel * 0.02);
+  const combinedDiscount = 1 - (1 - discount) * (1 - mechDiscount);
   const quote = computeRepairQuote(loadout, origLoadout, damage);
-  // Per-part costs stay at full rate; the garage discount applies to the bill.
-  return res.json({ ...quote, repairDiscount: discount, discountedTotal: Math.round(quote.total * (1 - discount)) });
+  return res.json({
+    ...quote,
+    repairDiscount: combinedDiscount,
+    mechanicDiscount: mechDiscount,
+    discountedTotal: Math.round(quote.total * (1 - combinedDiscount)),
+  });
 });
 
 economyRouter.post('/repair', async (req: AuthRequest, res) => {
@@ -141,6 +158,9 @@ economyRouter.post('/repair', async (req: AuthRequest, res) => {
   const playerMoney  = pResult.rows[0].money as number;
   // Garage owners get a repair discount applied to the final bill.
   const discount     = gResult.rows.length ? Number(gResult.rows[0].repair_discount) : 0;
+  const mechLevel = await driverMechanicLevel(db, vehicleId, req.playerId);
+  const mechDiscount = Math.min(0.5, mechLevel * 0.02);
+  const combinedDiscount = 1 - (1 - discount) * (1 - mechDiscount);
 
   const quote = computeRepairQuote(loadout, origLoadout, damage);
   const doArmor  = parts.includes('armor');
@@ -151,7 +171,7 @@ economyRouter.post('/repair', async (req: AuthRequest, res) => {
              + (doTires ? quote.tires.cost : 0)
              + (doEngine ? quote.engine.cost : 0)
              + (doAmmo  ? quote.ammo.cost   : 0);
-  const cost = Math.round(grossCost * (1 - discount));
+  const cost = Math.round(grossCost * (1 - combinedDiscount));
 
   // Allow zero-cost repairs (e.g. free-ammo weapons like lasers/grenades) to
   // proceed to the DB update. Only skip when there is genuinely nothing to do.
@@ -202,7 +222,7 @@ economyRouter.post('/repair', async (req: AuthRequest, res) => {
     client.release();
   }
 
-  return res.json({ cost, moneyRemaining: playerMoney - cost, parts });
+  return res.json({ cost, moneyRemaining: playerMoney - cost, parts, mechanicDiscount: mechDiscount, combinedDiscount });
 });
 
 economyRouter.post('/prize', async (req: AuthRequest, res) => {

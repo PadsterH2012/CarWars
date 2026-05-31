@@ -51,7 +51,8 @@ export function createApp() {
     const result = await db.query(
       `SELECT id, username, money, division, reputation,
               selected_vehicle_id, selected_driver_id,
-              wins, losses, kills, arena_count
+              wins, losses, kills, arena_count,
+              attributes, xp_pool
        FROM players WHERE id = $1`,
       [req.playerId]
     );
@@ -187,6 +188,44 @@ export function createApp() {
       return res.json({ ok: true });
     });
   }
+
+  app.post('/api/me/upgrade-attr', requireAuth, async (req: AuthRequest, res) => {
+    const { attrKey } = req.body;
+    const VALID_ATTRS = ['st', 'dx', 'iq', 'ht'];
+    if (typeof attrKey !== 'string' || !VALID_ATTRS.includes(attrKey)) {
+      return res.status(400).json({ error: 'Invalid attrKey' });
+    }
+
+    const db = getDb();
+    const pRes = await db.query(
+      `SELECT xp_pool, attributes FROM players WHERE id = $1`,
+      [req.playerId]
+    );
+    if (!pRes.rows.length) return res.status(403).json({ error: 'Player not found' });
+
+    const attrs: Record<string, number> = pRes.rows[0].attributes ?? {};
+    const currentLevel = attrs[attrKey] ?? 10;
+    const targetLevel = currentLevel + 1;
+
+    if (targetLevel > 20) {
+      return res.status(400).json({ error: 'Maximum attribute level is 20' });
+    }
+
+    const cost = Math.pow(targetLevel, 2) * 10;
+    if (pRes.rows[0].xp_pool < cost) {
+      return res.status(400).json({ error: 'Insufficient XP', cost, xpPool: pRes.rows[0].xp_pool });
+    }
+
+    const newAttrs = { ...attrs, [attrKey]: targetLevel };
+    const newXpPool = pRes.rows[0].xp_pool - cost;
+
+    await db.query(
+      `UPDATE players SET xp_pool = $1, attributes = $2 WHERE id = $3`,
+      [newXpPool, JSON.stringify(newAttrs), req.playerId]
+    );
+
+    return res.json({ xpPool: newXpPool, attributes: newAttrs, attrKey, newLevel: targetLevel, cost });
+  });
 
   app.post('/api/me/select-driver', requireAuth, async (req: AuthRequest, res) => {
     const { driverId } = req.body ?? {};

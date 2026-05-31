@@ -176,7 +176,6 @@ function buildCandidate(skill: number, tier: DriverTier, eligibleStockIds: strin
     : `${first} ${last}`;
   const aggression = 1 + Math.floor(Math.random() * 6);
   const loyalty    = 3 + Math.floor(Math.random() * 4);  // 3..6
-  const hireCost = skillToHireCost(skill);
   const blurb = pick(BLURBS);
 
   // 15% chance the candidate brings their own car. Skill >= 4 skews toward
@@ -191,6 +190,13 @@ function buildCandidate(skill: number, tier: DriverTier, eligibleStockIds: strin
 
   const startingAttributes = generateAttributes();
   const startingSkills = generateStartingSkills(skill, startingAttributes);
+
+  const baseCost = skillToHireCost(skill);
+  const skillPremium = Object.values(startingSkills).reduce((sum, lvl) => sum + lvl * 50, 0);
+  const attrSum = (startingAttributes.st ?? 10) + (startingAttributes.dx ?? 10) +
+                  (startingAttributes.iq ?? 10) + (startingAttributes.ht ?? 10);
+  const attrPremium = Math.max(0, (attrSum - 40) * 25);
+  const hireCost = baseCost + skillPremium + attrPremium;
 
   return { name, skill, aggression, loyalty, hireCost, blurb, tier, startingAttributes, startingSkills, vehicleStockId, vehicleDiscountPct };
 }
