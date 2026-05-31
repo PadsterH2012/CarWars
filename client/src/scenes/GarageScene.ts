@@ -53,6 +53,9 @@ export class GarageScene extends Phaser.Scene {
   private selectedVehicleId = '';
   private selectedDriverId = '';
   private justFoughtVehicleId = ''; // vehicle just back from arena
+  private playerRank = 0;
+  private totalGangs = 0;
+  private endgame = false;
   // Container for everything the main garage screen paints — we wipe + repaint on resize
   private mainLayer!: Phaser.GameObjects.Container;
 
@@ -68,12 +71,15 @@ export class GarageScene extends Phaser.Scene {
     this.unreadActivity = 0;
     this.activityLog = [];
     this.showActivityLog = false;
+    this.playerRank = 0;
+    this.totalGangs = 0;
+    this.endgame = false;
   }
 
   async create(): Promise<void> {
     const host = window.location.hostname;
 
-    const [meRes, vRes, dRes, gRes, reqRes, bayRes, repRes, depRes, actRes] = await Promise.all([
+    const [meRes, vRes, dRes, gRes, reqRes, bayRes, repRes, depRes, actRes, lbRes] = await Promise.all([
       fetch(`http://${host}:3001/api/me`, { headers: { Authorization: `Bearer ${this.token}` } }),
       fetch(`http://${host}:3001/api/vehicles`, { headers: { Authorization: `Bearer ${this.token}` } }),
       fetch(`http://${host}:3001/api/drivers`, { headers: { Authorization: `Bearer ${this.token}` } }),
@@ -86,6 +92,7 @@ export class GarageScene extends Phaser.Scene {
       // Active squad deployments (in_transit) for the status panel + ETAs.
       fetch(`http://${host}:3001/api/deploy`, { headers: { Authorization: `Bearer ${this.token}` } }),
       fetch(`http://${host}:3001/api/territory/activity/unread-count`, { headers: { Authorization: `Bearer ${this.token}` } }),
+      fetch(`http://${host}:3001/api/leaderboard`, { headers: { Authorization: `Bearer ${this.token}` } }),
     ]);
     const me = await meRes.json();
     this.money = me.money ?? 0;
@@ -115,6 +122,12 @@ export class GarageScene extends Phaser.Scene {
       // squad-deployment panel shows only zone deployments — never a job's null zone.
       this.deployments = rows.filter(d => d.status === 'in_transit' && !d.job_id);
     }
+    if (lbRes?.ok) {
+      const lb = await lbRes.json();
+      this.playerRank = lb.playerRank ?? 0;
+      this.totalGangs = lb.totalGangs ?? 0;
+      this.endgame    = lb.endgame ?? false;
+    }
 
     this.mainLayer = this.add.container(0, 0);
 
@@ -143,13 +156,31 @@ export class GarageScene extends Phaser.Scene {
       }).setOrigin(0, 0.5).setInteractive();
       nameBtn.on('pointerdown', () => this.showGangSettings());
       add(nameBtn);
-      add(this.add.text(leftX, 100, `Treasury: $${this.gang.treasury.toLocaleString()} | Rep: ${this.gang.reputation} | Division: ${this.division}`, {
+      const rankSuffix = this.playerRank > 0 && this.totalGangs > 0
+        ? `  |  Rank #${this.playerRank}/${this.totalGangs}` : '';
+      add(this.add.text(leftX, 100, `Treasury: $${this.gang.treasury.toLocaleString()} | Rep: ${this.gang.reputation} | Division: ${this.division}${rankSuffix}`, {
         color: '#ffcc00', fontSize: '14px', fontFamily: 'monospace'
       }));
     } else {
       add(this.add.text(leftX, 70, `Money: $${this.money.toLocaleString()} | Division: ${this.division}`, {
         color: '#ffcc00', fontSize: '16px', fontFamily: 'monospace'
       }));
+    }
+
+    if (this.endgame) {
+      const banner = this.add.text(cx, 122,
+        '★  YOU ARE THE DOMINANT POWER IN THE REGION  ★', {
+          color: '#ffdd00', fontSize: '15px', fontFamily: 'monospace', fontStyle: 'bold',
+          backgroundColor: '#332200', padding: { x: 12, y: 6 },
+        }).setOrigin(0.5);
+      add(banner);
+      const retBtn = this.add.text(banner.x + banner.width / 2 + 12, 122,
+        '[RETIRE]', {
+          color: '#ffcc00', fontSize: '15px', fontFamily: 'monospace',
+          backgroundColor: '#332200', padding: { x: 8, y: 6 },
+        }).setOrigin(0, 0.5).setInteractive();
+      retBtn.on('pointerdown', () => this.scene.start('LeaderboardScene', { token: this.token }));
+      add(retBtn);
     }
 
     const activeJobId = localStorage.getItem('cw_active_job');
@@ -535,6 +566,16 @@ export class GarageScene extends Phaser.Scene {
         color: '#ffffff', fontSize: '12px', fontFamily: 'monospace', fontStyle: 'bold',
       }).setOrigin(0.5));
     }
+
+    // ── Leaderboard button ─────────────────────────────────────────────────────
+    const lbBtn = this.add.text(actBtn.x + actBtn.width + 16, navY, '[LEADERBOARD]', {
+      color: this.endgame ? '#ffdd00' : '#8888ff',
+      fontSize: '16px', fontFamily: 'monospace',
+      backgroundColor: this.endgame ? '#332200' : '#111133',
+      padding: { x: 8, y: 4 },
+    }).setInteractive();
+    lbBtn.on('pointerdown', () => this.scene.start('LeaderboardScene', { token: this.token }));
+    add(lbBtn);
 
     // ── Garage bay (Phase 3) — storage cap, repair discount, passive income ──
     const bayY = navY - 36;

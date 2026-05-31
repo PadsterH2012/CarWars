@@ -18,6 +18,7 @@ import { garagesRouter } from './api/garages';
 import { deployRouter } from './api/deploy';
 import { reportsRouter } from './api/reports';
 import { territoryRouter } from './api/territory';
+import { leaderboardRouter } from './api/leaderboard';
 import { requireAuth, AuthRequest } from './api/middleware';
 import { getDb } from './db/client';
 import { lastResults } from './ws/handler';
@@ -47,6 +48,7 @@ export function createApp() {
   app.use('/api/deploy', deployRouter);
   app.use('/api/reports', reportsRouter);
   app.use('/api/territory', territoryRouter);
+  app.use('/api/leaderboard', leaderboardRouter);
 
   app.get('/api/me', requireAuth, async (req: AuthRequest, res) => {
     const db = getDb();

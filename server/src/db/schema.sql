@@ -645,6 +645,11 @@ ALTER TABLE gangs ADD COLUMN IF NOT EXISTS generated_gangs JSONB;
 -- (added 2026-05-31 — Phase 5c rival gang actions)
 ALTER TABLE gangs ADD COLUMN IF NOT EXISTS last_rival_sim_at TIMESTAMPTZ;
 
+-- Phase 5d: endgame tracking columns
+ALTER TABLE gangs ADD COLUMN IF NOT EXISTS dominant_since TIMESTAMPTZ;
+ALTER TABLE gangs ADD COLUMN IF NOT EXISTS retired BOOLEAN NOT NULL DEFAULT FALSE;
+ALTER TABLE gangs ADD COLUMN IF NOT EXISTS retire_bonus INTEGER NOT NULL DEFAULT 0;
+
 CREATE TABLE IF NOT EXISTS gang_action_log (
   id              UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   player_id       UUID REFERENCES players(id) ON DELETE CASCADE,
