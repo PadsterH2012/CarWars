@@ -6,7 +6,7 @@ import { ZoneRunner } from '../world/zone-runner';
 import { getDb } from '../db/client';
 import { deriveStats } from '../rules/vehicle';
 import type { Pool } from 'pg';
-import { pickRivalForMatch, pickGeneratedRivalForMatch, recordRivalOutcome, rivalEffectiveSkill, type RivalGang } from '../rules/rivals';
+import { pickRivalForMatch, pickGeneratedRivalForMatch, recordRivalOutcome, rivalEffectiveSkill, adaptGeneratedGang, type RivalGang } from '../rules/rivals';
 import type { GeneratedGang } from '../rules/gangGen';
 import { playerOwnsGarage } from '../api/garages';
 import type { TickSnapshot } from '../rules/engine';
@@ -473,6 +473,41 @@ async function handleMessage(ws: WebSocket, raw: string): Promise<void> {
             }
           }
 
+          // Defense zone: write influence outcome and mark log entry resolved
+          if (msg.zoneId.startsWith('arena-defense-') && myPid) {
+            try {
+              const rawLogId = msg.zoneId.replace(/^arena-defense-/, '').split(':')[0];
+              // Ownership check: only act if this entry belongs to the player in this zone
+              const entryRes = await db.query<{ gang_id: string; settlement_id: string }>(
+                `SELECT gang_id, settlement_id FROM gang_action_log
+                   WHERE id = $1 AND player_id = $2 AND resolved = FALSE`,
+                [rawLogId, myPid],
+              );
+              if (entryRes.rows.length) {
+                const { gang_id, settlement_id } = entryRes.rows[0];
+                const playerWon = !!winnerId && winnerId === myPid;
+                if (playerWon) {
+                  const delta = 15 + Math.floor(Math.random() * 11);
+                  await db.query(
+                    `UPDATE zone_influence SET influence = GREATEST(0, influence - $1)
+                       WHERE settlement_id = $2 AND gang_id = $3`,
+                    [delta, settlement_id, gang_id],
+                  );
+                } else if (winnerId && winnerId !== myPid && myGangId) {
+                  const delta = 10 + Math.floor(Math.random() * 11);
+                  await db.query(
+                    `UPDATE zone_influence SET influence = GREATEST(0, influence - $1)
+                       WHERE settlement_id = $2 AND gang_id = $3`,
+                    [delta, settlement_id, myGangId],
+                  );
+                }
+                await db.query(`UPDATE gang_action_log SET resolved = TRUE WHERE id = $1`, [rawLogId]);
+              }
+            } catch (e) {
+              console.error('Defense outcome handling failed:', e);
+            }
+          }
+
           if (!winnerId) {
             const replayId = await persistReplay({
               db, playerId: myPid, zoneId: msg.zoneId,
@@ -654,9 +689,49 @@ async function handleMessage(ws: WebSocket, raw: string): Promise<void> {
         // and zone_end (for the post-match banner).
         let rival: RivalGang | null = null;
         let rivalGrudge = 0;
+
+        // Defense zone: force the attacking gang as the rival instead of picking normally
+        if (msg.zoneId.startsWith('arena-defense-')) {
+          try {
+            const db = getDb();
+            const rawLogId = msg.zoneId.replace(/^arena-defense-/, '').split(':')[0];
+            // Verify ownership: only the player whose log entry this is can launch a defense
+            let defPlayerId: string | undefined;
+            try {
+              defPlayerId = (jwt.verify(msg.token ?? '', JWT_SECRET) as { playerId: string }).playerId;
+            } catch { /* invalid token — entry query will return 0 rows */ }
+            const entryRes = await db.query<{ gang_id: string; gang_name: string; player_id: string }>(
+              `SELECT gang_id, gang_name, player_id FROM gang_action_log
+                 WHERE id = $1 AND player_id = $2 AND resolved = FALSE`,
+              [rawLogId, defPlayerId],
+            );
+            if (entryRes.rows.length) {
+              const { gang_id, gang_name, player_id } = entryRes.rows[0];
+              // Try to find the full GeneratedGang from the player's world for accurate colours
+              const gangRow = await db.query<{ generated_gangs: GeneratedGang[] | null }>(
+                `SELECT generated_gangs FROM gangs WHERE owner_player_id = $1`,
+                [player_id],
+              );
+              const generated = (gangRow.rows[0]?.generated_gangs ?? []).find(g => g.id === gang_id);
+              rival = generated
+                ? adaptGeneratedGang(generated)
+                : { id: gang_id, name: gang_name, description: 'An attacking gang', base_skill: 3,
+                    primary_colour: 0xff2222, secondary_colour: 0x880000,
+                    emblem_id: 'default', min_division: 5, boast_lines: [], defeat_lines: [], lineup: {} };
+              runner.setRival({
+                id: rival.id, name: rival.name, description: rival.description,
+                primary_colour: rival.primary_colour, secondary_colour: rival.secondary_colour,
+                emblem_id: rival.emblem_id,
+              });
+            }
+          } catch (e) {
+            console.error('Defense rival setup failed:', e);
+          }
+        }
+
         try {
           const db = getDb();
-          if (msg.token) {
+          if (!rival && msg.token) {
             // Resolve the owning player's division + gang from the primary vehicle id
             const res = await db.query<{ division: number; gang_id: string }>(
               `SELECT p.division, g.id AS gang_id

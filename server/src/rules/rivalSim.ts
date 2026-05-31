@@ -32,10 +32,10 @@ function adjacentTo(world: GeneratedWorld, sid: string): string[] {
     .map(r => r.from === sid ? r.to : r.from);
 }
 
-function simulateTurn(
+export function simulateTurn(
   gang: GeneratedGang,
   world: GeneratedWorld,
-  influence: InfluenceMap,
+  influence: Map<string, number>,
   allGangs: GeneratedGang[],
 ): RivalActionLog | null {
   const action = rollAction();

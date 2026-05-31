@@ -46,6 +46,7 @@ export class ArenaScene extends Phaser.Scene {
   private rival: import('@carwars/shared').RivalInfo | null = null;
   private token = '';
   private jobId = '';
+  private defenseZoneId: string | undefined;
   private lastInputSent = 0;
   private zoneEnded = false;
   private encounterTravelContext: { fromNodeId: string; toNodeId: string } | null = null;
@@ -94,7 +95,7 @@ export class ArenaScene extends Phaser.Scene {
     super({ key: 'ArenaScene' });
   }
 
-  init(data: { token?: string; vehicleId?: string; jobId?: string; squadVehicleIds?: string[]; mapId?: string; gangPrimaryColour?: number }): void {
+  init(data: { token?: string; vehicleId?: string; jobId?: string; squadVehicleIds?: string[]; mapId?: string; gangPrimaryColour?: number; defenseZoneId?: string }): void {
     this.token = data.token ?? '';
     this.myVehicleId = data.vehicleId ?? 'v1';
     this.squadVehicleIds = data.squadVehicleIds && data.squadVehicleIds.length > 0
@@ -103,6 +104,7 @@ export class ArenaScene extends Phaser.Scene {
     this.mapId = data.mapId ?? 'truck-stop';
     this.gangPrimaryColour = data.gangPrimaryColour;
     this.jobId = data.jobId ?? '';
+    this.defenseZoneId = data.defenseZoneId;
 
     // Class-field state must be reset on every scene restart — Phaser reuses the
     // same scene instance when scene.start() is called a second time, so field
@@ -299,7 +301,7 @@ export class ArenaScene extends Phaser.Scene {
     this.connection = new Connection(`ws://${wsHost}:3001`);
     this.connection.onOpen(() => {
       const zoneOverride = new URLSearchParams(window.location.search).get('zone');
-      const zoneId = zoneOverride ?? `arena-${this.mapId}`;
+      const zoneId = this.defenseZoneId ?? zoneOverride ?? `arena-${this.mapId}`;
       this.connection.send({
         type: 'join_zone',
         zoneId: zoneId,

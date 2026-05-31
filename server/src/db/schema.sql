@@ -655,11 +655,17 @@ CREATE TABLE IF NOT EXISTS gang_action_log (
   settlement_name TEXT NOT NULL,
   description     TEXT NOT NULL,
   read            BOOLEAN NOT NULL DEFAULT FALSE,
+  resolved        BOOLEAN NOT NULL DEFAULT FALSE,
   created_at      TIMESTAMPTZ DEFAULT NOW()
 );
 
 CREATE INDEX IF NOT EXISTS idx_gang_action_log_player
   ON gang_action_log(player_id, created_at DESC);
+
+DO $$ BEGIN
+  ALTER TABLE gang_action_log ADD COLUMN IF NOT EXISTS resolved BOOLEAN NOT NULL DEFAULT FALSE;
+EXCEPTION WHEN duplicate_object THEN NULL;
+END $$;
 
 CREATE TABLE IF NOT EXISTS zone_influence (
   settlement_id TEXT NOT NULL,

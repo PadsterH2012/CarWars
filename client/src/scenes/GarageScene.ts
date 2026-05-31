@@ -47,7 +47,7 @@ export class GarageScene extends Phaser.Scene {
   private division = 0;
   private unreadReports = 0; // squad after-action reports awaiting the player
   private unreadActivity = 0;
-  private activityLog: { id: string; description: string; action_type: string; read: boolean }[] = [];
+  private activityLog: { id: string; description: string; action_type: string; read: boolean; resolved: boolean }[] = [];
   private showActivityLog = false;
   private deployments: Deployment[] = []; // squads currently out (in_transit)
   private selectedVehicleId = '';
@@ -574,29 +574,47 @@ export class GarageScene extends Phaser.Scene {
 
     // ── "While you were away" activity log panel ───────────────────────────────
     if (this.showActivityLog) {
-      const panelY = navY - 200;
+      const panelY = navY - 230;
       const panelW = width - leftX * 2;
-      add(this.add.rectangle(leftX + panelW / 2, panelY + 85, panelW, 170, 0x110011, 0.95).setOrigin(0.5));
+      add(this.add.rectangle(leftX + panelW / 2, panelY + 100, panelW, 200, 0x110011, 0.95).setOrigin(0.5));
       add(this.add.text(leftX + 8, panelY + 4, '═══ WHILE YOU WERE AWAY ═══', {
         color: '#ff8888', fontSize: '13px', fontFamily: 'monospace', fontStyle: 'bold',
       }));
-      const entries = this.activityLog.slice(0, 5);
+      const entries = this.activityLog.slice(0, 4);
       if (!entries.length) {
         add(this.add.text(leftX + 8, panelY + 26, '  No recent rival activity.', {
           color: '#666666', fontSize: '12px', fontFamily: 'monospace',
         }));
       } else {
-        entries.forEach((e, i) => {
+        let entryY = panelY + 26;
+        entries.forEach((e) => {
           const col = e.action_type === 'attack' ? '#ff4444'
             : e.action_type === 'harass' ? '#ffaa44'
             : '#aaaaff';
-          add(this.add.text(leftX + 8, panelY + 26 + i * 20, `  ${e.description}`, {
+          add(this.add.text(leftX + 8, entryY, `  ${e.description}`, {
             color: col, fontSize: '12px', fontFamily: 'monospace',
           }));
+          if (e.action_type === 'attack' && !e.resolved) {
+            const defendBtn = this.add.text(leftX + 16, entryY + 14, '[DEFEND]', {
+              color: '#00ff88', fontSize: '11px', fontFamily: 'monospace',
+              backgroundColor: '#003322', padding: { x: 4, y: 2 },
+            }).setInteractive();
+            defendBtn.on('pointerdown', () => this.doDefend(e.id));
+            add(defendBtn);
+            const simBtn = this.add.text(leftX + 94, entryY + 14, '[SIMULATE]', {
+              color: '#ffaa44', fontSize: '11px', fontFamily: 'monospace',
+              backgroundColor: '#332200', padding: { x: 4, y: 2 },
+            }).setInteractive();
+            simBtn.on('pointerdown', () => this.doSimulate(e.id, simBtn));
+            add(simBtn);
+            entryY += 36;
+          } else {
+            entryY += 20;
+          }
         });
       }
       if (this.unreadActivity > 0) {
-        const ackBtn = this.add.text(leftX + 8, panelY + 136, '[ACKNOWLEDGE — mark all read]', {
+        const ackBtn = this.add.text(leftX + 8, panelY + 170, '[ACKNOWLEDGE — mark all read]', {
           color: '#ffddaa', fontSize: '13px', fontFamily: 'monospace',
           backgroundColor: '#332200', padding: { x: 6, y: 3 },
         }).setInteractive();
@@ -614,6 +632,50 @@ export class GarageScene extends Phaser.Scene {
         add(ackBtn);
       }
     }
+  }
+
+  private async doDefend(logEntryId: string): Promise<void> {
+    const h = window.location.hostname;
+    const res = await fetch(`http://${h}:3001/api/territory/attack/prepare-defense`, {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${this.token}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ logEntryId }),
+    });
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({}));
+      alert(err.error ?? 'Could not prepare defense');
+      return;
+    }
+    const { vehicleIds, logEntryId: confirmedId } = await res.json();
+    this.scene.start('ArenaScene', {
+      token: this.token,
+      vehicleId: vehicleIds[0],
+      squadVehicleIds: vehicleIds,
+      defenseZoneId: `arena-defense-${confirmedId}`,
+    });
+  }
+
+  private async doSimulate(logEntryId: string, btn: Phaser.GameObjects.Text): Promise<void> {
+    btn.setText('[SIMULATING...]').setColor('#888888');
+    const h = window.location.hostname;
+    const res = await fetch(`http://${h}:3001/api/territory/attack/simulate`, {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${this.token}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ logEntryId }),
+    });
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({}));
+      btn.setText('[SIMULATE]').setColor('#ffaa44');
+      alert(err.error ?? 'Simulation failed');
+      return;
+    }
+    const result = await res.json();
+    this.activityLog = this.activityLog.filter(e => e.id !== logEntryId);
+    this.renderGarage();
+    const msg = result.playerWon
+      ? `DEFENSE SUCCESS vs ${result.gangName} — ${result.gangName} lost influence in ${result.settlementName}.${result.repairCost ? ` Repairs: $${result.repairCost.toLocaleString()}` : ''}`
+      : `DEFENSE FAILED vs ${result.gangName} — you lost influence in ${result.settlementName}. Repairs: $${(result.repairCost ?? 0).toLocaleString()}`;
+    alert(msg);
   }
 
   // Buy a garage bay ($50k). On success, restart the scene so the storage cap,
