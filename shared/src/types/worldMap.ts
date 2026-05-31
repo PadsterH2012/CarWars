@@ -27,3 +27,34 @@ export interface WorldRegion {
   nodes: WorldNode[];
   roads: WorldRoad[];
 }
+
+export type SettlementKind = 'city' | 'town' | 'village' | 'outpost';
+
+export interface GeneratedSettlement {
+  id: string;
+  name: string;
+  kind: SettlementKind;
+  x: number;
+  y: number;
+  population: number;
+  services: string[];          // 'garage' | 'arena' | 'jobs' | 'market' | 'fuel' | 'repairs'
+  controllingGangId?: string;
+}
+
+export interface GeneratedRoad {
+  id: string;
+  from: string;
+  to: string;
+  distance: number;
+  roadType: RoadType;          // already exported: 'highway' | 'urban' | 'dirt' | 'mountain'
+  danger: number;              // 0..1
+  encounterTable: string;      // derived from roadType + danger at generation time
+}
+
+export interface GeneratedWorld {
+  seed: number;
+  settlements: GeneratedSettlement[];
+  roads: GeneratedRoad[];
+  capitals: string[];          // settlement IDs
+  playerStartSettlementId: string;
+}
