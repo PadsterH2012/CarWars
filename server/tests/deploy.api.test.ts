@@ -37,13 +37,17 @@ describe('squad deployment API', () => {
     expect(starter.status).toBe(201);
     const vehicleId = starter.body.vehicleId as string;
 
+    const worldRes = await request(app).get('/api/world/map').set('Authorization', `Bearer ${token}`);
+    expect(worldRes.status).toBe(200);
+    const zoneId = worldRes.body.settlements[0].id as string;
+
     const res = await request(app)
       .post('/api/deploy')
       .set('Authorization', `Bearer ${token}`)
-      .send({ zoneId: 'rustwater-truck-stop', vehicleIds: [vehicleId], assignment: 'patrol' });
+      .send({ zoneId, vehicleIds: [vehicleId], assignment: 'patrol' });
 
     expect(res.status).toBe(201);
-    expect(res.body.zoneId).toBe('rustwater-truck-stop');
+    expect(res.body.zoneId).toBe(zoneId);
     expect(res.body.etaSeconds).toBeGreaterThan(0);
     expect(res.body.deploymentId).toBeTruthy();
   });
@@ -66,6 +70,10 @@ describe('squad deployment API', () => {
     const starter = await request(app).post('/api/me/claim-starter').set('Authorization', `Bearer ${token}`).send();
     const vehicleId = starter.body.vehicleId as string;
 
+    const worldRes = await request(app).get('/api/world/map').set('Authorization', `Bearer ${token}`);
+    expect(worldRes.status).toBe(200);
+    const zoneId = worldRes.body.settlements[0].id as string;
+
     // Before deploy: available.
     const before = await request(app).get('/api/vehicles').set('Authorization', `Bearer ${token}`);
     const vBefore = before.body.find((v: { id: string }) => v.id === vehicleId);
@@ -75,7 +83,7 @@ describe('squad deployment API', () => {
     const dep = await request(app)
       .post('/api/deploy')
       .set('Authorization', `Bearer ${token}`)
-      .send({ zoneId: 'rustwater-truck-stop', vehicleIds: [vehicleId], assignment: 'patrol' });
+      .send({ zoneId, vehicleIds: [vehicleId], assignment: 'patrol' });
     expect(dep.status).toBe(201);
 
     // After deploy: the same vehicle reads as deployed, with a positive ETA and zone.
@@ -83,7 +91,7 @@ describe('squad deployment API', () => {
     const vAfter = after.body.find((v: { id: string }) => v.id === vehicleId);
     expect(vAfter.status).toBe('deployed');
     expect(vAfter.remainingSeconds).toBeGreaterThan(0);
-    expect(vAfter.deploymentZone).toBe('rustwater-truck-stop');
+    expect(vAfter.deploymentZone).toBe(zoneId);
   });
 
   it('resolves a due deployment exactly once under concurrent requests', async () => {
@@ -92,10 +100,14 @@ describe('squad deployment API', () => {
     const starter = await request(app).post('/api/me/claim-starter').set('Authorization', `Bearer ${token}`).send();
     const vehicleId = starter.body.vehicleId as string;
 
+    const worldRes = await request(app).get('/api/world/map').set('Authorization', `Bearer ${token}`);
+    expect(worldRes.status).toBe(200);
+    const zoneId = worldRes.body.settlements[0].id as string;
+
     const dep = await request(app)
       .post('/api/deploy')
       .set('Authorization', `Bearer ${token}`)
-      .send({ zoneId: 'rustwater-truck-stop', vehicleIds: [vehicleId], assignment: 'patrol' });
+      .send({ zoneId, vehicleIds: [vehicleId], assignment: 'patrol' });
     expect(dep.status).toBe(201);
     const deploymentId = dep.body.deploymentId as string;
 

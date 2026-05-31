@@ -1,8 +1,8 @@
 import { Router } from 'express';
 import { getDb } from '../db/client';
 import { requireAuth, AuthRequest } from './middleware';
-import { getRegion } from '../rules/world';
-import type { WorldNode, WorldRegion } from '@carwars/shared';
+import type { GeneratedSettlement, GeneratedWorld } from '@carwars/shared';
+import { getWorldForGang } from '../rules/worldLoader';
 import { resolveSquadEngagement, type SquadEngagementResult } from '../rules/squadEngagement';
 import { pickRivalForMatch, recordRivalOutcome } from '../rules/rivals';
 
@@ -16,7 +16,6 @@ export const deployRouter = Router();
 // via resolveDueDeployments(), which rolls rules/squadEngagement.ts and writes
 // an after-action report into engagement_reports.
 
-const REGION_ID = 'midville';
 const SQUAD_CAP = 4;
 const WOUND_RECOVERY_MINUTES = 3;
 // Travel pacing: a short real-time delay prevents instant teleport-fighting.
@@ -29,12 +28,12 @@ type Assignment = (typeof ASSIGNMENTS)[number];
 const ASSIGNMENT_PAYOUT_MULT: Record<Assignment, number> = { patrol: 0.8, job: 1.0, raid: 1.3 };
 
 // Difficulty 1-10 for a node: a base by kind plus the danger of its roads.
-export function zoneDifficulty(node: WorldNode, region: WorldRegion): number {
-  const BASE: Record<WorldNode['kind'], number> = {
-    city: 2, town: 3, truck_stop: 3, market: 2, garage: 1, arena: 6,
+export function zoneDifficulty(node: GeneratedSettlement, world: GeneratedWorld): number {
+  const BASE: Record<string, number> = {
+    city: 2, town: 3, village: 4, outpost: 5,
   };
-  const touchingRoads = region.roads.filter(r => r.from === node.id || r.to === node.id);
-  const maxDanger = touchingRoads.reduce((m, r) => Math.max(m, r.danger), 0);
+  const touchingRoads = world.roads.filter(r => r.from === node.id || r.to === node.id);
+  const maxDanger     = touchingRoads.reduce((m, r) => Math.max(m, r.danger), 0);
   return clampInt(1, 10, Math.round((BASE[node.kind] ?? 3) + maxDanger * 4));
 }
 
@@ -43,8 +42,8 @@ function basePayout(difficulty: number, assignment: Assignment): number {
 }
 
 // Real-time duration of a deployment in seconds: travel to the node + the fight.
-function deploymentSeconds(fromNodeId: string, toNodeId: string, region: WorldRegion): number {
-  const road = region.roads.find(
+function deploymentSeconds(fromNodeId: string, toNodeId: string, world: GeneratedWorld): number {
+  const road = world.roads.find(
     r => (r.from === fromNodeId && r.to === toNodeId) || (r.from === toNodeId && r.to === fromNodeId),
   );
   const miles = road ? road.distance : FALLBACK_TRAVEL_MILES;
@@ -66,20 +65,15 @@ deployRouter.post('/', requireAuth, async (req: AuthRequest, res) => {
     return res.status(400).json({ error: `A squad is at most ${SQUAD_CAP} vehicles` });
   }
 
-  const region = getRegion(REGION_ID);
-  if (!region) return res.status(500).json({ error: 'World region not found' });
-  const toNode = region.nodes.find(n => n.id === zoneId);
+  const db = getDb();
+  const worldCtx = await getWorldForGang(db, req.playerId!);
+  if (!worldCtx) return res.status(404).json({ error: 'Gang not found' });
+  const { world } = worldCtx;
+  const fromNodeId = worldCtx.fromNodeId;
+  const toNode = world.settlements.find(s => s.id === zoneId);
   if (!toNode) return res.status(404).json({ error: `Zone '${zoneId}' not found` });
 
-  const db = getDb();
   await resolveDueDeployments(req.playerId!);
-
-  const gangRes = await db.query(
-    `SELECT id, current_world_node_id FROM gangs WHERE owner_player_id = $1`,
-    [req.playerId],
-  );
-  if (!gangRes.rows.length) return res.status(404).json({ error: 'Gang not found' });
-  const fromNodeId = gangRes.rows[0].current_world_node_id;
 
   // Vehicles must be owned, intact, and not already out on a deployment.
   const vRes = await db.query(
@@ -114,7 +108,7 @@ deployRouter.post('/', requireAuth, async (req: AuthRequest, res) => {
   }
   const driverIds: string[] = dRes.rows.map(r => r.id);
 
-  const seconds = deploymentSeconds(fromNodeId, zoneId, region);
+  const seconds = deploymentSeconds(fromNodeId, zoneId, world);
 
   const ins = await db.query(
     `INSERT INTO squad_deployments (player_id, zone_id, assignment, driver_ids, vehicle_ids, resolves_at)
@@ -165,8 +159,9 @@ export async function resolveDueDeployments(playerId: string): Promise<void> {
   );
   if (!due.rows.length) return;
 
-  const region = getRegion(REGION_ID);
-  if (!region) return;
+  const worldCtx = await getWorldForGang(db, playerId);
+  if (!worldCtx) return;
+  const { world } = worldCtx;
 
   const gangRes = await db.query(
     `SELECT g.id AS gang_id, p.division
@@ -201,14 +196,14 @@ export async function resolveDueDeployments(playerId: string): Promise<void> {
         rival: undefined, isJob: true, jobId: jr.id,
       };
     } else {
-      const node = region.nodes.find(n => n.id === dep.zone_id);
+      const node = world.settlements.find(s => s.id === dep.zone_id);
       if (!node) continue;
-      const difficulty = zoneDifficulty(node, region);
+      const difficulty = zoneDifficulty(node, world);
 
-      // Engage a rival when the stakes are high: an arena node, a tough zone, or
-      // a raid. Otherwise the squad clashes with anonymous NPC scavengers.
+      // Engage a rival when the stakes are high: a tough zone or a raid.
+      // Otherwise the squad clashes with anonymous NPC scavengers.
       let rival: { id: string; name: string } | undefined;
-      const wantRival = node.kind === 'arena' || difficulty >= 6 || assignment === 'raid';
+      const wantRival = difficulty >= 6 || assignment === 'raid';
       if (wantRival && gangId) {
         const picked = await pickRivalForMatch(db, gangId, division);
         if (picked) rival = { id: picked.id, name: picked.name };
@@ -217,8 +212,8 @@ export async function resolveDueDeployments(playerId: string): Promise<void> {
         difficulty, basePayout: basePayout(difficulty, assignment), placeName: node.name, summaryPlace: node.name,
         zoneIdForReport: dep.zone_id, isJob: false, rival,
         encounter: rival
-          ? `${rival.name} ${node.kind === 'arena' ? 'in the arena' : 'patrol'}`
-          : `${node.kind === 'arena' ? 'arena challengers' : 'roadside scavengers'} near ${node.name}`,
+          ? `${rival.name} patrol`
+          : `roadside scavengers near ${node.name}`,
       };
     }
 

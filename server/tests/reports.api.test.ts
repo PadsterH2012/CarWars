@@ -34,10 +34,14 @@ describe('after-action reports API', () => {
     const vehicleId = starter.body.vehicleId as string;
 
     // Deploy, then force the deployment due so it resolves into a report.
+    const worldRes = await request(app).get('/api/world/map').set('Authorization', `Bearer ${token}`);
+    expect(worldRes.status).toBe(200);
+    const zoneId = worldRes.body.settlements[0].id as string;
+
     const dep = await request(app)
       .post('/api/deploy')
       .set('Authorization', `Bearer ${token}`)
-      .send({ zoneId: 'fort-grimm', vehicleIds: [vehicleId], assignment: 'raid' });
+      .send({ zoneId, vehicleIds: [vehicleId], assignment: 'raid' });
     expect(dep.status).toBe(201);
     await db.query(`UPDATE squad_deployments SET resolves_at = NOW() - interval '1 second' WHERE id = $1`, [dep.body.deploymentId]);
 
