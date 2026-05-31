@@ -87,7 +87,8 @@ export class GarageScene extends Phaser.Scene {
     this.division = me.division ?? 0;
     this.selectedVehicleId = me.selected_vehicle_id ?? '';
     this.selectedDriverId = me.selected_driver_id ?? '';
-    this.playerAttributes = me.attributes ?? { st: 10, dx: 10, iq: 10, ht: 10 };
+    const rawAttrs = me.attributes ?? {};
+    this.playerAttributes = { st: rawAttrs.st ?? 10, dx: rawAttrs.dx ?? 10, iq: rawAttrs.iq ?? 10, ht: rawAttrs.ht ?? 10 };
     this.playerXpPool = me.xp_pool ?? 0;
     this.vehicles = await vRes.json();
     this.drivers = await dRes.json();
