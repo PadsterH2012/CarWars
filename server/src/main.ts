@@ -1,12 +1,15 @@
 import http from 'http';
 import { createApp } from './app';
 import { attachWss } from './ws/handler';
-import { getDb } from './db/client';
+import { getDb, migrateGeneratedWorlds } from './db/client';
 
 async function start() {
   // Reset any vehicles left in_arena from a previous crash
   const db = getDb();
   await db.query(`UPDATE vehicles SET in_arena = FALSE WHERE in_arena = TRUE`);
+
+  // One-time migration: generate worlds for any gangs that pre-date Phase 5a
+  await migrateGeneratedWorlds();
 
   const app = createApp();
   const server = http.createServer(app);
