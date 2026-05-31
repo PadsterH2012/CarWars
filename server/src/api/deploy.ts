@@ -325,6 +325,24 @@ export async function resolveDueDeployments(playerId: string): Promise<void> {
         await client.query('UPDATE jobs SET completed = TRUE WHERE id = $1', [ctx.jobId]);
       }
 
+      // Write zone influence for territory deployments
+      if (!ctx.isJob && dep.zone_id && gangId) {
+        const INFLUENCE_BY_OUTCOME: Record<string, number> = {
+          success: 5, partial: 2, failure: 0, routed: -3,
+        };
+        const influenceDelta = INFLUENCE_BY_OUTCOME[result.outcome] ?? 0;
+        if (influenceDelta !== 0) {
+          await client.query(
+            `INSERT INTO zone_influence (settlement_id, gang_id, influence)
+             VALUES ($1, $2, $3)
+             ON CONFLICT (settlement_id, gang_id) DO UPDATE
+               SET influence = GREATEST(0, zone_influence.influence + $3),
+                   last_action_at = NOW()`,
+            [dep.zone_id, gangId, influenceDelta],
+          );
+        }
+      }
+
       if (gangId) {
         await client.query(
           `INSERT INTO gang_ledger (gang_id, event_type, amount, description, result)
