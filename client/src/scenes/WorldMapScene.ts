@@ -1,5 +1,5 @@
 import Phaser from "phaser";
-import type { WorldRegion, WorldNode, WorldRoad } from "@carwars/shared";
+import type { GeneratedWorld, GeneratedSettlement, GeneratedRoad } from "@carwars/shared";
 import { bindFullscreenToggle, onLayout } from "../ui/responsive";
 
 const C_ROAD_HIGHWAY  = 0x555566;
@@ -18,19 +18,17 @@ const C_CURRENT_RING = 0x00ff88;
 const C_HOVER_RING   = 0xffffff;
 const C_PANEL_BG     = 0x0f0f18;
 
-function nodeColour(kind: WorldNode["kind"]): number {
+function nodeColour(kind: GeneratedSettlement["kind"]): number {
   switch (kind) {
-    case "city":       return C_NODE_CITY;
-    case "town":       return C_NODE_TOWN;
-    case "truck_stop": return C_NODE_TRUCK_STOP;
-    case "arena":      return C_NODE_ARENA;
-    case "garage":     return C_NODE_GARAGE;
-    case "market":     return C_NODE_MARKET;
-    default:           return 0xaaaaaa;
+    case "city":    return C_NODE_CITY;
+    case "town":    return C_NODE_TOWN;
+    case "village": return C_NODE_TRUCK_STOP;   // reuse warm amber
+    case "outpost": return 0x996633;             // brown
+    default:        return 0xaaaaaa;
   }
 }
 
-function roadColour(kind: WorldRoad["roadType"]): number {
+function roadColour(kind: GeneratedRoad["roadType"]): number {
   switch (kind) {
     case "highway": return C_ROAD_HIGHWAY;
     case "urban":   return C_ROAD_URBAN;
@@ -40,7 +38,7 @@ function roadColour(kind: WorldRoad["roadType"]): number {
   }
 }
 
-function roadWidth(kind: WorldRoad["roadType"]): number {
+function roadWidth(kind: GeneratedRoad["roadType"]): number {
   switch (kind) {
     case "highway":  return 4;
     case "urban":    return 3;
@@ -79,8 +77,8 @@ function fmtEta(seconds: number): string {
 
 class WorldMapScene extends Phaser.Scene {
   private token = "";
-  private region: WorldRegion | null = null;
-  private currentNodeId = "midville-city";
+  private region: GeneratedWorld | null = null;
+  private currentNodeId = "";
 
   private roadGraphics!: Phaser.GameObjects.Graphics;
   private nodeContainer!: Phaser.GameObjects.Container;
@@ -157,7 +155,7 @@ class WorldMapScene extends Phaser.Scene {
   private async fetchRegion(): Promise<void> {
     try {
       const host = window.location.hostname;
-      const res = await fetch(`http://${host}:3001/api/world/regions/midville`, {
+      const res  = await fetch(`http://${host}:3001/api/world/map`, {
         headers: { Authorization: `Bearer ${this.token}` },
       });
       if (!res.ok) throw new Error("HTTP " + res.status);
@@ -184,9 +182,9 @@ class WorldMapScene extends Phaser.Scene {
   }
 
   private computeTransform(): void {
-    if (!this.region || this.region.nodes.length === 0) return;
-    const xs = this.region.nodes.map(n => n.x);
-    const ys = this.region.nodes.map(n => n.y);
+    if (!this.region || this.region.settlements.length === 0) return;
+    const xs = this.region.settlements.map(n => n.x);
+    const ys = this.region.settlements.map(n => n.y);
     const minX = Math.min(...xs);
     const maxX = Math.max(...xs);
     const minY = Math.min(...ys);
@@ -209,8 +207,8 @@ class WorldMapScene extends Phaser.Scene {
     if (!this.region) return;
     this.roadGraphics.clear();
     for (const road of this.region.roads) {
-      const a = this.region.nodes.find(n => n.id === road.from);
-      const b = this.region.nodes.find(n => n.id === road.to);
+      const a = this.region.settlements.find(n => n.id === road.from);
+      const b = this.region.settlements.find(n => n.id === road.to);
       if (!a || !b) continue;
       const p = this.toScreen(a.x, a.y);
       const q = this.toScreen(b.x, b.y);
@@ -223,7 +221,7 @@ class WorldMapScene extends Phaser.Scene {
     if (!this.region) return;
     this.nodeContainer.removeAll(true);
     this.nodeMap.clear();
-    for (const node of this.region.nodes) {
+    for (const node of this.region.settlements) {
       const pos = this.toScreen(node.x, node.y);
       const c = this.add.container(pos.x, pos.y);
       const r = node.kind === "city" ? 14 : 10;
@@ -268,7 +266,7 @@ class WorldMapScene extends Phaser.Scene {
     this.time.delayedCall(2500, () => { t.destroy(); this.uiObjects = this.uiObjects.filter(x => x !== t); });
   }
 
-  private onNodeClick(node: WorldNode): void {
+  private onNodeClick(node: GeneratedSettlement): void {
     if (node.id === this.currentNodeId) { this.closeTravelPanel(); return; }
     const road = this.findRoad(this.currentNodeId, node.id);
     if (!road) { this.closeTravelPanel(); return; }
@@ -276,11 +274,11 @@ class WorldMapScene extends Phaser.Scene {
     this.openTravelPanel(node, road);
   }
 
-  private findRoad(a: string, b: string): WorldRoad | undefined {
+  private findRoad(a: string, b: string): GeneratedRoad | undefined {
     return this.region?.roads.find(r => (r.from === a && r.to === b) || (r.from === b && r.to === a));
   }
 
-  private openTravelPanel(node: WorldNode, road: WorldRoad): void {
+  private openTravelPanel(node: GeneratedSettlement, road: GeneratedRoad): void {
     this.closeTravelPanel();
     const pw = 280, ph = 214;
     const px = (this.scale.width - pw) / 2, py = (this.scale.height - ph) / 2;
@@ -307,13 +305,13 @@ class WorldMapScene extends Phaser.Scene {
     this.uiObjects.push(panel);
   }
 
-  private nodeHasArena(node: WorldNode): boolean {
-    return node.kind === "arena" || (node.services ?? []).includes("arena");
+  private nodeHasArena(node: GeneratedSettlement): boolean {
+    return (node.services ?? []).includes("arena");
   }
 
   // Assignment a squad takes at a node when delegated: raids for arenas, jobs
   // where work is posted, otherwise a patrol.
-  private deployAssignment(node: WorldNode): "patrol" | "job" | "raid" {
+  private deployAssignment(node: GeneratedSettlement): "patrol" | "job" | "raid" {
     if (this.nodeHasArena(node)) return "raid";
     if ((node.services ?? []).includes("jobs")) return "job";
     return "patrol";
@@ -371,7 +369,7 @@ class WorldMapScene extends Phaser.Scene {
   // Deploy panel (Phase 4, reworked for issue #7). Shows the squad composition
   // — each vehicle, its armour, and its crew — with the eligible ones toggled
   // on by default (capped at 4). Arena nodes also offer attending in person.
-  private async openDeployPanel(node: WorldNode): Promise<void> {
+  private async openDeployPanel(node: GeneratedSettlement): Promise<void> {
     this.closeTravelPanel();
     const members = await this.fetchSquadComposition();
     const eligible = members.filter(m => this.isEligible(m));
@@ -490,7 +488,7 @@ class WorldMapScene extends Phaser.Scene {
     });
   }
 
-  private async doDeploy(node: WorldNode, vehicleIds: string[]): Promise<void> {
+  private async doDeploy(node: GeneratedSettlement, vehicleIds: string[]): Promise<void> {
     if (!vehicleIds.length) { this.showFlash("Select at least one crewed vehicle", 0xff4444); return; }
     this.closeTravelPanel();
     try {
@@ -532,7 +530,7 @@ class WorldMapScene extends Phaser.Scene {
           this.showFlash(`Squad returned from ${prev.zoneName} — see Reports`, 0x00ff88);
         }
       }
-      const nameOf = (id: string) => this.region?.nodes.find(n => n.id === id)?.name ?? id;
+      const nameOf = (id: string) => this.region?.settlements.find(n => n.id === id)?.name ?? id;
       this.deployments = inTransit.map(r => ({
         id: r.id,
         zoneId: r.zone_id,
@@ -562,7 +560,7 @@ class WorldMapScene extends Phaser.Scene {
 
     const now = Date.now();
     for (const dep of this.deployments) {
-      const node = this.region?.nodes.find(n => n.id === dep.zoneId);
+      const node = this.region?.settlements.find(n => n.id === dep.zoneId);
       if (!node) continue;
       const pos = this.toScreen(node.x, node.y);
       const remain = Math.max(0, Math.ceil((dep.resolvesAtMs - now) / 1000));
