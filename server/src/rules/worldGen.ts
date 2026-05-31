@@ -3,7 +3,7 @@ import type { GeneratedWorld, GeneratedSettlement, GeneratedRoad, SettlementKind
 export type { GeneratedWorld, GeneratedSettlement, GeneratedRoad };
 
 // ─── Seeded PRNG (mulberry32) ────────────────────────────────────────────────
-function mkRng(seed: number): () => number {
+export function mkRng(seed: number): () => number {
   let s = seed >>> 0;
   return () => {
     s += 0x6D2B79F5;
