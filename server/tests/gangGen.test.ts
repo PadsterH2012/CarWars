@@ -42,10 +42,13 @@ describe('generateGangs', () => {
     );
   });
 
-  it('starting_influence is positive', () => {
+  it('starting_influence is in range 30–49', () => {
     const world = generateWorld(42);
     const gangs = generateGangs(world, 42);
-    gangs.forEach(g => expect(g.starting_influence).toBeGreaterThan(0));
+    gangs.forEach(g => {
+      expect(g.starting_influence).toBeGreaterThanOrEqual(30);
+      expect(g.starting_influence).toBeLessThanOrEqual(49);
+    });
   });
 
   it('treasury is between 5000 and 15000', () => {

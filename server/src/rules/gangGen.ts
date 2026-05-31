@@ -44,11 +44,9 @@ export function generateGangs(world: GeneratedWorld, seed: number): GeneratedGan
   const totalPop  = world.settlements.reduce((s, n) => s + n.population, 0);
   const gangCount = Math.max(4, Math.min(20, Math.floor(Math.sqrt(totalPop / 15000))));
 
-  const totalWeight = world.settlements.reduce((s, n) => s + n.population, 0);
-
   const gangs: GeneratedGang[] = [];
   for (let i = 0; i < gangCount; i++) {
-    let pick   = rng() * totalWeight;
+    let pick   = rng() * totalPop;
     let homeId = world.settlements[0].id;
     for (const s of world.settlements) {
       pick -= s.population;
@@ -62,7 +60,7 @@ export function generateGangs(world: GeneratedWorld, seed: number): GeneratedGan
       secondary_colour:  Math.floor(rng() * 0xffffff),
       starting_influence: 30 + Math.floor(rng() * 20),
       home_settlement_id: homeId,
-      treasury:          5000 + Math.floor(rng() * 10000),
+      treasury:          5000 + Math.floor(rng() * 10001),
     });
   }
 
