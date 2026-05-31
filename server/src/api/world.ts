@@ -1,6 +1,5 @@
 import fs from 'fs';
 import { Router } from 'express';
-import { getRegion, WORLD_REGIONS } from '../rules/world';
 import { requireAuth, AuthRequest } from './middleware';
 import { getDb } from '../db/client';
 import { getWorldForGang } from '../rules/worldLoader';
@@ -28,22 +27,6 @@ worldRouter.get('/map', requireAuth, async (req: AuthRequest, res) => {
     console.error('[world/map]', err);
     return res.status(500).json({ error: 'Internal server error' });
   }
-});
-
-worldRouter.get('/regions', (_req, res) => {
-  const summary = Object.values(WORLD_REGIONS).map(region => ({
-    id: region.id,
-    name: region.name,
-    nodeCount: region.nodes.length,
-    roadCount: region.roads.length,
-  }));
-  res.json(summary);
-});
-
-worldRouter.get('/regions/:id', (req, res) => {
-  const region = getRegion(req.params.id);
-  if (!region) return res.status(404).json({ error: 'Region not found' });
-  return res.json(region);
 });
 
 worldRouter.post('/travel', requireAuth, async (req: AuthRequest, res) => {
