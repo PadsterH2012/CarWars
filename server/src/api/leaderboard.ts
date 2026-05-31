@@ -99,36 +99,67 @@ leaderboardRouter.get('/', requireAuth, async (req: AuthRequest, res) => {
 
 // POST /api/leaderboard/retire — archive the gang, credit retire bonus
 leaderboardRouter.post('/retire', requireAuth, async (req: AuthRequest, res) => {
+  const db = getDb();
+  const client = await db.connect();
   try {
-    const db = getDb();
-    const gangRes = await db.query<{ id: string }>(
-      `SELECT id FROM gangs WHERE owner_player_id = $1`,
+    await client.query('BEGIN');
+
+    const gangRes = await client.query<{
+      id: string; dominant_since: Date | null; retired: boolean;
+    }>(
+      `SELECT id, dominant_since, retired FROM gangs WHERE owner_player_id = $1 FOR UPDATE`,
       [req.playerId],
     );
-    if (!gangRes.rows.length) return res.status(404).json({ error: 'Gang not found' });
-    const gangId = gangRes.rows[0].id;
+    if (!gangRes.rows.length) {
+      await client.query('ROLLBACK');
+      return res.status(404).json({ error: 'Gang not found' });
+    }
+    const gang = gangRes.rows[0];
+
+    if (gang.retired) {
+      await client.query('ROLLBACK');
+      return res.status(400).json({ error: 'Already retired' });
+    }
+    if (
+      !gang.dominant_since ||
+      Date.now() - new Date(gang.dominant_since).getTime() < 3 * 3600 * 1000
+    ) {
+      await client.query('ROLLBACK');
+      return res.status(403).json({ error: 'Not eligible — must hold #1 for 3 hours' });
+    }
 
     // Sum total influence across all settlements for this gang
-    const infRes = await db.query<{ total: number }>(
+    const infRes = await client.query<{ total: number }>(
       `SELECT COALESCE(SUM(influence), 0)::int AS total
          FROM zone_influence WHERE gang_id = $1`,
-      [gangId],
+      [gang.id],
     );
     const totalInfluence = infRes.rows[0]?.total ?? 0;
     const bonus = Math.max(25000, Math.floor(totalInfluence * 10));
 
-    await db.query(
-      `UPDATE gangs SET retired = TRUE, retire_bonus = $1, dominant_since = NULL WHERE id = $2`,
-      [bonus, gangId],
+    // Conditional UPDATE — only touches the row if it hasn't been retired by a concurrent request
+    const updateRes = await client.query(
+      `UPDATE gangs SET retired = TRUE, retire_bonus = $1, dominant_since = NULL
+         WHERE id = $2 AND retired = FALSE RETURNING id`,
+      [bonus, gang.id],
     );
-    await db.query(
+    if (!updateRes.rows.length) {
+      await client.query('ROLLBACK');
+      return res.status(400).json({ error: 'Already retired' });
+    }
+
+    await client.query(
       `UPDATE players SET money = money + $1 WHERE id = $2`,
       [bonus, req.playerId],
     );
 
+    await client.query('COMMIT');
     return res.json({ bonus });
   } catch (err) {
+    await client.query('ROLLBACK');
     console.error('[leaderboard/retire]', err);
     return res.status(500).json({ error: 'Internal server error' });
+  } finally {
+    client.release();
   }
 });
