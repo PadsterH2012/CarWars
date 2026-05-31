@@ -3,6 +3,7 @@ import { Router } from 'express';
 import { getRegion, WORLD_REGIONS } from '../rules/world';
 import { requireAuth, AuthRequest } from './middleware';
 import { getDb } from '../db/client';
+import { getWorldForGang } from '../rules/worldLoader';
 
 export const worldRouter = Router();
 
@@ -16,6 +17,13 @@ function encounterMapId(table: string): string {
   };
   return MAP[table] ?? 'truck-stop';
 }
+
+worldRouter.get('/map', requireAuth, async (req: AuthRequest, res) => {
+  const db  = getDb();
+  const ctx = await getWorldForGang(db, req.playerId!);
+  if (!ctx) return res.status(404).json({ error: 'Gang not found' });
+  return res.json(ctx.world);
+});
 
 worldRouter.get('/regions', (_req, res) => {
   const summary = Object.values(WORLD_REGIONS).map(region => ({

@@ -1,32 +1,60 @@
 import request from 'supertest';
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, afterAll } from 'vitest';
 import { createApp } from '../src/app';
+import { getDb } from '../src/db/client';
 
 const app = createApp();
 
-describe('world API', () => {
-  it('lists available world regions', async () => {
-    const res = await request(app).get('/api/world/regions');
+async function register(suffix: string): Promise<{ token: string; playerId: string }> {
+  const res = await request(app)
+    .post('/api/auth/register')
+    .send({ username: `worldtest-${suffix}`, password: 'testpw123' });
+  if (!res.body.token) throw new Error(`Register failed: ${JSON.stringify(res.body)}`);
+  return { token: res.body.token, playerId: res.body.playerId ?? res.body.id };
+}
+
+const USERS: string[] = [];
+afterAll(async () => {
+  const db = getDb();
+  for (const u of USERS) {
+    await db.query(`DELETE FROM players WHERE username = $1`, [u]);
+  }
+});
+
+describe('GET /api/world/map', () => {
+  it('returns a GeneratedWorld for an authenticated player', async () => {
+    const suffix = `map1-${Date.now()}`;
+    USERS.push(`worldtest-${suffix}`);
+    const { token } = await register(suffix);
+
+    const res = await request(app)
+      .get('/api/world/map')
+      .set('Authorization', `Bearer ${token}`);
 
     expect(res.status).toBe(200);
-    expect(res.body).toEqual([
-      { id: 'midville', name: 'Midville Region', nodeCount: 6, roadCount: 5 },
-    ]);
+    expect(typeof res.body.seed).toBe('number');
+    expect(Array.isArray(res.body.settlements)).toBe(true);
+    expect(res.body.settlements.length).toBeGreaterThan(0);
+    expect(Array.isArray(res.body.roads)).toBe(true);
+    expect(typeof res.body.playerStartSettlementId).toBe('string');
   });
 
-  it('returns full region data by id', async () => {
-    const res = await request(app).get('/api/world/regions/midville');
+  it('is idempotent: calling twice returns the same world', async () => {
+    const suffix = `map2-${Date.now()}`;
+    USERS.push(`worldtest-${suffix}`);
+    const { token } = await register(suffix);
 
-    expect(res.status).toBe(200);
-    expect(res.body.id).toBe('midville');
-    expect(res.body.nodes.map((n: { id: string }) => n.id)).toContain('rustwater-truck-stop');
-    expect(res.body.roads.map((r: { id: string }) => r.id)).toContain('midville-rustwater');
+    const a = await request(app).get('/api/world/map').set('Authorization', `Bearer ${token}`);
+    const b = await request(app).get('/api/world/map').set('Authorization', `Bearer ${token}`);
+
+    expect(a.status).toBe(200);
+    expect(a.body.seed).toBe(b.body.seed);
+    expect(a.body.settlements.map((s: { id: string }) => s.id))
+      .toEqual(b.body.settlements.map((s: { id: string }) => s.id));
   });
 
-  it('returns 404 for unknown region', async () => {
-    const res = await request(app).get('/api/world/regions/nowhere');
-
-    expect(res.status).toBe(404);
-    expect(res.body).toEqual({ error: 'Region not found' });
+  it('returns 401 without auth', async () => {
+    const res = await request(app).get('/api/world/map');
+    expect(res.status).toBe(401);
   });
 });
