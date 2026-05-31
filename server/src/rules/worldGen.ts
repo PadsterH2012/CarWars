@@ -20,12 +20,17 @@ const NAME_PREFIXES = [
   'Dead', 'Bone', 'Rust', 'Grim', 'Slag', 'Tar', 'Sand', 'Cold', 'High',
   'Low', 'Old', 'Gun', 'Blade', 'Crag', 'Fell', 'Gale', 'Hawk', 'Mire',
   'Pale', 'Pike', 'Spur', 'Thorn', 'Vale', 'Wold', 'Yew', 'Zinc',
+  'Smoke', 'Stone', 'Dark', 'Dry', 'Flash', 'Bare', 'Bent', 'Grave',
+  'Hollow', 'Shatter', 'Waste', 'Soot', 'Mud', 'Flint',
 ];
 const NAME_SUFFIXES = [
   'fall', 'gate', 'rock', 'creek', 'ridge', 'peak', 'town', 'burg',
   'vale', 'ford', 'moor', 'haven', 'port', 'watch', 'bridge', 'field',
   'cross', 'hollow', 'run', 'pass', 'way', 'bend', 'bluff', 'cove',
   'dale', 'end', 'grove', 'helm', 'keep', 'lade', 'marsh', 'neck',
+  'side', 'point', 'mouth', 'wall', 'crest', 'draw', 'flat', 'gap',
+  'knoll', 'ledge', 'shelf', 'spit', 'step', 'trace', 'yard', 'bight',
+  'crest', 'gulch',
 ];
 
 function pickName(rng: () => number, used: Set<string>): string {
@@ -47,8 +52,8 @@ function poissonDisc(
 ): { x: number; y: number }[] {
   const pts: { x: number; y: number }[] = [];
   for (let tries = 0; tries < 20000 && pts.length < count; tries++) {
-    const x = Math.round(rng() * width);
-    const y = Math.round(rng() * height);
+    const x = Math.floor(rng() * width);
+    const y = Math.floor(rng() * height);
     if (pts.every(p => Math.hypot(p.x - x, p.y - y) >= minDist)) {
       pts.push({ x, y });
     }
@@ -63,7 +68,7 @@ function capitalPopulation(rng: () => number): number {
   return                   10000 + Math.floor(rng() * 40000);    // 10k-50k
 }
 
-function encounterTable(roadType: RoadType, danger: number): string {
+export function encounterTable(roadType: RoadType, danger: number): string {
   if (roadType === 'mountain') return 'gang-high';
   if (roadType === 'highway')  return danger > 0.4 ? 'highway-medium' : 'highway-low';
   if (roadType === 'urban')    return 'urban-medium';
@@ -76,7 +81,11 @@ export function generateWorld(seed: number): GeneratedWorld {
 
   // ── 1. Capitals ─────────────────────────────────────────────────────────────
   const capitalCount = 4 + Math.floor(rng() * 5);   // 4-8
-  const capitalPts   = poissonDisc(rng, capitalCount, 1000, 1000, 200);
+  let capitalPts = poissonDisc(rng, capitalCount, 1000, 1000, 200);
+  if (capitalPts.length < 4) {
+    // Retry with relaxed minimum distance if the grid was too crowded
+    capitalPts = poissonDisc(rng, capitalCount, 1000, 1000, 120);
+  }
   const settlements: GeneratedSettlement[] = [];
 
   const capitalIds: string[] = capitalPts.map((pt, i) => {
