@@ -200,6 +200,48 @@ driversRouter.post('/:id/spend-xp', async (req: AuthRequest, res) => {
   return res.json({ xpPool: newXpPool, skills: newSkills, skillId, newLevel: currentLevel + 1, cost });
 });
 
+
+// POST /api/drivers/:id/upgrade-attr — spend XP to increase a character attribute
+driversRouter.post('/:id/upgrade-attr', async (req: AuthRequest, res) => {
+  const { attrKey } = req.body;
+  const VALID_ATTRS = ['st', 'dx', 'iq', 'ht'];
+  if (typeof attrKey !== 'string' || !VALID_ATTRS.includes(attrKey)) {
+    return res.status(400).json({ error: 'Invalid attrKey' });
+  }
+
+  const db = getDb();
+  const dRes = await db.query(
+    `SELECT id, xp_pool, attributes, alive FROM drivers WHERE id = $1 AND player_id = $2`,
+    [req.params.id, req.playerId]
+  );
+  if (!dRes.rows.length) return res.status(403).json({ error: 'Driver not found' });
+  const driver = dRes.rows[0];
+  if (!driver.alive) return res.status(409).json({ error: 'Driver is dead' });
+
+  const attrs = driver.attributes ?? {};
+  const currentLevel = attrs[attrKey] ?? 10;
+  const targetLevel = currentLevel + 1;
+
+  if (targetLevel > 20) {
+    return res.status(400).json({ error: 'Maximum attribute level is 20' });
+  }
+
+  const cost = Math.pow(targetLevel, 2) * 10;
+  if (driver.xp_pool < cost) {
+    return res.status(400).json({ error: 'Insufficient XP', cost, xpPool: driver.xp_pool });
+  }
+
+  const newAttrs = { ...attrs, [attrKey]: targetLevel };
+  const newXpPool = driver.xp_pool - cost;
+
+  await db.query(
+    `UPDATE drivers SET xp_pool = $1, attributes = $2 WHERE id = $3`,
+    [newXpPool, JSON.stringify(newAttrs), req.params.id]
+  );
+
+  return res.json({ xpPool: newXpPool, attributes: newAttrs, attrKey, newLevel: targetLevel, cost });
+});
+
 // ─── Hire-list candidate pool ──────────────────────────────────────────────
 
 // Drop any candidates for this player whose expiry has passed. Returns the
