@@ -618,6 +618,11 @@ DO $$ BEGIN
   END IF;
 END $$;
 
+-- World generation: seed and serialized world for each gang
+-- (added 2026-05-31 — Phase 5a world generation, task 5)
+ALTER TABLE gangs ADD COLUMN IF NOT EXISTS world_seed INTEGER;
+ALTER TABLE gangs ADD COLUMN IF NOT EXISTS generated_world JSONB;
+
 -- Player profile expansion: persisted selections + stat counters
 -- (added 2026-05-28 — Player Persistence Plan, task 2)
 DO $$ BEGIN
