@@ -19,10 +19,15 @@ function encounterMapId(table: string): string {
 }
 
 worldRouter.get('/map', requireAuth, async (req: AuthRequest, res) => {
-  const db  = getDb();
-  const ctx = await getWorldForGang(db, req.playerId!);
-  if (!ctx) return res.status(404).json({ error: 'Gang not found' });
-  return res.json(ctx.world);
+  try {
+    const db  = getDb();
+    const ctx = await getWorldForGang(db, req.playerId!);
+    if (!ctx) return res.status(404).json({ error: 'Gang not found' });
+    return res.json(ctx.world);
+  } catch (err) {
+    console.error('[world/map]', err);
+    return res.status(500).json({ error: 'Internal server error' });
+  }
 });
 
 worldRouter.get('/regions', (_req, res) => {
