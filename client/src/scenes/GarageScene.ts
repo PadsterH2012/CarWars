@@ -46,6 +46,9 @@ export class GarageScene extends Phaser.Scene {
   private money = 0;
   private division = 0;
   private unreadReports = 0; // squad after-action reports awaiting the player
+  private unreadActivity = 0;
+  private activityLog: { id: string; description: string; action_type: string; read: boolean }[] = [];
+  private showActivityLog = false;
   private deployments: Deployment[] = []; // squads currently out (in_transit)
   private selectedVehicleId = '';
   private selectedDriverId = '';
@@ -62,12 +65,15 @@ export class GarageScene extends Phaser.Scene {
   init(data: { token: string; justFoughtVehicleId?: string }): void {
     this.token = data.token;
     this.justFoughtVehicleId = data.justFoughtVehicleId ?? '';
+    this.unreadActivity = 0;
+    this.activityLog = [];
+    this.showActivityLog = false;
   }
 
   async create(): Promise<void> {
     const host = window.location.hostname;
 
-    const [meRes, vRes, dRes, gRes, reqRes, bayRes, repRes, depRes] = await Promise.all([
+    const [meRes, vRes, dRes, gRes, reqRes, bayRes, repRes, depRes, actRes] = await Promise.all([
       fetch(`http://${host}:3001/api/me`, { headers: { Authorization: `Bearer ${this.token}` } }),
       fetch(`http://${host}:3001/api/vehicles`, { headers: { Authorization: `Bearer ${this.token}` } }),
       fetch(`http://${host}:3001/api/drivers`, { headers: { Authorization: `Bearer ${this.token}` } }),
@@ -79,6 +85,7 @@ export class GarageScene extends Phaser.Scene {
       fetch(`http://${host}:3001/api/reports/unread-count`, { headers: { Authorization: `Bearer ${this.token}` } }),
       // Active squad deployments (in_transit) for the status panel + ETAs.
       fetch(`http://${host}:3001/api/deploy`, { headers: { Authorization: `Bearer ${this.token}` } }),
+      fetch(`http://${host}:3001/api/territory/activity/unread-count`, { headers: { Authorization: `Bearer ${this.token}` } }),
     ]);
     const me = await meRes.json();
     this.money = me.money ?? 0;
@@ -91,6 +98,16 @@ export class GarageScene extends Phaser.Scene {
     if (reqRes.ok) this.driverRequests = await reqRes.json();
     if (bayRes.ok) this.garage = await bayRes.json();
     if (repRes.ok) this.unreadReports = (await repRes.json()).unread ?? 0;
+    if (actRes?.ok) this.unreadActivity = (await actRes.json()).unread ?? 0;
+    // Fetch activity log if there are unread entries
+    if (this.unreadActivity > 0) {
+      try {
+        const logRes = await fetch(`http://${host}:3001/api/territory/activity`, {
+          headers: { Authorization: `Bearer ${this.token}` },
+        });
+        if (logRes.ok) this.activityLog = (await logRes.json()).entries ?? [];
+      } catch (_e) {}
+    }
     if (depRes.ok) {
       const rows: Deployment[] = await depRes.json();
       // Job deployments surface on the Job Board's "in progress" list (and the
@@ -499,6 +516,26 @@ export class GarageScene extends Phaser.Scene {
       }).setOrigin(0.5));
     }
 
+    // ── Rival activity button + badge ──────────────────────────────────────────
+    const actBtn = this.add.text(reportsBtn.x + reportsBtn.width + 16, navY, '[ACTIVITY]', {
+      color: this.unreadActivity > 0 ? '#ff8888' : '#888888',
+      fontSize: '16px', fontFamily: 'monospace',
+      backgroundColor: this.unreadActivity > 0 ? '#330011' : '#111111',
+      padding: { x: 8, y: 4 },
+    }).setInteractive();
+    actBtn.on('pointerdown', () => {
+      this.showActivityLog = !this.showActivityLog;
+      this.renderGarage();
+    });
+    add(actBtn);
+    if (this.unreadActivity > 0) {
+      const abx = actBtn.x + actBtn.width;
+      add(this.add.circle(abx, navY - 2, 10, 0xff3333).setOrigin(0.5));
+      add(this.add.text(abx, navY - 2, String(this.unreadActivity), {
+        color: '#ffffff', fontSize: '12px', fontFamily: 'monospace', fontStyle: 'bold',
+      }).setOrigin(0.5));
+    }
+
     // ── Garage bay (Phase 3) — storage cap, repair discount, passive income ──
     const bayY = navY - 36;
     const maxV = this.garage?.maxVehicles ?? 1;
@@ -534,6 +571,49 @@ export class GarageScene extends Phaser.Scene {
     add(this.add.text(rightX - 140, height - 30, '[F] Fullscreen', {
       color: '#555', fontSize: '11px', fontFamily: 'monospace'
     }).setOrigin(0, 0.5));
+
+    // ── "While you were away" activity log panel ───────────────────────────────
+    if (this.showActivityLog) {
+      const panelY = navY - 200;
+      const panelW = width - leftX * 2;
+      add(this.add.rectangle(leftX + panelW / 2, panelY + 85, panelW, 170, 0x110011, 0.95).setOrigin(0.5));
+      add(this.add.text(leftX + 8, panelY + 4, '═══ WHILE YOU WERE AWAY ═══', {
+        color: '#ff8888', fontSize: '13px', fontFamily: 'monospace', fontStyle: 'bold',
+      }));
+      const entries = this.activityLog.slice(0, 5);
+      if (!entries.length) {
+        add(this.add.text(leftX + 8, panelY + 26, '  No recent rival activity.', {
+          color: '#666666', fontSize: '12px', fontFamily: 'monospace',
+        }));
+      } else {
+        entries.forEach((e, i) => {
+          const col = e.action_type === 'attack' ? '#ff4444'
+            : e.action_type === 'harass' ? '#ffaa44'
+            : '#aaaaff';
+          add(this.add.text(leftX + 8, panelY + 26 + i * 20, `  ${e.description}`, {
+            color: col, fontSize: '12px', fontFamily: 'monospace',
+          }));
+        });
+      }
+      if (this.unreadActivity > 0) {
+        const ackBtn = this.add.text(leftX + 8, panelY + 136, '[ACKNOWLEDGE — mark all read]', {
+          color: '#ffddaa', fontSize: '13px', fontFamily: 'monospace',
+          backgroundColor: '#332200', padding: { x: 6, y: 3 },
+        }).setInteractive();
+        ackBtn.on('pointerdown', async () => {
+          const h = window.location.hostname;
+          await fetch(`http://${h}:3001/api/territory/activity/read-all`, {
+            method: 'POST',
+            headers: { Authorization: `Bearer ${this.token}` },
+          });
+          this.unreadActivity = 0;
+          this.activityLog = [];
+          this.showActivityLog = false;
+          this.renderGarage();
+        });
+        add(ackBtn);
+      }
+    }
   }
 
   // Buy a garage bay ($50k). On success, restart the scene so the storage cap,
