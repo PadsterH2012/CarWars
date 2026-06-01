@@ -1,7 +1,8 @@
 import Phaser from 'phaser';
 import { paintEmblem, EMBLEM_IDS, type EmblemId } from '../game/CoatOfArms';
-import { bindFullscreenToggle, onLayout } from '../ui/responsive';
+import { bindFullscreenToggle } from '../ui/responsive';
 import { preloadVehicleSprites, bodySpriteKey } from '../game/VehicleSprite';
+import { esc, renderInto, buildSidebarHTML, createHubRoot, wireNavigation, showToast, SidebarOpts } from '../ui/hub';
 
 type AvailabilityStatus = 'available' | 'deployed' | 'on_job' | 'in_arena' | 'wounded';
 interface Vehicle { id: string; name: string; value: number; damage_state: any; loadout: any; in_arena?: boolean; status?: AvailabilityStatus; remainingSeconds?: number; deploymentZone?: string | null; }
@@ -56,8 +57,9 @@ export class GarageScene extends Phaser.Scene {
   private playerRank = 0;
   private totalGangs = 0;
   private endgame = false;
-  // Container for everything the main garage screen paints — we wipe + repaint on resize
-  private mainLayer!: Phaser.GameObjects.Container;
+  private root!: HTMLDivElement;
+  private sidebarEl!: HTMLElement;
+  private mainEl!: HTMLElement;
 
   constructor() { super({ key: 'GarageScene' }); }
 
@@ -129,550 +131,59 @@ export class GarageScene extends Phaser.Scene {
       this.endgame    = lb.endgame ?? false;
     }
 
-    this.mainLayer = this.add.container(0, 0);
+    // Build DOM overlay
+    this.root = createHubRoot(this);
+
+    const sidebar = document.createElement('nav');
+    sidebar.className = 'sidebar';
+    this.sidebarEl = sidebar;
+
+    this.mainEl = document.createElement('div');
+    this.mainEl.className = 'main';
+
+    this.root.appendChild(sidebar);
+    this.root.appendChild(this.mainEl);
+
+    this.rebuildSidebar();
+    this.rebuildMain();
+
+    wireNavigation(this.root, this, this.token);
+    this.root.addEventListener('click', this.onClick.bind(this));
+
+    // Close modals on Escape
+    this.input.keyboard?.on('keydown-ESC', () => {
+      this.root.querySelectorAll('.modal-overlay.open').forEach(m => m.classList.remove('open'));
+    });
 
     bindFullscreenToggle(this);
-    onLayout(this, () => this.renderGarage());
   }
 
   private renderGarage(): void {
-    this.mainLayer.removeAll(true);
-    const { width, height } = this.scale;
-    const cx = width / 2;
-    const leftX = Math.max(60, width * 0.07);
-    const rightX = Math.min(width - 60, width * 0.93);
-    const add = (obj: Phaser.GameObjects.GameObject) => { this.mainLayer.add(obj); return obj; };
+    // migrated to HTML overlay
+  }
 
-    add(this.add.text(cx, 30, 'GARAGE', {
-      color: '#ff4444', fontSize: '28px', fontFamily: 'monospace', fontStyle: 'bold'
-    }).setOrigin(0.5));
-
-    if (this.gang) {
-      const key = `gang-emblem-header`;
-      this.renderEmblemTexture(key, this.gang.emblem_id, this.gang.primary_colour, this.gang.secondary_colour, 32);
-      add(this.add.image(leftX, 70, key).setOrigin(0, 0.5).setDisplaySize(32, 32));
-      const nameBtn = this.add.text(leftX + 40, 70, this.gang.name, {
-        color: '#ffffff', fontSize: '18px', fontFamily: 'monospace', fontStyle: 'bold'
-      }).setOrigin(0, 0.5).setInteractive();
-      nameBtn.on('pointerdown', () => this.showGangSettings());
-      add(nameBtn);
-      const rankSuffix = this.playerRank > 0 && this.totalGangs > 0
-        ? `  |  Rank #${this.playerRank}/${this.totalGangs}` : '';
-      add(this.add.text(leftX, 100, `Treasury: $${this.gang.treasury.toLocaleString()} | Rep: ${this.gang.reputation} | Division: ${this.division}${rankSuffix}`, {
-        color: '#ffcc00', fontSize: '14px', fontFamily: 'monospace'
-      }));
-    } else {
-      add(this.add.text(leftX, 70, `Money: $${this.money.toLocaleString()} | Division: ${this.division}`, {
-        color: '#ffcc00', fontSize: '16px', fontFamily: 'monospace'
-      }));
-    }
-
-    if (this.endgame) {
-      const banner = this.add.text(cx, 122,
-        '★  YOU ARE THE DOMINANT POWER IN THE REGION  ★', {
-          color: '#ffdd00', fontSize: '15px', fontFamily: 'monospace', fontStyle: 'bold',
-          backgroundColor: '#332200', padding: { x: 12, y: 6 },
-        }).setOrigin(0.5);
-      add(banner);
-      const retBtn = this.add.text(banner.x + banner.width / 2 + 12, 122,
-        '[RETIRE]', {
-          color: '#ffcc00', fontSize: '15px', fontFamily: 'monospace',
-          backgroundColor: '#332200', padding: { x: 8, y: 6 },
-        }).setOrigin(0, 0.5).setInteractive();
-      retBtn.on('pointerdown', () => this.scene.start('LeaderboardScene', { token: this.token }));
-      add(retBtn);
-    }
-
-    const activeJobId = localStorage.getItem('cw_active_job');
-    const activeJobDesc = localStorage.getItem('cw_active_job_desc');
-    const activeJobPayout = localStorage.getItem('cw_active_job_payout');
-    if (activeJobId && activeJobDesc) {
-      add(this.add.text(leftX, 128, `Active job: ${activeJobDesc} — $${Number(activeJobPayout).toLocaleString()} on win`, {
-        color: '#ffcc00', fontSize: '13px', fontFamily: 'monospace'
-      }));
-    }
-
-    // Split into two columns: vehicle list on the left, crew panel on the right
-    const crewX = Math.min(width - 340, rightX - 280);
-    const vehicleListMaxX = crewX - 40;
-
-    if (this.vehicles.length === 0) {
-      add(this.add.text(cx, height * 0.38, 'No vehicles yet!', {
-        color: '#888888', fontSize: '18px', fontFamily: 'monospace'
-      }).setOrigin(0.5));
-      const claimBtn = this.add.text(cx, height * 0.48, '[ CLAIM STARTER CAR ]', {
-        color: '#00ff88', fontSize: '18px', fontFamily: 'monospace',
-        backgroundColor: '#003322', padding: { x: 16, y: 8 }
-      }).setOrigin(0.5).setInteractive();
-      claimBtn.on('pointerdown', async () => {
-        const host = window.location.hostname;
-        const res = await fetch(`http://${host}:3001/api/me/claim-starter`, {
-          method: 'POST',
-          headers: { Authorization: `Bearer ${this.token}` },
-        });
-        if (res.ok) {
-          this.scene.restart({ token: this.token });
-        } else {
-          const err = await res.json();
-          console.error('Claim failed:', err.error);
-          claimBtn.setAlpha(0.3);
-        }
-      });
-      add(claimBtn);
-    } else {
-      const driverByVid = new Map<string, Driver>();
-      for (const d of this.drivers) {
-        if (d.alive && d.assigned_vehicle_id) driverByVid.set(d.assigned_vehicle_id, d);
-      }
-
-      const thumbBoxW = 42, thumbBoxH = 64;
-      const textX = leftX + thumbBoxW + 10;
-      this.vehicles.forEach((v, i) => {
-        const y = 160 + i * 80;
-        const ds = v.damage_state ?? {};
-        const isDestroyed = ds.destroyed;
-        const nameColor = isDestroyed ? '#ff4444' : '#00ff88';
-
-        // Highlight the persisted "currently selected" vehicle row so the
-        // player sees their last choice survived the page reload.
-        if (v.id === this.selectedVehicleId) {
-          const hl = this.add.rectangle(leftX - 6, y - 6, vehicleListMaxX - leftX + 12, 76, 0x224422, 0.35)
-            .setOrigin(0, 0)
-            .setStrokeStyle(1, 0x44aa44, 0.7);
-          add(hl);
-        }
-
-        // Just fought indicator — visible fresh from ResultScene, clears on next render
-        if (v.id === this.justFoughtVehicleId) {
-          const badge = this.add.text(leftX - 4, y - 4, "⚡ JUST FOUGHT", {
-            fontSize: "11px", color: "#ffaa00", fontFamily: "monospace", fontStyle: "bold",
-            backgroundColor: "#332200", padding: { x: 6, y: 3 },
-          }).setOrigin(0, 0);
-          add(badge);
-        }
-
-        // Thumbnail — body PNG tinted with the gang's primary colour so each
-        // vehicle reads at a glance as a cycle / pickup / bus etc.
-        const spriteKey = `body_${bodySpriteKey(v.loadout?.bodyType)}`;
-        if (this.textures.exists(spriteKey)) {
-          const src = this.textures.get(spriteKey).getSourceImage() as HTMLImageElement;
-          const scale = Math.min(thumbBoxW / src.width, thumbBoxH / src.height);
-          const thumb = this.add.image(leftX + thumbBoxW / 2, y + 28, spriteKey)
-            .setOrigin(0.5)
-            .setScale(scale);
-          if (this.gang) thumb.setTint(this.gang.primary_colour);
-          if (isDestroyed) thumb.setTint(0x555555);
-          add(thumb);
-        }
-
-        const nameText = this.add.text(textX, y, `${v.name}`, { color: nameColor, fontSize: '16px', fontFamily: 'monospace' }).setInteractive();
-        nameText.on('pointerdown', () => {
-          this.persistSelection(v.id, driver?.id ?? null);
-          this.time.delayedCall(0, () => this.renderGarage());
-        });
-        add(nameText);
-        add(this.add.text(textX + 230, y, `$${v.value.toLocaleString()}`, { color: '#888888', fontSize: '14px', fontFamily: 'monospace' }));
-
-        // Availability dot on the thumbnail corner: green=idle, amber=deployed,
-        // orange=on a job, blue=in arena. Destroyed cars keep their red name.
-        const vStatus: AvailabilityStatus = v.status ?? 'available';
-        if (!isDestroyed) {
-          add(this.add.circle(leftX + thumbBoxW - 2, y + 4, 5, STATUS_DOT[vStatus] ?? 0x00ff88).setStrokeStyle(1, 0x000000, 0.6));
-        }
-
-        const driver = driverByVid.get(v.id);
-        let driverStr = driver ? `Driver: ${driver.name} (sk${driver.skill})` : '\u26A0 NO DRIVER';
-        if (vStatus === 'deployed') driverStr += `  \u00B7 DEPLOYED ${fmtRemaining(v.remainingSeconds ?? 0)}`;
-        else if (vStatus === 'on_job') driverStr += `  \u00B7 ON JOB ${fmtRemaining(v.remainingSeconds ?? 0)}`;
-        else if (vStatus === 'in_arena') driverStr += '  \u00B7 IN ARENA';
-        const driverColor = (vStatus === 'deployed' || vStatus === 'on_job') ? '#ffaa44' : (driver ? '#88ccff' : '#ffaa44');
-        add(this.add.text(textX, y + 20, driverStr, {
-          color: driverColor, fontSize: '11px', fontFamily: 'monospace'
-        }));
-        const mounts: any[] = v.loadout?.mounts ?? [];
-        const ammoStr = mounts.length
-          ? mounts.map((m: any) => `${m.weaponId ?? '?'}:${m.ammo}`).join(' ')
-          : 'no weapons';
-        const tiresBlow = ds.tiresBlown?.length ?? 0;
-        const tireStr = tiresBlow > 0 ? `  [${tiresBlow} TIRE${tiresBlow > 1 ? 'S' : ''} BLOWN]` : '';
-        const engineStr = ds.engineDamaged ? '  [ENGINE]' : '';
-        add(this.add.text(textX, y + 38, `${ammoStr}${tireStr}${engineStr}`, {
-          color: '#666666', fontSize: '10px', fontFamily: 'monospace'
-        }));
-
-        // Action buttons: REPAIR / WORKSHOP / FIGHT / SELL — right-aligned in the vehicle column
-        const btnTop = y;
-        const btnSpan = Math.min(360, vehicleListMaxX - (leftX + 380));
-        const btn0 = leftX + 380;
-        const btn1 = btn0 + btnSpan * 0.22;
-        const btn2 = btn0 + btnSpan * 0.52;
-        const btn3 = btn0 + btnSpan * 0.84;
-
-        const isHot = v.id === this.justFoughtVehicleId;
-        const repairBtn = this.add.text(btn0, btnTop, isHot ? '[ REPAIR ▲ ]' : '[REPAIR]', {
-          color: isHot ? '#ffdd44' : '#ffcc00', fontSize: isHot ? '13px' : '12px', fontFamily: 'monospace',
-          backgroundColor: isHot ? '#554411' : '#332200', padding: { x: 4, y: 2 }
-        }).setInteractive();
-        repairBtn.on('pointerdown', () => this.repairVehicle(v.id));
-        add(repairBtn);
-
-        const workBtn = this.add.text(btn1, btnTop, '[WORKSHOP]', {
-          color: '#aaccff', fontSize: '12px', fontFamily: 'monospace',
-          backgroundColor: '#112244', padding: { x: 4, y: 2 }
-        });
-        if (!isDestroyed) {
-          workBtn.setInteractive();
-          workBtn.on('pointerdown', () =>
-            this.scene.start('VehicleDesignerScene', { token: this.token, vehicleId: v.id })
-          );
-        }
-        add(workBtn);
-
-        // A vehicle out on a deployment / job / arena match can't start a new fight.
-        const isBusy = vStatus === 'deployed' || vStatus === 'on_job' || vStatus === 'in_arena';
-        const fightLabel = isDestroyed ? '[DESTROYED]' : isBusy ? '[BUSY]' : '[FIGHT]';
-        const fightBtn = this.add.text(btn2, btnTop, fightLabel, {
-          color: (isDestroyed || isBusy) ? '#444444' : '#00ff88',
-          fontSize: '12px', fontFamily: 'monospace',
-          backgroundColor: (isDestroyed || isBusy) ? '#221111' : '#003322',
-          padding: { x: 4, y: 2 }
-        });
-        if (!isDestroyed && !isBusy) {
-          fightBtn.setInteractive();
-          fightBtn.on('pointerdown', () => {
-            this.persistSelection(v.id, driver?.id ?? null);
-            this.showSquadModal(v.id);
-          });
-        }
-        add(fightBtn);
-
-        const sellBtn = this.add.text(btn3, btnTop, '[SELL]', {
-          color: '#ff8844', fontSize: '12px', fontFamily: 'monospace',
-          backgroundColor: '#221100', padding: { x: 4, y: 2 }
-        }).setInteractive();
-        sellBtn.on('pointerdown', () => this.sellVehicle(v.id, v.name));
-        add(sellBtn);
-      });
-    }
-
-    // ── CREW panel ────────────────────────────────────────────────────────
-    add(this.add.text(crewX, 130, 'CREW', {
-      color: '#aaa', fontSize: '13px', fontFamily: 'monospace', fontStyle: 'bold'
-    }));
-    const hireBtn = this.add.text(crewX + 80, 130, '[HIRE DRIVERS...]', {
-      color: '#88ff88', fontSize: '12px', fontFamily: 'monospace',
-      backgroundColor: '#002211', padding: { x: 6, y: 3 },
-    }).setInteractive();
-    hireBtn.on('pointerdown', () => this.hireDriver());
-    add(hireBtn);
-
-    // Driver-request badge — only shown when there are pending requests
-    const CREW_PANEL_W = 280;
-    let firstRowY = 162;
-    if (this.driverRequests.length > 0) {
-      const reqBtn = this.add.text(crewX, 154, `⚠ ${this.driverRequests.length} DRIVER REQUEST${this.driverRequests.length > 1 ? 'S' : ''}`, {
-        color: '#ffcc00', fontSize: '11px', fontFamily: 'monospace',
-        backgroundColor: '#332200', padding: { x: 6, y: 3 },
-      }).setInteractive();
-      reqBtn.on('pointerdown', () => this.showRequestsModal());
-      add(reqBtn);
-      // Push the first driver row below the badge so they don't collide
-      firstRowY = 188;
-    }
-
-    const livingDrivers = this.drivers.filter(d => d.alive);
-    if (livingDrivers.length === 0) {
-      add(this.add.text(crewX, firstRowY, 'No drivers hired.\nHire at least one to\nfield a vehicle in arena.', {
-        color: '#777', fontSize: '11px', fontFamily: 'monospace'
-      }));
-    } else {
-      const ROW_H = 50;
-      livingDrivers.forEach((d, i) => {
-        const y = firstRowY + i * ROW_H;
-        const assignedVehicle = this.vehicles.find(v => v.id === d.assigned_vehicle_id);
-        // Row 1: driver name (left) with status indicator + assignment button (right-aligned).
-        // Availability comes from the server: wounded > on_job (deployment/headless) > idle.
-        let woundStr = '';
-        if (d.wounded && d.wounded_until) {
-          const remaining = new Date(d.wounded_until).getTime() - Date.now();
-          if (remaining > 0) {
-            const mins = Math.ceil(remaining / 60000);
-            woundStr = ' [WOUNDED ' + mins + 'm]';
-          }
-        }
-        const onJob = !woundStr && d.status === 'on_job';
-        const statusStr = woundStr || (onJob ? ` [ON JOB ${fmtRemaining(d.remainingSeconds ?? 0)}]` : '');
-        const dotStatus: AvailabilityStatus = woundStr ? 'wounded' : (onJob ? 'on_job' : 'available');
-        add(this.add.circle(crewX - 10, y + 7, 4, STATUS_DOT[dotStatus]).setStrokeStyle(1, 0x000000, 0.6));
-        const nameBtn = this.add.text(crewX, y, d.name + statusStr, {
-          color: statusStr ? (woundStr ? '#ff4444' : '#ffaa44') : '#ffffff', fontSize: '13px', fontFamily: 'monospace'
-        }).setInteractive();
-        nameBtn.on('pointerdown', () => this.showDriverCard(d));
-        add(nameBtn);
-        const assignStr = assignedVehicle ? `▶ ${assignedVehicle.name}` : 'unassigned';
-        const assignBtn = this.add.text(crewX + CREW_PANEL_W, y, assignStr, {
-          color: assignedVehicle ? '#88ccff' : '#ffaa44', fontSize: '11px', fontFamily: 'monospace',
-          backgroundColor: '#111122', padding: { x: 6, y: 3 }
-        }).setOrigin(1, 0).setInteractive();
-        assignBtn.on('pointerdown', () => this.showAssignDriverMenu(d));
-        add(assignBtn);
-        // Row 2: title · skill · XP (never collides because it's on its own line)
-        const titleLine = d.title
-          ? `${d.title} · sk${d.skill} · ${d.xp} PP${d.xpToNext ? ` (${d.xpToNext} to next)` : ''}`
-          : `skill ${d.skill} · ${d.xp} XP`;
-        add(this.add.text(crewX, y + 18, titleLine, {
-          color: '#888', fontSize: '10px', fontFamily: 'monospace'
-        }));
-        // Subtle divider between rows for scannability (skip after last driver)
-        if (i < livingDrivers.length - 1) {
-          add(this.add.rectangle(crewX, y + 40, CREW_PANEL_W, 1, 0x333344, 0.8).setOrigin(0, 0));
-        }
-      });
-    }
-
-    // ── Active deployments (Phase 4 / issue #7) ──────────────────────────────
-    // Squads currently out on the world map, with live ETAs. Anchored below the
-    // crew list in the right column.
-    if (this.deployments.length > 0) {
-      const depY = firstRowY + Math.max(1, livingDrivers.length) * 50 + 14;
-      add(this.add.text(crewX, depY, `⚙ ACTIVE DEPLOYMENTS (${this.deployments.length})`, {
-        color: '#ffaa44', fontSize: '12px', fontFamily: 'monospace', fontStyle: 'bold'
-      }));
-      this.deployments.slice(0, 4).forEach((dep, i) => {
-        const eta = dep.eta_seconds > 0 ? fmtRemaining(dep.eta_seconds) : 'resolving…';
-        add(this.add.text(crewX, depY + 20 + i * 16, `• ${dep.zone_id} — ${dep.assignment} — ${eta}`, {
-          color: '#ddbb88', fontSize: '11px', fontFamily: 'monospace'
-        }));
-      });
-    }
-
-    // Arena picker + nav buttons — bottom of the screen
-    const MAPS = [
-      { id: 'truck-stop',  label: 'Truck Stop' },
-      { id: 'town-square', label: 'Town Square' },
-      { id: 'open',        label: 'Open Arena' },
-      { id: 'double-drum', label: 'Double Drum' },
-    ];
-    let selectedMap = localStorage.getItem('cw_selected_map') ?? 'truck-stop';
-    if (!MAPS.find(m => m.id === selectedMap)) selectedMap = 'truck-stop';
-
-    const arenaY = height - 180;
-    add(this.add.text(leftX, arenaY, 'ARENA:', {
-      color: '#aaa', fontSize: '13px', fontFamily: 'monospace', fontStyle: 'bold'
-    }));
-    const mapButtons: Phaser.GameObjects.Text[] = [];
-    const refreshMapButtons = () => {
-      mapButtons.forEach((btn, i) => {
-        const isSel = MAPS[i].id === selectedMap;
-        btn.setColor(isSel ? '#00ff88' : '#888');
-        btn.setBackgroundColor(isSel ? '#003322' : '#111122');
-      });
+  private rebuildSidebar(): void {
+    const opts: SidebarOpts = {
+      gangName:      this.gang?.name ?? '',
+      gangColor:     this.gang?.primary_colour ?? 0xff4444,
+      treasury:      this.money ?? 0,
+      reputation:    this.gang?.reputation ?? 0,
+      division:      this.division ?? 1,
+      influence:     (this.gang as any)?.influence ?? 0,
+      reportsBadge:  this.unreadReports ?? 0,
+      activityBadge: this.unreadActivity ?? 0,
+      activeNav:     'garage',
+      token:         this.token,
     };
-    MAPS.forEach((m, i) => {
-      const btn = this.add.text(leftX + 80 + i * 130, arenaY - 2, m.label, {
-        fontSize: '13px', fontFamily: 'monospace',
-        padding: { x: 6, y: 4 },
-      }).setInteractive();
-      btn.on('pointerdown', () => {
-        selectedMap = m.id;
-        localStorage.setItem('cw_selected_map', selectedMap);
-        refreshMapButtons();
-      });
-      mapButtons.push(btn);
-      add(btn);
-    });
-    refreshMapButtons();
+    renderInto(this.sidebarEl, buildSidebarHTML(opts));
+  }
 
-    // Read-only viewer for the currently selected map — renders using the same
-    // pipeline as the live arena, handy for reviewing geometry before matches.
-    const viewBtn = this.add.text(leftX + 80 + MAPS.length * 130 + 10, arenaY - 2, '[VIEW]', {
-      color: '#aaccff', fontSize: '13px', fontFamily: 'monospace',
-      backgroundColor: '#112233', padding: { x: 6, y: 4 },
-    }).setInteractive();
-    viewBtn.on('pointerdown', () => {
-      this.scene.start('MapViewerScene', { token: this.token, mapId: selectedMap });
-    });
-    add(viewBtn);
+  private rebuildMain(): void {
+    renderInto(this.mainEl, '<p style="color:#555;padding:24px;font-family:monospace;font-size:13px">Loading vehicles...</p>');
+  }
 
-    const editBtn = this.add.text(leftX + 80 + MAPS.length * 130 + 80, arenaY - 2, '[EDIT]', {
-      color: '#ffcc88', fontSize: '13px', fontFamily: 'monospace',
-      backgroundColor: '#332211', padding: { x: 6, y: 4 },
-    }).setInteractive();
-    editBtn.on('pointerdown', () => {
-      this.scene.start('MapEditorScene', { token: this.token });
-    });
-    add(editBtn);
-
-    const navY = height - 100;
-    const buildBtn = this.add.text(leftX, navY, '[BUILD NEW CAR]', {
-      color: '#aaaaff', fontSize: '16px', fontFamily: 'monospace',
-      backgroundColor: '#111133', padding: { x: 8, y: 4 }
-    }).setInteractive();
-    buildBtn.on('pointerdown', () => this.scene.start('VehicleDesignerScene', { token: this.token }));
-    add(buildBtn);
-
-    const shopBtn = this.add.text(leftX + 230, navY, '[STOCK SHOP]', {
-      color: '#aaffcc', fontSize: '16px', fontFamily: 'monospace',
-      backgroundColor: '#113322', padding: { x: 8, y: 4 }
-    }).setInteractive();
-    shopBtn.on('pointerdown', () => this.scene.start('ShopScene', { token: this.token }));
-    add(shopBtn);
-
-    const jobsBtn = this.add.text(leftX + 450, navY, '[JOB BOARD]', {
-      color: '#ffaaaa', fontSize: '16px', fontFamily: 'monospace',
-      backgroundColor: '#331111', padding: { x: 8, y: 4 }
-    }).setInteractive();
-    jobsBtn.on('pointerdown', () => this.scene.start('JobBoardScene', { token: this.token }));
-    add(jobsBtn);
-
-    const worldBtn = this.add.text(leftX + 620, navY, '[WORLD MAP]', {
-      color: '#aaffaa', fontSize: '16px', fontFamily: 'monospace',
-      backgroundColor: '#113311', padding: { x: 8, y: 4 }
-    }).setInteractive();
-    worldBtn.on('pointerdown', () => this.scene.start('WorldMapScene', { token: this.token }));
-    add(worldBtn);
-
-    const reportsBtn = this.add.text(leftX + 790, navY, '[REPORTS]', {
-      color: '#ffddaa', fontSize: '16px', fontFamily: 'monospace',
-      backgroundColor: '#332211', padding: { x: 8, y: 4 }
-    }).setInteractive();
-    reportsBtn.on('pointerdown', () => this.scene.start('ReportScene', { token: this.token }));
-    add(reportsBtn);
-    // Unread badge — a red pip with the count, drawn over the button's top-right.
-    if (this.unreadReports > 0) {
-      const bx = reportsBtn.x + reportsBtn.width;
-      add(this.add.circle(bx, navY - 2, 10, 0xff3333).setOrigin(0.5));
-      add(this.add.text(bx, navY - 2, String(this.unreadReports), {
-        color: '#ffffff', fontSize: '12px', fontFamily: 'monospace', fontStyle: 'bold'
-      }).setOrigin(0.5));
-    }
-
-    // ── Rival activity button + badge ──────────────────────────────────────────
-    const actBtn = this.add.text(reportsBtn.x + reportsBtn.width + 16, navY, '[ACTIVITY]', {
-      color: this.unreadActivity > 0 ? '#ff8888' : '#888888',
-      fontSize: '16px', fontFamily: 'monospace',
-      backgroundColor: this.unreadActivity > 0 ? '#330011' : '#111111',
-      padding: { x: 8, y: 4 },
-    }).setInteractive();
-    actBtn.on('pointerdown', () => {
-      this.showActivityLog = !this.showActivityLog;
-      this.renderGarage();
-    });
-    add(actBtn);
-    if (this.unreadActivity > 0) {
-      const abx = actBtn.x + actBtn.width;
-      add(this.add.circle(abx, navY - 2, 10, 0xff3333).setOrigin(0.5));
-      add(this.add.text(abx, navY - 2, String(this.unreadActivity), {
-        color: '#ffffff', fontSize: '12px', fontFamily: 'monospace', fontStyle: 'bold',
-      }).setOrigin(0.5));
-    }
-
-    // ── Leaderboard button ─────────────────────────────────────────────────────
-    const lbBtn = this.add.text(actBtn.x + actBtn.width + 16, navY, '[LEADERBOARD]', {
-      color: this.endgame ? '#ffdd00' : '#8888ff',
-      fontSize: '16px', fontFamily: 'monospace',
-      backgroundColor: this.endgame ? '#332200' : '#111133',
-      padding: { x: 8, y: 4 },
-    }).setInteractive();
-    lbBtn.on('pointerdown', () => this.scene.start('LeaderboardScene', { token: this.token }));
-    add(lbBtn);
-
-    // ── Garage bay (Phase 3) — storage cap, repair discount, passive income ──
-    const bayY = navY - 36;
-    const maxV = this.garage?.maxVehicles ?? 1;
-    const vCount = this.garage?.vehicleCount ?? this.vehicles.length;
-    if (this.garage?.owned) {
-      const pct = Math.round((this.garage.repairDiscount ?? 0) * 100);
-      const earned = this.garage.incomeThisVisit ?? 0;
-      add(this.add.text(leftX, bayY,
-        `GARAGE BAY · Vehicles ${vCount}/${maxV} · ${pct}% repair discount · income $${(this.garage.accumulatedIncome ?? 0).toLocaleString()}` +
-        (earned > 0 ? `  (+$${earned.toLocaleString()})` : ''),
-        { color: '#ffcc00', fontSize: '13px', fontFamily: 'monospace' }));
-    } else {
-      add(this.add.text(leftX, bayY, `Vehicles ${vCount}/${maxV} — buy a garage bay for more space`, {
-        color: '#aaaaaa', fontSize: '13px', fontFamily: 'monospace'
-      }));
-      const buyBtn = this.add.text(leftX + 430, bayY - 4, `[ BUY GARAGE BAY — $${(this.garage?.cost ?? 50000).toLocaleString()} ]`, {
-        color: '#ffcc00', fontSize: '13px', fontFamily: 'monospace',
-        backgroundColor: '#332200', padding: { x: 8, y: 4 }
-      }).setInteractive();
-      buyBtn.on('pointerdown', () => this.purchaseGarageBay(buyBtn));
-      add(buyBtn);
-    }
-
-    const logoutBtn = this.add.text(10, 70, '[LOGOUT]', {
-      color: '#ff6666', fontSize: '13px', fontFamily: 'monospace'
-    }).setOrigin(0, 0.5).setInteractive();
-    logoutBtn.on('pointerdown', () => {
-      localStorage.removeItem('cw_token');
-      this.scene.start('LoginScene');
-    });
-    add(logoutBtn);
-
-    add(this.add.text(rightX - 140, height - 30, '[F] Fullscreen', {
-      color: '#555', fontSize: '11px', fontFamily: 'monospace'
-    }).setOrigin(0, 0.5));
-
-    // ── "While you were away" activity log panel ───────────────────────────────
-    if (this.showActivityLog) {
-      const panelY = navY - 230;
-      const panelW = width - leftX * 2;
-      add(this.add.rectangle(leftX + panelW / 2, panelY + 100, panelW, 200, 0x110011, 0.95).setOrigin(0.5));
-      add(this.add.text(leftX + 8, panelY + 4, '═══ WHILE YOU WERE AWAY ═══', {
-        color: '#ff8888', fontSize: '13px', fontFamily: 'monospace', fontStyle: 'bold',
-      }));
-      const entries = this.activityLog.slice(0, 4);
-      if (!entries.length) {
-        add(this.add.text(leftX + 8, panelY + 26, '  No recent rival activity.', {
-          color: '#666666', fontSize: '12px', fontFamily: 'monospace',
-        }));
-      } else {
-        let entryY = panelY + 26;
-        entries.forEach((e) => {
-          const col = e.action_type === 'attack' ? '#ff4444'
-            : e.action_type === 'harass' ? '#ffaa44'
-            : '#aaaaff';
-          add(this.add.text(leftX + 8, entryY, `  ${e.description}`, {
-            color: col, fontSize: '12px', fontFamily: 'monospace',
-          }));
-          if (e.action_type === 'attack' && !e.resolved) {
-            const defendBtn = this.add.text(leftX + 16, entryY + 14, '[DEFEND]', {
-              color: '#00ff88', fontSize: '11px', fontFamily: 'monospace',
-              backgroundColor: '#003322', padding: { x: 4, y: 2 },
-            }).setInteractive();
-            defendBtn.on('pointerdown', () => this.doDefend(e.id));
-            add(defendBtn);
-            const simBtn = this.add.text(leftX + 94, entryY + 14, '[SIMULATE]', {
-              color: '#ffaa44', fontSize: '11px', fontFamily: 'monospace',
-              backgroundColor: '#332200', padding: { x: 4, y: 2 },
-            }).setInteractive();
-            simBtn.on('pointerdown', () => this.doSimulate(e.id, simBtn));
-            add(simBtn);
-            entryY += 36;
-          } else {
-            entryY += 20;
-          }
-        });
-      }
-      if (this.unreadActivity > 0) {
-        const ackBtn = this.add.text(leftX + 8, panelY + 170, '[ACKNOWLEDGE — mark all read]', {
-          color: '#ffddaa', fontSize: '13px', fontFamily: 'monospace',
-          backgroundColor: '#332200', padding: { x: 6, y: 3 },
-        }).setInteractive();
-        ackBtn.on('pointerdown', async () => {
-          const h = window.location.hostname;
-          await fetch(`http://${h}:3001/api/territory/activity/read-all`, {
-            method: 'POST',
-            headers: { Authorization: `Bearer ${this.token}` },
-          });
-          this.unreadActivity = 0;
-          this.activityLog = [];
-          this.showActivityLog = false;
-          this.renderGarage();
-        });
-        add(ackBtn);
-      }
-    }
+  private onClick(_e: MouseEvent): void {
+    // Filled in by subsequent tasks
   }
 
   private async doDefend(logEntryId: string): Promise<void> {
