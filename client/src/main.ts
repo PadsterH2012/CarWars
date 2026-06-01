@@ -1,3 +1,4 @@
+import './ui/hub.css';
 import Phaser from 'phaser';
 import { LoginScene } from './scenes/LoginScene';
 import { GarageScene } from './scenes/GarageScene';
