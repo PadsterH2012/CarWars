@@ -269,15 +269,15 @@ export class ArenaScene extends Phaser.Scene {
     this.mapGraphics = this.add.graphics().setDepth(1);  // above ground, below vehicles
 
     // Combat log panel — bottom-left, shows the last 6 events
-    this.combatLogHeading = this.add.text(16, 580, 'COMBAT', {
+    this.combatLogHeading = this.add.text(16, this.scale.height - 140, 'COMBAT', {
       fontSize: '11px', color: '#888', fontFamily: 'monospace', fontStyle: 'bold'
     }).setScrollFactor(0).setDepth(20);
-    this.combatLogText = this.add.text(16, 598, '', {
+    this.combatLogText = this.add.text(16, this.scale.height - 122, '', {
       fontSize: '11px', color: '#cccccc', fontFamily: 'monospace',
       backgroundColor: '#000000aa', padding: { x: 6, y: 4 }, lineSpacing: 2,
     }).setScrollFactor(0).setDepth(20);
     // Minimap label (right-edge)
-    this.minimapLabel = this.add.text(1144, 4, 'MAP', {
+    this.minimapLabel = this.add.text(this.scale.width - 136, 4, 'MAP', {
       fontSize: '9px', color: '#666666', fontFamily: 'monospace'
     }).setScrollFactor(0).setDepth(20);
 
