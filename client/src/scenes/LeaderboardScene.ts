@@ -1,5 +1,5 @@
 import Phaser from 'phaser';
-import { bindFullscreenToggle } from '../ui/responsive';
+import { esc, renderInto, buildSidebarHTML, createHubRoot, wireNavigation, showToast, SidebarOpts } from '../ui/hub';
 
 interface LeaderboardEntry {
   rank: number;
@@ -20,10 +20,21 @@ interface LeaderboardData {
   retireBonus: number;
 }
 
+interface Gang {
+  id: string; name: string; primary_colour: number; treasury: number;
+  reputation: number; division?: number; influence?: number;
+}
+
 export class LeaderboardScene extends Phaser.Scene {
   private token = '';
   private data_: LeaderboardData | null = null;
+  private gang: Gang | null = null;
+  private unreadReports = 0;
+  private unreadActivity = 0;
   private retiring = false;
+  private root!: HTMLDivElement;
+  private sidebarEl!: HTMLElement;
+  private mainEl!: HTMLElement;
 
   constructor() { super({ key: 'LeaderboardScene' }); }
 
@@ -35,132 +46,135 @@ export class LeaderboardScene extends Phaser.Scene {
 
   async create(): Promise<void> {
     const host = window.location.hostname;
-    try {
-      const res = await fetch(`http://${host}:3001/api/leaderboard`, {
-        headers: { Authorization: `Bearer ${this.token}` },
-      });
-      if (res.ok) this.data_ = await res.json();
-    } catch (_e) {}
+    const headers = { Authorization: `Bearer ${this.token}` };
 
-    bindFullscreenToggle(this);
-    this.render();
+    const [lbRes, gangRes, repRes, actRes] = await Promise.all([
+      fetch(`http://${host}:3001/api/leaderboard`, { headers }),
+      fetch(`http://${host}:3001/api/gangs/mine`, { headers }),
+      fetch(`http://${host}:3001/api/reports/unread-count`, { headers }),
+      fetch(`http://${host}:3001/api/territory/activity/unread-count`, { headers }),
+    ]);
+
+    if (lbRes.ok) this.data_ = await lbRes.json();
+    if (gangRes.ok) this.gang = await gangRes.json();
+    if (repRes.ok) this.unreadReports = (await repRes.json()).unread ?? 0;
+    if (actRes.ok) this.unreadActivity = (await actRes.json()).unread ?? 0;
+
+    this.root = createHubRoot(this);
+
+    this.sidebarEl = document.createElement('nav');
+    this.sidebarEl.className = 'sidebar';
+
+    this.mainEl = document.createElement('div');
+    this.mainEl.className = 'main';
+
+    this.root.appendChild(this.sidebarEl);
+    this.root.appendChild(this.mainEl);
+
+    this.rebuild();
+    wireNavigation(this.root, this, this.token);
+    this.root.addEventListener('click', this.onClick);
   }
 
-  private render(): void {
-    this.children.removeAll(true);
-    const { width, height } = this.scale;
-    const cx   = width / 2;
-    const left = Math.max(60, width * 0.12);
-
-    this.add.text(cx, 32, 'TERRITORY LEADERBOARD', {
-      color: '#ff4444', fontSize: '28px', fontFamily: 'monospace', fontStyle: 'bold',
-    }).setOrigin(0.5);
-
-    if (!this.data_) {
-      this.add.text(cx, height / 2, 'Loading...', {
-        color: '#888888', fontSize: '16px', fontFamily: 'monospace',
-      }).setOrigin(0.5);
-    } else {
-      const d = this.data_;
-
-      // Endgame banner
-      if (d.endgame && !d.retired) {
-        const banner = this.add.text(cx, 75,
-          '★  YOU ARE THE DOMINANT POWER IN THE REGION  ★', {
-            color: '#ffdd00', fontSize: '18px', fontFamily: 'monospace', fontStyle: 'bold',
-            backgroundColor: '#332200', padding: { x: 16, y: 8 },
-          }).setOrigin(0.5);
-
-        const retireBtn = this.add.text(cx, 115,
-          '[ RETIRE YOUR GANG ]', {
-            color: this.retiring ? '#888888' : '#ffcc00',
-            fontSize: '16px', fontFamily: 'monospace',
-            backgroundColor: this.retiring ? '#222222' : '#332200',
-            padding: { x: 12, y: 6 },
-          }).setOrigin(0.5).setInteractive();
-        retireBtn.on('pointerdown', () => this.doRetire(retireBtn));
-      } else if (d.retired) {
-        this.add.text(cx, 80, `RETIRED — bonus $${d.retireBonus.toLocaleString()} credited to treasury`, {
-          color: '#888888', fontSize: '14px', fontFamily: 'monospace',
-        }).setOrigin(0.5);
-      }
-
-      const startY = (d.endgame || d.retired) ? 150 : 85;
-      const rowH   = 36;
-
-      // Header row
-      this.add.text(left,        startY, 'RANK', { color: '#555', fontSize: '13px', fontFamily: 'monospace' });
-      this.add.text(left + 70,   startY, 'GANG',  { color: '#555', fontSize: '13px', fontFamily: 'monospace' });
-      this.add.text(left + 380,  startY, 'INFLUENCE', { color: '#555', fontSize: '13px', fontFamily: 'monospace' });
-      this.add.text(left + 500,  startY, 'ZONES', { color: '#555', fontSize: '13px', fontFamily: 'monospace' });
-
-      this.add.rectangle(left, startY + 16, width - left * 2, 1, 0x333333).setOrigin(0, 0.5);
-
-      d.entries.forEach((entry, i) => {
-        const y        = startY + 24 + (i + 1) * rowH;
-        const isPlayer = entry.isPlayer;
-        const rowColor = isPlayer ? '#ffdd00' : '#cccccc';
-
-        if (isPlayer) {
-          this.add.rectangle(left - 8, y - 14, width - left * 2 + 16, rowH - 2, 0x332200, 0.5)
-            .setOrigin(0, 0)
-            .setStrokeStyle(1, 0xffdd00, 0.6);
-        }
-
-        // Rank
-        this.add.text(left, y, `#${entry.rank}`, {
-          color: isPlayer ? '#ffdd00' : '#888888',
-          fontSize: '15px', fontFamily: 'monospace', fontStyle: isPlayer ? 'bold' : 'normal',
-        });
-
-        // Colour swatch
-        this.add.circle(left + 58, y + 8, 7, entry.primaryColour);
-
-        // Gang name
-        this.add.text(left + 72, y, entry.gangName, {
-          color: rowColor,
-          fontSize: '15px', fontFamily: 'monospace', fontStyle: isPlayer ? 'bold' : 'normal',
-        });
-
-        // Influence
-        this.add.text(left + 380, y, entry.totalInfluence.toLocaleString(), {
-          color: rowColor, fontSize: '15px', fontFamily: 'monospace',
-        });
-
-        // Zone count
-        this.add.text(left + 500, y, String(entry.settlementCount), {
-          color: rowColor, fontSize: '15px', fontFamily: 'monospace',
-        });
-      });
-
-      // Player rank footer (if outside top 20)
-      if (d.playerRank > 20) {
-        const footY = startY + 24 + 21 * rowH;
-        this.add.rectangle(left, footY - 4, width - left * 2, 1, 0x333333).setOrigin(0, 0.5);
-        this.add.text(left, footY + 4,
-          `Your rank: #${d.playerRank} of ${d.totalGangs} gangs`, {
-            color: '#ffdd00', fontSize: '14px', fontFamily: 'monospace',
-          });
-      } else {
-        const footY = startY + 24 + (d.entries.length + 1) * rowH + 8;
-        this.add.text(cx, footY, `${d.totalGangs} gangs total`, {
-          color: '#555555', fontSize: '13px', fontFamily: 'monospace',
-        }).setOrigin(0.5);
-      }
-    }
-
-    // Back button
-    const backBtn = this.add.text(40, height - 50, '[ BACK ]', {
-      color: '#888888', fontSize: '16px', fontFamily: 'monospace',
-      backgroundColor: '#111111', padding: { x: 10, y: 6 },
-    }).setInteractive();
-    backBtn.on('pointerdown', () => this.scene.start('GarageScene', { token: this.token }));
+  private rebuild(): void {
+    const sidebarOpts: SidebarOpts = {
+      gangName:      this.gang?.name ?? 'Unknown',
+      gangColor:     this.gang?.primary_colour ?? 0xff4444,
+      treasury:      this.gang?.treasury ?? 0,
+      reputation:    this.gang?.reputation ?? 0,
+      division:      this.gang?.division ?? 1,
+      influence:     this.gang?.influence ?? 0,
+      reportsBadge:  this.unreadReports,
+      activityBadge: this.unreadActivity,
+      activeNav:     'leaderboard',
+      token:         this.token,
+    };
+    renderInto(this.sidebarEl, buildSidebarHTML(sidebarOpts));
+    renderInto(this.mainEl, this.buildMainHTML());
+    wireNavigation(this.root, this, this.token);
   }
 
-  private async doRetire(btn: Phaser.GameObjects.Text): Promise<void> {
+  private buildMainHTML(): string {
+    const d = this.data_;
+
+    const tableBody = d
+      ? d.entries.map(e => {
+          const hexColor = '#' + e.primaryColour.toString(16).padStart(6, '0');
+          const playerClass = e.isPlayer ? ' player-row' : '';
+          return `
+            <tr class="${playerClass}">
+              <td class="rank">#${esc(e.rank)}</td>
+              <td>
+                <span class="gang-swatch" style="background:${esc(hexColor)};margin-right:8px;vertical-align:middle;"></span>
+                ${esc(e.gangName)}
+              </td>
+              <td class="pts">${esc(e.totalInfluence.toLocaleString())}</td>
+              <td class="zones">${esc(e.settlementCount)}</td>
+            </tr>`;
+        }).join('')
+      : `<tr><td colspan="4" style="padding:32px;text-align:center;color:var(--gray)">Loading…</td></tr>`;
+
+    const endgameBanner = (d?.endgame && !d?.retired) ? `
+      <div class="endgame-banner">
+        <div>
+          <div class="endgame-text">★ YOU ARE THE DOMINANT POWER IN THE REGION ★</div>
+          <div class="endgame-sub">You control more territory than any other gang.</div>
+        </div>
+        <button class="btn btn-gold" data-action="retire" ${this.retiring ? 'disabled' : ''}>
+          ${this.retiring ? 'Retiring…' : 'Retire Your Gang'}
+        </button>
+      </div>` : (d?.retired ? `
+      <div class="endgame-banner">
+        <div>
+          <div class="endgame-text">RETIRED</div>
+          <div class="endgame-sub">Bonus $${(d.retireBonus ?? 0).toLocaleString()} credited to treasury</div>
+        </div>
+      </div>` : '');
+
+    const playerRankFooter = (d && d.playerRank > 20) ? `
+      <div style="padding:12px 24px;border-top:1px solid var(--border);font-size:13px;color:var(--gold);">
+        Your rank: #${esc(d.playerRank)} of ${esc(d.totalGangs)} gangs
+      </div>` : (d ? `
+      <div style="padding:12px 24px;border-top:1px solid var(--border);font-size:12px;color:var(--gray);">
+        ${esc(d.totalGangs)} gangs total
+      </div>` : '');
+
+    return `
+      <div class="page-header">
+        <div class="page-title">Territory Leaderboard</div>
+        <div class="page-subtitle">Ranked by total influence across all zones</div>
+      </div>
+      <div class="content" style="display:flex;flex-direction:column;overflow:hidden;">
+        <div style="flex:1;overflow-y:auto;padding:16px 24px;">
+          ${endgameBanner}
+          <table class="lb-table">
+            <thead>
+              <tr>
+                <th style="width:50px;text-align:center;">Rank</th>
+                <th>Gang</th>
+                <th class="r">Influence</th>
+                <th class="r">Zones</th>
+              </tr>
+            </thead>
+            <tbody>
+              ${tableBody}
+            </tbody>
+          </table>
+        </div>
+        ${playerRankFooter}
+      </div>`;
+  }
+
+  private onClick = (e: MouseEvent): void => {
+    const t = (e.target as HTMLElement).closest<HTMLElement>('[data-action]');
+    if (!t) return;
+    if (t.dataset.action === 'retire') this.doRetire();
+  };
+
+  private async doRetire(): Promise<void> {
     if (this.retiring) return;
     this.retiring = true;
-    btn.setText('[ RETIRING... ]').setColor('#888888');
+    this.rebuild();
 
     const host = window.location.hostname;
     try {
@@ -175,14 +189,18 @@ export class LeaderboardScene extends Phaser.Scene {
           this.data_.retireBonus = bonus;
           this.data_.endgame    = false;
         }
-        this.render();
-      } else {
-        btn.setText('[ RETIRE YOUR GANG ]').setColor('#ffcc00');
         this.retiring = false;
+        this.rebuild();
+        showToast(this.root, `Gang retired — $${(bonus ?? 0).toLocaleString()} bonus credited`);
+      } else {
+        this.retiring = false;
+        this.rebuild();
+        showToast(this.root, 'Retire failed — try again');
       }
-    } catch (_e) {
-      btn.setText('[ RETIRE YOUR GANG ]').setColor('#ffcc00');
+    } catch {
       this.retiring = false;
+      this.rebuild();
+      showToast(this.root, 'Network error');
     }
   }
 }
