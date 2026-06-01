@@ -1,6 +1,7 @@
 import Phaser from "phaser";
 import type { GeneratedWorld, GeneratedSettlement, GeneratedRoad } from "@carwars/shared";
 import { bindFullscreenToggle, onLayout } from "../ui/responsive";
+import { esc, renderInto, buildSidebarHTML, createHubRoot, wireNavigation } from "../ui/hub";
 
 const C_ROAD_HIGHWAY  = 0x555566;
 const C_ROAD_URBAN    = 0x666644;
@@ -88,7 +89,11 @@ class WorldMapScene extends Phaser.Scene {
   private nodeMap = new Map<string, Phaser.GameObjects.Container>();
   private hoverNodeId: string | null = null;
   private selectedNodeId: string | null = null;
-  private travelPanel: Phaser.GameObjects.Container | null = null;
+  // HTML panel root (overlaid on the map area)
+  private panelRoot!: HTMLDivElement;
+  // Currently selected node data for travel/deploy actions
+  private selectedNode: GeneratedSettlement | null = null;
+  private selectedRoad: GeneratedRoad | null = null;
 
   private influenceBySettlement: Record<string, { gangId: string; influence: number }[]> = {};
 
@@ -98,10 +103,19 @@ class WorldMapScene extends Phaser.Scene {
   private deploymentTimer: Phaser.Time.TimerEvent | null = null;
   // Working set of vehicle ids selected in the open deploy panel.
   private squadSelection = new Set<string>();
+  // Cached squad composition for the deploy panel
+  private squadMembers: SquadMember[] = [];
 
   private worldScale = 1;
   private worldOffsetX = 0;
   private worldOffsetY = 0;
+
+  // Gang / player data for sidebar
+  private gang: { name: string; primary_colour: number; reputation: number; influence: number } | null = null;
+  private money = 0;
+  private division = 1;
+  private unreadReports = 0;
+  private unreadActivity = 0;
 
   constructor() { super({ key: "WorldMapScene" }); }
 
@@ -111,13 +125,20 @@ class WorldMapScene extends Phaser.Scene {
     this.nodeMap.clear();
     this.hoverNodeId = null;
     this.selectedNodeId = null;
-    this.travelPanel = null;
+    this.selectedNode = null;
+    this.selectedRoad = null;
     this.uiObjects = [];
     this.influenceBySettlement = {};
     this.deployments = [];
     this.deploymentLayer = null;
     this.deploymentTimer = null;
     this.squadSelection = new Set();
+    this.squadMembers = [];
+    this.gang = null;
+    this.money = 0;
+    this.division = 1;
+    this.unreadReports = 0;
+    this.unreadActivity = 0;
   }
 
   async create(): Promise<void> {
@@ -126,26 +147,71 @@ class WorldMapScene extends Phaser.Scene {
     this.nodeContainer = this.add.container(0, 0);
     this.uiCam = this.cameras.add(0, 0, this.scale.width, this.scale.height, false, "ui");
 
-    await this.fetchRegion();
+    await Promise.all([
+      this.fetchRegion(),
+      this.fetchInfluence(),
+      this.fetchCurrentLocation(),
+      this.fetchPlayerData(),
+    ]);
+
     if (!this.region) {
       this.showError("Failed to load world map");
       return;
     }
 
-    await this.fetchInfluence();
+    // ── HTML overlay ──────────────────────────────────────────────────────
+    const root = createHubRoot(this);
 
-    // Fetch actual player location from server
-    await this.fetchCurrentLocation();
+    // Sidebar
+    const sidebar = document.createElement('nav');
+    sidebar.className = 'sidebar';
+    renderInto(sidebar, buildSidebarHTML({
+      gangName:     this.gang?.name ?? '',
+      gangColor:    this.gang?.primary_colour ?? 0xff4444,
+      treasury:     this.money,
+      reputation:   this.gang?.reputation ?? 0,
+      division:     this.division,
+      influence:    this.gang?.influence ?? 0,
+      reportsBadge: this.unreadReports,
+      activityBadge: this.unreadActivity,
+      activeNav:    'worldmap',
+      token:        this.token,
+    }));
+    root.appendChild(sidebar);
+    wireNavigation(root, this, this.token);
 
+    // Map area — the Phaser canvas lives here
+    const mapArea = document.createElement('div');
+    mapArea.style.cssText = 'flex:1;position:relative;overflow:hidden;';
+    root.appendChild(mapArea);
+
+    // Move the Phaser canvas into mapArea so it sits beside the sidebar
+    const canvas = document.querySelector('#game canvas') as HTMLCanvasElement | null;
+    if (canvas) {
+      mapArea.appendChild(canvas);
+      // Size canvas to fill mapArea (sidebar takes --sidebar-w = 220px)
+      const sidebarW = 220;
+      const availW = window.innerWidth - sidebarW;
+      canvas.style.cssText = `display:block;width:${availW}px;height:${window.innerHeight}px;`;
+      // Also update Phaser's scale manager so the map renders to the correct size
+      this.scale.resize(availW, window.innerHeight);
+    }
+
+    // Panel overlay layer (travel panel + deploy panel)
+    this.panelRoot = document.createElement('div');
+    this.panelRoot.style.cssText = 'position:absolute;inset:0;z-index:10;pointer-events:none;';
+    mapArea.appendChild(this.panelRoot);
+
+    renderInto(this.panelRoot, this.buildTravelPanelHTML() + this.buildDeployPanelHTML());
+    this.panelRoot.addEventListener('click', this.onPanelClick.bind(this));
+
+    // ── Phaser map rendering ──────────────────────────────────────────────
     this.computeTransform();
     this.drawRoads();
     this.drawNodes();
-    this.paintTitle();
-    this.paintBackButton();
+    this.setupUiCamera();
 
-    // Persistent "squads out on deployment" indicator: markers on the target
-    // nodes plus a list with live countdowns. Re-fetched when one comes due so
-    // the marker clears and the player is nudged toward the Reports screen.
+    // Persistent "squads out on deployment" indicator
     this.deploymentLayer = this.add.container(0, 0);
     this.uiCam.ignore(this.deploymentLayer);
     await this.fetchActiveDeployments();
@@ -155,6 +221,31 @@ class WorldMapScene extends Phaser.Scene {
     });
 
     onLayout(this, () => this.onResize());
+  }
+
+  // ── Sidebar data fetch ────────────────────────────────────────────────────
+
+  private async fetchPlayerData(): Promise<void> {
+    const host = window.location.hostname;
+    const headers = { Authorization: `Bearer ${this.token}` };
+    try {
+      const [meRes, gangRes, repRes, actRes] = await Promise.all([
+        fetch(`http://${host}:3001/api/me`, { headers }),
+        fetch(`http://${host}:3001/api/gangs/mine`, { headers }),
+        fetch(`http://${host}:3001/api/reports/unread-count`, { headers }),
+        fetch(`http://${host}:3001/api/territory/activity/unread-count`, { headers }),
+      ]);
+      if (meRes.ok) {
+        const me = await meRes.json();
+        this.money    = me.money    ?? 0;
+        this.division = me.division ?? 1;
+      }
+      if (gangRes.ok) this.gang = await gangRes.json();
+      if (repRes.ok)  this.unreadReports  = (await repRes.json()).unread  ?? 0;
+      if (actRes.ok)  this.unreadActivity = (await actRes.json()).unread  ?? 0;
+    } catch (e) {
+      console.error('WorldMapScene fetchPlayerData failed:', e);
+    }
   }
 
   private async fetchRegion(): Promise<void> {
@@ -279,17 +370,11 @@ class WorldMapScene extends Phaser.Scene {
     }
   }
 
-  private paintTitle(): void {
-    const t = this.add.text(20, 16, "MIDVILLE REGION", { fontSize: "22px", fontFamily: "monospace", color: "#ffcc00", fontStyle: "bold" });
-    this.uiObjects.push(t);
+  private setupUiCamera(): void {
+    // Make the UI camera ignore the world-space layers (roads, nodes) so they
+    // are only seen by the main camera, not duplicated.
     this.uiCam.ignore(this.roadGraphics);
     this.uiCam.ignore(this.nodeContainer);
-  }
-
-  private paintBackButton(): void {
-    const btn = this.add.text(this.scale.width - 20, 20, "[BACK]", { fontSize: "16px", fontFamily: "monospace", color: "#ff4444" }).setOrigin(1, 0).setInteractive({ useHandCursor: true });
-    btn.on("pointerdown", () => { this.scene.start("GarageScene", { token: this.token }); });
-    this.uiObjects.push(btn);
   }
 
   private showError(msg: string): void {
@@ -308,39 +393,193 @@ class WorldMapScene extends Phaser.Scene {
     const road = this.findRoad(this.currentNodeId, node.id);
     if (!road) { this.closeTravelPanel(); return; }
     this.selectedNodeId = node.id;
-    this.openTravelPanel(node, road);
+    this.selectedNode = node;
+    this.selectedRoad = road;
+    this.showTravelPanel(node, road);
   }
 
   private findRoad(a: string, b: string): GeneratedRoad | undefined {
     return this.region?.roads.find(r => (r.from === a && r.to === b) || (r.from === b && r.to === a));
   }
 
-  private openTravelPanel(node: GeneratedSettlement, road: GeneratedRoad): void {
-    this.closeTravelPanel();
-    const pw = 280, ph = 214;
-    const px = (this.scale.width - pw) / 2, py = (this.scale.height - ph) / 2;
-    const panel = this.add.container(px, py);
-    const bg = this.add.rectangle(0, 0, pw, ph, C_PANEL_BG, 0.95).setOrigin(0, 0).setStrokeStyle(2, 0x333344, 1);
-    panel.add(bg);
-    const title = this.add.text(pw / 2, 16, node.name, { fontSize: "16px", fontFamily: "monospace", color: "#ffcc00", fontStyle: "bold" }).setOrigin(0.5, 0);
-    panel.add(title);
-    let y = 50;
-    for (const line of ["Distance: " + road.distance + " miles", "Road: " + road.roadType, "Danger: " + Math.round(road.danger * 100) + "%"]) {
-      panel.add(this.add.text(20, y, line, { fontSize: "13px", fontFamily: "monospace", color: "#aaaaaa" }));
-      y += 22;
-    }
-    // Send a squad to operate here without moving the player (Phase 4).
-    const deployBtn = this.add.text(pw / 2, ph - 74, "[DEPLOY SQUAD]", { fontSize: "14px", fontFamily: "monospace", color: "#ffaa44", backgroundColor: "#332211", padding: { x: 8, y: 4 } }).setOrigin(0.5).setInteractive({ useHandCursor: true });
-    deployBtn.on("pointerdown", () => { this.openDeployPanel(node); });
-    panel.add(deployBtn);
-    const travelBtn = this.add.text(pw / 2 - 60, ph - 36, "[TRAVEL]", { fontSize: "14px", fontFamily: "monospace", color: "#00ff88" }).setOrigin(0.5).setInteractive({ useHandCursor: true });
-    travelBtn.on("pointerdown", () => { this.doTravel(node.id); });
-    const cancelBtn = this.add.text(pw / 2 + 60, ph - 36, "[CANCEL]", { fontSize: "14px", fontFamily: "monospace", color: "#ff4444" }).setOrigin(0.5).setInteractive({ useHandCursor: true });
-    cancelBtn.on("pointerdown", () => { this.closeTravelPanel(); });
-    panel.add([travelBtn, cancelBtn]);
-    this.travelPanel = panel;
-    this.uiObjects.push(panel);
+  // ── HTML Panel builders ───────────────────────────────────────────────────
+
+  private buildTravelPanelHTML(): string {
+    return `
+      <div id="cw-travel-panel" style="pointer-events:auto;position:absolute;right:16px;top:50%;transform:translateY(-50%);
+        width:280px;background:var(--panel);border:1px solid #333;display:none">
+        <div style="padding:12px 14px;border-bottom:1px solid var(--border);display:flex;justify-content:space-between;align-items:center">
+          <div class="panel-node-name" id="travel-node-name" style="font-size:15px;color:var(--yellow);font-weight:bold;text-transform:uppercase"></div>
+          <button style="background:none;border:none;color:var(--gray);font-size:18px;cursor:pointer;line-height:1"
+                  data-action="close-travel-panel">✕</button>
+        </div>
+        <div style="padding:12px 14px;display:flex;flex-direction:column;gap:8px" id="travel-panel-body">
+        </div>
+        <div style="padding:12px 14px;border-top:1px solid var(--border);display:flex;flex-direction:column;gap:7px">
+          <button class="btn btn-green" data-action="open-deploy">Deploy Squad</button>
+          <button class="btn btn-red" data-action="travel-to">Travel There</button>
+          <button class="btn btn-ghost" data-action="close-travel-panel">Cancel</button>
+        </div>
+      </div>`;
   }
+
+  private buildDeployPanelHTML(): string {
+    return `
+      <div id="cw-deploy-panel" style="pointer-events:auto;position:absolute;right:16px;top:50%;transform:translateY(-50%);
+        width:300px;background:var(--panel);border:1px solid #333;display:none">
+        <div style="padding:12px 14px;border-bottom:1px solid var(--border)">
+          <div style="font-size:15px;color:var(--yellow);font-weight:bold;text-transform:uppercase"
+               id="deploy-node-name"></div>
+          <div style="font-size:11px;color:var(--gray);margin-top:3px">Select vehicles · max 3 per zone</div>
+        </div>
+        <div id="deploy-vehicle-list" style="max-height:220px;overflow-y:auto"></div>
+        <div style="padding:12px 14px;border-top:1px solid var(--border);display:flex;flex-direction:column;gap:7px">
+          <button class="btn btn-green" data-action="attend-personally">Attend Personally →</button>
+          <button class="btn btn-yellow" data-action="delegate-squad">Delegate to Squad</button>
+          <button class="btn btn-ghost" data-action="close-deploy-panel">Cancel</button>
+        </div>
+      </div>`;
+  }
+
+  // ── HTML Panel show/hide ──────────────────────────────────────────────────
+
+  private showTravelPanel(node: GeneratedSettlement, road: GeneratedRoad): void {
+    const panel = this.panelRoot.querySelector('#cw-travel-panel') as HTMLElement | null;
+    const deployPanel = this.panelRoot.querySelector('#cw-deploy-panel') as HTMLElement | null;
+    if (!panel) return;
+
+    const nameEl = this.panelRoot.querySelector('#travel-node-name') as HTMLElement | null;
+    if (nameEl) nameEl.textContent = node.name;
+
+    const dangerPct = Math.round(road.danger * 100);
+    const dangerColor = dangerPct > 60 ? 'var(--red)' : dangerPct > 30 ? 'var(--amber)' : 'var(--green)';
+    const bodyEl = this.panelRoot.querySelector('#travel-panel-body') as HTMLElement | null;
+    if (bodyEl) {
+      renderInto(bodyEl, `
+        <div style="display:flex;justify-content:space-between;font-size:12px">
+          <span style="color:var(--gray)">Distance</span>
+          <span>${esc(road.distance)} miles</span>
+        </div>
+        <div style="display:flex;justify-content:space-between;font-size:12px">
+          <span style="color:var(--gray)">Road type</span>
+          <span>${esc(road.roadType)}</span>
+        </div>
+        <div style="display:flex;justify-content:space-between;font-size:12px">
+          <span style="color:var(--gray)">Danger</span>
+          <span style="color:${dangerColor}">${esc(dangerPct)}%</span>
+        </div>`);
+    }
+
+    panel.style.display = 'block';
+    if (deployPanel) deployPanel.style.display = 'none';
+  }
+
+  private closeTravelPanel(): void {
+    const tp = this.panelRoot?.querySelector('#cw-travel-panel') as HTMLElement | null;
+    const dp = this.panelRoot?.querySelector('#cw-deploy-panel') as HTMLElement | null;
+    if (tp) tp.style.display = 'none';
+    if (dp) dp.style.display = 'none';
+    this.selectedNodeId = null;
+    this.selectedNode = null;
+    this.selectedRoad = null;
+  }
+
+  // ── Panel click handler ───────────────────────────────────────────────────
+
+  private onPanelClick(e: MouseEvent): void {
+    const action = (e.target as HTMLElement).closest<HTMLElement>('[data-action]')?.dataset.action;
+    if (!action) return;
+
+    switch (action) {
+      case 'close-travel-panel':
+        this.closeTravelPanel();
+        break;
+
+      case 'open-deploy': {
+        const travelP = this.panelRoot.querySelector('#cw-travel-panel') as HTMLElement | null;
+        const deployP = this.panelRoot.querySelector('#cw-deploy-panel') as HTMLElement | null;
+        if (!this.selectedNode) break;
+        if (travelP) travelP.style.display = 'none';
+        if (deployP) deployP.style.display = 'block';
+        // Populate node name in deploy header
+        const deployName = this.panelRoot.querySelector('#deploy-node-name') as HTMLElement | null;
+        if (deployName) deployName.textContent = this.selectedNode.name;
+        void this.populateDeployVehicleList();
+        break;
+      }
+
+      case 'close-deploy-panel': {
+        const dp = this.panelRoot.querySelector('#cw-deploy-panel') as HTMLElement | null;
+        const tp = this.panelRoot.querySelector('#cw-travel-panel') as HTMLElement | null;
+        if (dp) dp.style.display = 'none';
+        // Re-show travel panel if we still have a selected node
+        if (tp && this.selectedNode && this.selectedRoad) tp.style.display = 'block';
+        break;
+      }
+
+      case 'attend-personally': {
+        const vehicleIds = Array.from(
+          this.panelRoot.querySelectorAll<HTMLInputElement>('input[data-deploy-vehicle]:checked')
+        ).map(cb => cb.dataset.deployVehicle!);
+        this.doAttend(vehicleIds);
+        break;
+      }
+
+      case 'delegate-squad': {
+        const vehicleIds = Array.from(
+          this.panelRoot.querySelectorAll<HTMLInputElement>('input[data-deploy-vehicle]:checked')
+        ).map(cb => cb.dataset.deployVehicle!);
+        if (!this.selectedNode) break;
+        void this.doDeploy(this.selectedNode, vehicleIds);
+        break;
+      }
+
+      case 'travel-to':
+        void this.doTravel();
+        break;
+    }
+  }
+
+  // ── Deploy vehicle list ───────────────────────────────────────────────────
+
+  private async populateDeployVehicleList(): Promise<void> {
+    const listEl = this.panelRoot.querySelector('#deploy-vehicle-list') as HTMLElement | null;
+    if (!listEl) return;
+
+    renderInto(listEl, '<div style="padding:10px 14px;font-size:12px;color:var(--gray)">Loading…</div>');
+
+    this.squadMembers = await this.fetchSquadComposition();
+    const eligible = this.squadMembers.filter(m => this.isEligible(m));
+    this.squadSelection = new Set(eligible.slice(0, 3).map(m => m.vehicleId));
+
+    if (this.squadMembers.length === 0) {
+      renderInto(listEl, '<div style="padding:10px 14px;font-size:12px;color:var(--amber)">No vehicles — build or buy one first.</div>');
+      return;
+    }
+
+    const rows = this.squadMembers.slice(0, 6).map(m => {
+      const eligible = this.isEligible(m);
+      const checked = this.squadSelection.has(m.vehicleId) ? 'checked' : '';
+      const disabled = eligible ? '' : 'disabled';
+      const detail = eligible
+        ? `${esc(m.driverName ?? '')} · sk${esc(m.driverSkill ?? 0)} · armour ${esc(m.armor)}`
+        : `— ${esc(this.ineligibleReason(m))} —`;
+      const detailClass = eligible ? 'squad-vdetail' : 'squad-vwarn';
+      return `
+        <div class="squad-check${eligible ? '' : ''}" style="padding:9px 14px;border-bottom:1px solid #181818;display:flex;align-items:flex-start;gap:10px;${eligible ? '' : 'opacity:0.45;'}">
+          <input type="checkbox" ${checked} ${disabled}
+                 data-deploy-vehicle="${esc(m.vehicleId)}"
+                 style="accent-color:var(--green);width:15px;height:15px;margin-top:2px;${eligible ? 'cursor:pointer' : 'cursor:not-allowed'}">
+          <div>
+            <div class="squad-vname">${esc(m.vehicleName)}</div>
+            <div class="${detailClass}">${detail}</div>
+          </div>
+        </div>`;
+    }).join('');
+    renderInto(listEl, rows);
+  }
+
+  // ── Preserved Phaser deploy-action methods ────────────────────────────────
 
   private nodeHasArena(node: GeneratedSettlement): boolean {
     return (node.services ?? []).includes("arena");
@@ -401,118 +640,6 @@ class WorldMapScene extends Phaser.Scene {
     if (m.status === "on_job") return "on job";
     if (m.status === "in_arena") return "in arena";
     return "unavailable";
-  }
-
-  // Deploy panel (Phase 4, reworked for issue #7). Shows the squad composition
-  // — each vehicle, its armour, and its crew — with the eligible ones toggled
-  // on by default (capped at 4). Arena nodes also offer attending in person.
-  private async openDeployPanel(node: GeneratedSettlement): Promise<void> {
-    this.closeTravelPanel();
-    const members = await this.fetchSquadComposition();
-    const eligible = members.filter(m => this.isEligible(m));
-    this.squadSelection = new Set(eligible.slice(0, 4).map(m => m.vehicleId));
-
-    const hasArena = this.nodeHasArena(node);
-    const pw = 440;
-    const rowH = 34;
-    const listTop = 92;
-    const visible = members.slice(0, 6);
-    const footer = hasArena ? 104 : 64;
-    // Reserve a line below the rows for the "nobody available" hint when there
-    // are vehicles but none can deploy (otherwise it would overlap the rows).
-    const hintRows = (members.length > 0 && eligible.length === 0) ? 1 : 0;
-    const ph = listTop + Math.max(1, visible.length) * rowH + hintRows * 30 + footer;
-    const px = (this.scale.width - pw) / 2, py = (this.scale.height - ph) / 2;
-
-    const panel = this.add.container(px, py);
-    const bg = this.add.rectangle(0, 0, pw, ph, C_PANEL_BG, 0.98).setOrigin(0, 0).setStrokeStyle(2, 0x444466, 1);
-    panel.add(bg);
-    panel.add(this.add.text(pw / 2, 12, "Deploy to " + node.name, { fontSize: "16px", fontFamily: "monospace", color: "#ffcc00", fontStyle: "bold" }).setOrigin(0.5, 0));
-    panel.add(this.add.text(pw / 2, 36, "Assignment: " + this.deployAssignment(node) + " · max 4", { fontSize: "12px", fontFamily: "monospace", color: "#88aacc" }).setOrigin(0.5, 0));
-    panel.add(this.add.text(20, 62, "SQUAD COMPOSITION — tap to toggle", { fontSize: "11px", fontFamily: "monospace", color: "#888899" }));
-
-    // Buttons declared up front so the row toggles can re-enable/disable them.
-    const attendBtn = hasArena
-      ? this.add.text(20, ph - 84, "[ ATTEND PERSONALLY ]", { fontSize: "13px", fontFamily: "monospace", color: "#00ff88", backgroundColor: "#003322", padding: { x: 8, y: 5 } })
-      : null;
-    const deployBtn = this.add.text(20, ph - (hasArena ? 44 : 44), hasArena ? "[ DELEGATE TO SQUAD ]" : "[ DEPLOY SQUAD ]", { fontSize: "13px", fontFamily: "monospace", color: "#ffaa44", backgroundColor: "#332211", padding: { x: 8, y: 5 } });
-
-    const refreshButtons = () => {
-      const n = this.squadSelection.size;
-      const ok = n > 0;
-      deployBtn.setAlpha(ok ? 1 : 0.4);
-      if (ok) deployBtn.setInteractive({ useHandCursor: true }); else deployBtn.disableInteractive();
-      deployBtn.setText((hasArena ? "[ DELEGATE TO SQUAD" : "[ DEPLOY SQUAD") + (n ? ` — ${n} ]` : " ]"));
-      if (attendBtn) {
-        attendBtn.setAlpha(ok ? 1 : 0.4);
-        if (ok) attendBtn.setInteractive({ useHandCursor: true }); else attendBtn.disableInteractive();
-      }
-    };
-
-    // No vehicles at all → a single message where the rows would be.
-    if (members.length === 0) {
-      panel.add(this.add.text(20, listTop, "No vehicles. Build or buy one first.", {
-        fontSize: "12px", fontFamily: "monospace", color: "#ffaa44",
-      }));
-    }
-
-    visible.forEach((m, i) => {
-      const y = listTop + i * rowH;
-      const eligibleRow = this.isEligible(m);
-      const marker = this.add.text(20, y, "[ ]", { fontSize: "14px", fontFamily: "monospace", color: "#666" });
-      const nameTxt = this.add.text(54, y, `${m.vehicleName}  (armor ${m.armor})`, { fontSize: "13px", fontFamily: "monospace", color: "#cccccc" });
-      const crewTxt = this.add.text(54, y + 15, eligibleRow
-        ? `Driver: ${m.driverName} (sk${m.driverSkill})`
-        : `— ${this.ineligibleReason(m)} —`,
-        { fontSize: "10px", fontFamily: "monospace", color: eligibleRow ? "#88ccff" : "#ff8855" });
-
-      const paint = () => {
-        const on = this.squadSelection.has(m.vehicleId);
-        marker.setText(on ? "[X]" : "[ ]").setColor(on ? "#00ff88" : "#666");
-        nameTxt.setColor(eligibleRow ? (on ? "#00ff88" : "#cccccc") : "#666677");
-      };
-      paint();
-
-      if (eligibleRow) {
-        const hit = this.add.rectangle(16, y - 2, pw - 32, rowH - 4, 0x000000, 0).setOrigin(0, 0).setInteractive({ useHandCursor: true });
-        hit.on("pointerdown", () => {
-          if (this.squadSelection.has(m.vehicleId)) this.squadSelection.delete(m.vehicleId);
-          else if (this.squadSelection.size < 4) this.squadSelection.add(m.vehicleId);
-          paint();
-          refreshButtons();
-        });
-        panel.add(hit);
-      } else {
-        marker.setText("—").setColor("#444");
-      }
-      panel.add([marker, nameTxt, crewTxt]);
-    });
-
-    // Vehicles exist but all are tied up → a hint below the rows.
-    if (members.length > 0 && eligible.length === 0) {
-      panel.add(this.add.text(20, listTop + visible.length * rowH + 4,
-        "No idle crewed vehicles — assign a driver or wait for a squad to return.",
-        { fontSize: "11px", fontFamily: "monospace", color: "#ffaa44", wordWrap: { width: pw - 40 }, lineSpacing: 3 }));
-    }
-
-    if (attendBtn) {
-      attendBtn.on("pointerdown", () => { this.doAttend([...this.squadSelection]); });
-      panel.add(attendBtn);
-      panel.add(this.add.text(232, ph - 80, "Fight in real time.\nHigher reward, real risk.", { fontSize: "10px", fontFamily: "monospace", color: "#88ccaa", lineSpacing: 2 }));
-    }
-    deployBtn.on("pointerdown", () => { this.doDeploy(node, [...this.squadSelection]); });
-    panel.add(deployBtn);
-    if (!hasArena) {
-      panel.add(this.add.text(232, ph - 44, "Resolves automatically;\nreturns a report.", { fontSize: "10px", fontFamily: "monospace", color: "#ddbb88", lineSpacing: 2 }));
-    }
-    refreshButtons();
-
-    const cancelBtn = this.add.text(pw - 20, 64, "[CANCEL]", { fontSize: "12px", fontFamily: "monospace", color: "#ff4444" }).setOrigin(1, 0).setInteractive({ useHandCursor: true });
-    cancelBtn.on("pointerdown", () => { this.closeTravelPanel(); });
-    panel.add(cancelBtn);
-
-    this.travelPanel = panel;
-    this.uiObjects.push(panel);
   }
 
   private doAttend(vehicleIds: string[]): void {
@@ -619,15 +746,9 @@ class WorldMapScene extends Phaser.Scene {
     });
   }
 
-  private closeTravelPanel(): void {
-    if (this.travelPanel) {
-      this.travelPanel.destroy();
-      this.travelPanel = null;
-      this.selectedNodeId = null;
-    }
-  }
-
-  private async doTravel(toNodeId: string): Promise<void> {
+  private async doTravel(): Promise<void> {
+    const toNodeId = this.selectedNodeId;
+    if (!toNodeId) return;
     this.closeTravelPanel();
     try {
       const host = window.location.hostname;
@@ -676,15 +797,13 @@ class WorldMapScene extends Phaser.Scene {
   }
 
   private onResize(): void {
-    this.uiCam.setSize(this.scale.width, this.scale.height);
-    for (const obj of this.uiObjects) {
-      if (obj instanceof Phaser.GameObjects.Text && obj.text === "[BACK]") {
-        obj.setPosition(this.scale.width - 20, 20);
-      }
-    }
-    if (this.travelPanel) {
-      this.travelPanel.setPosition((this.scale.width - 280) / 2, (this.scale.height - 180) / 2);
-    }
+    // Resize the Phaser canvas to fill the map area (viewport minus sidebar)
+    const sidebarW = 220;
+    const availW = window.innerWidth - sidebarW;
+    const h = window.innerHeight;
+    this.scale.resize(availW, h);
+    this.uiCam.setSize(availW, h);
+
     this.computeTransform();
     this.drawRoads();
     this.drawNodes();
