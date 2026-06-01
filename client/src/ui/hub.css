@@ -360,3 +360,35 @@ html, body {
 .deployments-title { font-size: 10px; color: var(--amber); text-transform: uppercase; letter-spacing: 0.1em; margin-bottom: 6px; }
 .deployment-row { font-size: 11px; color: #aaaaaa; padding: 2px 0; display: flex; justify-content: space-between; }
 .deployment-row .eta { color: var(--amber); }
+
+/* ── MODAL: SQUAD PICKER ───────────────────────────────────────── */
+.squad-check { display: flex; align-items: flex-start; gap: 10px; padding: 10px 0; border-bottom: 1px solid var(--border); }
+.squad-check:last-child { border-bottom: none; }
+.squad-check input[type=checkbox] { accent-color: var(--green); width: 15px; height: 15px; margin-top: 2px; cursor: pointer; }
+.squad-vname { font-size: 13px; color: #ddd; font-weight: bold; }
+.squad-vdetail { font-size: 11px; color: var(--gray); margin-top: 2px; }
+.squad-vwarn  { font-size: 11px; color: var(--red); margin-top: 2px; }
+
+/* ── MODAL: REPAIR ─────────────────────────────────────────────── */
+.repair-detail { padding: 12px 0; }
+.repair-row { display: flex; justify-content: space-between; padding: 6px 0; font-size: 13px; border-bottom: 1px solid #1a1a1a; }
+.repair-row:last-child { border: none; font-weight: bold; }
+.repair-row .cost { color: var(--yellow); }
+
+/* ── MODAL: GANG SETTINGS ──────────────────────────────────────── */
+.gang-color-row { display: flex; gap: 8px; flex-wrap: wrap; margin: 12px 0; }
+.gang-color-swatch { width: 28px; height: 28px; border-radius: 50%; cursor: pointer; border: 2px solid transparent; transition: border-color 0.1s; }
+.gang-color-swatch:hover, .gang-color-swatch.selected { border-color: white; }
+
+/* ── MODAL: HIRE DRIVERS ───────────────────────────────────────── */
+.hire-candidate { padding: 10px 0; border-bottom: 1px solid var(--border); display: flex; align-items: center; gap: 10px; cursor: pointer; transition: background 0.1s; }
+.hire-candidate:hover { background: #1a1a1a; padding: 10px 4px; margin: 0 -4px; }
+.hire-candidate:last-child { border: none; }
+.hire-name { font-size: 13px; color: #ddd; font-weight: bold; }
+.hire-stats { font-size: 11px; color: var(--gray); margin-top: 2px; }
+.hire-fee { margin-left: auto; font-size: 13px; color: var(--yellow); font-weight: bold; flex-shrink: 0; }
+
+/* ── MODAL: CONFIRM TEXT ───────────────────────────────────────── */
+.confirm-text { font-size: 13px; color: #ccc; line-height: 1.6; }
+.confirm-text strong { color: #fff; }
+.confirm-sub { font-size: 12px; color: var(--gray); margin-top: 8px; }
