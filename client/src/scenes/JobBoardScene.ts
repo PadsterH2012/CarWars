@@ -211,7 +211,7 @@ export class JobBoardScene extends Phaser.Scene {
     const overlay = document.createElement('div');
     overlay.className = 'modal-overlay';
     overlay.id = 'modal-squad';
-    overlay.innerHTML = `
+    renderInto(overlay, `
       <div class="modal">
         <div class="modal-title" id="squad-modal-title">📋 Send Squad</div>
         <div class="modal-body" id="squad-modal-body"></div>
@@ -219,7 +219,7 @@ export class JobBoardScene extends Phaser.Scene {
           <button class="btn btn-ghost" data-action="close-squad-modal">Cancel</button>
           <button class="btn btn-green" data-action="confirm-squad" disabled id="squad-confirm-btn">Dispatch →</button>
         </div>
-      </div>`;
+      </div>`);
     return overlay;
   }
 

@@ -105,27 +105,17 @@ export class ActivityScene extends Phaser.Scene {
       fetch(`http://${host}:3001/api/territory/activity/unread-count`, { headers }),
     ]);
 
-    if (actRes.ok) {
-      const body = await actRes.json();
-      const all: ActivityEntry[] = body.entries ?? [];
-      // Split: entries with gang_name are rival activity; entries without (player's own) are the timeline
-      this.entries = all.filter(e => !e.gang_name || e.gang_name === this.gang?.name || e.action_type !== 'attack');
-      this.rivals  = all.filter(e => e.gang_name && e.action_type === 'attack') as unknown as RivalEntry[];
-    }
     if (gangRes.ok) this.gang = await gangRes.json();
     if (repRes.ok) this.unreadReports = (await repRes.json()).unread ?? 0;
     if (actCountRes.ok) this.unreadActivity = (await actCountRes.json()).unread ?? 0;
 
-    // Re-fetch entries now that we have the gang name
+    // Split activity after gang is populated so we can distinguish player vs rival
     if (actRes.ok) {
-      const body2Res = await fetch(`http://${host}:3001/api/territory/activity`, { headers });
-      if (body2Res.ok) {
-        const body2 = await body2Res.json();
-        const all2: ActivityEntry[] = body2.entries ?? [];
-        const myGangName = this.gang?.name ?? '';
-        this.entries = all2.filter(e => !e.gang_name || e.gang_name === myGangName);
-        this.rivals  = all2.filter(e => e.gang_name && e.gang_name !== myGangName) as unknown as RivalEntry[];
-      }
+      const body = await actRes.json();
+      const all: ActivityEntry[] = body.entries ?? [];
+      const myGangName = this.gang?.name ?? '';
+      this.entries = all.filter(e => !e.gang_name || e.gang_name === myGangName);
+      this.rivals  = all.filter(e => e.gang_name && e.gang_name !== myGangName) as unknown as RivalEntry[];
     }
 
     // Mark all as read on load

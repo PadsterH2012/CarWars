@@ -72,6 +72,7 @@ export class LeaderboardScene extends Phaser.Scene {
     this.root.appendChild(this.mainEl);
 
     this.rebuild();
+    this.root.appendChild(this.buildRetireModal());
     wireNavigation(this.root, this, this.token);
     this.root.addEventListener('click', this.onClick);
   }
@@ -165,10 +166,54 @@ export class LeaderboardScene extends Phaser.Scene {
       </div>`;
   }
 
+  private buildRetireModal(): HTMLElement {
+    const overlay = document.createElement('div');
+    overlay.className = 'modal-overlay';
+    overlay.id = 'modal-retire-confirm';
+    const d = this.data_;
+    const bonusPreview = d ? `$${(d.retireBonus ?? 0).toLocaleString()}` : 'a bonus';
+    renderInto(overlay, `
+      <div class="modal">
+        <div class="modal-title">★ Retire Your Gang</div>
+        <div class="modal-body">
+          <p>You are the dominant power in the region. Retiring locks in your victory and awards ${bonusPreview} to your treasury.</p>
+          <p style="color:var(--red);font-size:12px;margin-top:8px;">This action is irreversible.</p>
+        </div>
+        <div class="modal-footer">
+          <button class="btn btn-ghost" data-action="close-modal">Not Yet</button>
+          <button class="btn btn-gold" data-action="confirm-retire">★ Confirm Retirement</button>
+        </div>
+      </div>`);
+    return overlay;
+  }
+
+  private openRetireModal(): void {
+    const overlay = this.root.querySelector<HTMLElement>('#modal-retire-confirm');
+    overlay?.classList.add('open');
+  }
+
+  private closeRetireModal(): void {
+    const overlay = this.root.querySelector<HTMLElement>('#modal-retire-confirm');
+    overlay?.classList.remove('open');
+  }
+
   private onClick = (e: MouseEvent): void => {
     const t = (e.target as HTMLElement).closest<HTMLElement>('[data-action]');
     if (!t) return;
-    if (t.dataset.action === 'retire') this.doRetire();
+    const action = t.dataset.action;
+    if (action === 'retire') {
+      this.openRetireModal();
+    } else if (action === 'close-modal') {
+      this.closeRetireModal();
+    } else if (action === 'confirm-retire') {
+      this.closeRetireModal();
+      this.doRetire();
+    }
+    // Close modal on overlay click
+    const overlay = this.root.querySelector('#modal-retire-confirm');
+    if (overlay && e.target === overlay) {
+      this.closeRetireModal();
+    }
   };
 
   private async doRetire(): Promise<void> {
