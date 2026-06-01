@@ -523,12 +523,12 @@ export class GarageScene extends Phaser.Scene {
         return `<div style="background:#11112a;border:1px solid #2a2a44;padding:14px;margin-bottom:8px;">
           <div style="display:flex;justify-content:space-between;align-items:baseline;margin-bottom:4px;">
             <div style="color:#00ff88;font-size:13px;font-weight:bold;">${esc(c.name)}</div>
-            <div style="color:#ffcc00;font-size:10px;letter-spacing:2px;">SKILL ${c.skill}</div>
+            <div style="color:#ffcc00;font-size:10px;letter-spacing:2px;">SKILL ${esc(String(c.skill))}</div>
           </div>
-          <div style="color:#888;font-size:11px;margin-bottom:6px;">${esc(stars)} · aggro ${c.aggression} · loyalty ${c.loyalty}</div>
+          <div style="color:#888;font-size:11px;margin-bottom:6px;">${esc(stars)} · aggro ${esc(String(c.aggression))} · loyalty ${esc(String(c.loyalty))}</div>
           <div style="color:#aac;font-size:11px;line-height:1.4;margin-bottom:8px;">${esc(c.blurb)}</div>
           ${hasPkg ? `<div style="background:#1a2a11;border-left:3px solid #88ccff;padding:6px 8px;font-size:11px;color:#aaccff;margin-bottom:8px;">
-            Package: <b>${esc(c.vehicle_name)}</b> (Div ${c.vehicle_division}) · <span style="color:#ffcc00;">-${c.vehicle_discount_pct}% off</span> $${pkgCost.toLocaleString()}</div>` : ''}
+            Package: <b>${esc(c.vehicle_name)}</b> (Div ${esc(String(c.vehicle_division))}) · <span style="color:#ffcc00;">-${esc(String(c.vehicle_discount_pct))}% off</span> $${pkgCost.toLocaleString()}</div>` : ''}
           <div style="display:flex;justify-content:space-between;align-items:center;">
             <span style="color:#ffcc00;font-size:13px;font-weight:bold;">$${total.toLocaleString()}</span>
             <button data-hire-candidate="${esc(c.id)}"
@@ -849,7 +849,7 @@ export class GarageScene extends Phaser.Scene {
       }
       case 'repair': {
         const vid = actionEl.closest<HTMLElement>('[data-vehicle-id]')?.dataset.vehicleId ?? actionEl.dataset.vehicleId ?? '';
-        this.openRepairModal(vid);
+        this.openRepairModal(vid).catch(() => showToast(this.root, 'Could not load repair info.'));
         break;
       }
       case 'sell': {
@@ -863,7 +863,7 @@ export class GarageScene extends Phaser.Scene {
         break;
       }
       case 'hire':
-        this.openHireModal();
+        this.openHireModal().catch(() => showToast(this.root, 'Could not load hire candidates.'));
         break;
       case 'gang-settings':
         this.openGangSettingsModal();
@@ -1061,23 +1061,6 @@ export class GarageScene extends Phaser.Scene {
       ? `DEFENSE SUCCESS vs ${result.gangName} — ${result.gangName} lost influence in ${result.settlementName}.${result.repairCost ? ` Repairs: $${result.repairCost.toLocaleString()}` : ''}`
       : `DEFENSE FAILED vs ${result.gangName} — you lost influence in ${result.settlementName}. Repairs: $${(result.repairCost ?? 0).toLocaleString()}`;
     alert(msg);
-  }
-
-  // Buy a garage bay ($50k). On success, restart the scene so the storage cap,
-  // discount and income status all refresh from the server.
-  private async purchaseGarageBay(btn: Phaser.GameObjects.Text): Promise<void> {
-    const host = window.location.hostname;
-    const cost = this.garage?.cost ?? 50000;
-    if (this.money < cost) { btn.setText('[ NOT ENOUGH MONEY ]').setColor('#ff6666'); return; }
-    const res = await fetch(`http://${host}:3001/api/garages/purchase`, {
-      method: 'POST', headers: { Authorization: `Bearer ${this.token}` },
-    });
-    if (res.ok) {
-      this.scene.restart({ token: this.token });
-    } else {
-      const err = await res.json().catch(() => ({}));
-      btn.setText(`[ ${err.error ?? 'PURCHASE FAILED'} ]`).setColor('#ff6666');
-    }
   }
 
   // Fire-and-forget persistence of the player's current vehicle (and the
