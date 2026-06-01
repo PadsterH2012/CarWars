@@ -2,7 +2,7 @@ import Phaser from 'phaser';
 import { type EmblemId } from '../game/CoatOfArms';
 import { bindFullscreenToggle } from '../ui/responsive';
 import { preloadVehicleSprites, bodySpriteKey } from '../game/VehicleSprite';
-import { esc, renderInto, buildSidebarHTML, createHubRoot, wireNavigation, showToast, SidebarOpts } from '../ui/hub';
+import { esc, renderInto, buildSidebarHTML, createHubRoot, wireNavigation, redirectIfUnauthorized, showToast, SidebarOpts } from '../ui/hub';
 
 type AvailabilityStatus = 'available' | 'deployed' | 'on_job' | 'in_arena' | 'wounded';
 interface Vehicle { id: string; name: string; value: number; damage_state: any; loadout: any; in_arena?: boolean; status?: AvailabilityStatus; remainingSeconds?: number; deploymentZone?: string | null; }
@@ -100,6 +100,9 @@ export class GarageScene extends Phaser.Scene {
       fetch(`http://${host}:3001/api/territory/activity/unread-count`, { headers: { Authorization: `Bearer ${this.token}` } }),
       fetch(`http://${host}:3001/api/leaderboard`, { headers: { Authorization: `Bearer ${this.token}` } }),
     ]);
+    // Stale or invalid token → back to the login screen instead of crashing on
+    // the error-shaped JSON bodies below.
+    if (redirectIfUnauthorized(this, [meRes, vRes, dRes, gRes, reqRes, bayRes, repRes, depRes, actRes, lbRes])) return;
     const me = await meRes.json();
     this.money = me.money ?? 0;
     this.division = me.division ?? 0;
@@ -700,9 +703,35 @@ export class GarageScene extends Phaser.Scene {
 
       const needsRepair = !v.damage_state?.destroyed && curArmor < maxArmor;
 
+      // Body sprite thumbnail — neutral-grey PNG tinted to the gang primary
+      // colour via feColorMatrix, same approach as the Vehicle Designer.
+      const bodyKey = bodySpriteKey(v.loadout?.bodyType);
+      const tintColour = this.gang?.primary_colour ?? 0x00ff88;
+      const tintR = (((tintColour >> 16) & 0xff) / 255).toFixed(3);
+      const tintG = (((tintColour >>  8) & 0xff) / 255).toFixed(3);
+      const tintB = ((tintColour & 0xff) / 255).toFixed(3);
+      const thumbSvg = `
+        <svg width="56" height="78" viewBox="0 0 56 78"${v.damage_state?.destroyed ? ' style="opacity:0.35"' : ''}>
+          <defs>
+            <filter id="thumb-tint-${esc(v.id)}" color-interpolation-filters="sRGB">
+              <feColorMatrix type="matrix" values="
+                ${tintR} 0 0 0 0
+                0 ${tintG} 0 0 0
+                0 0 ${tintB} 0 0
+                0 0 0 1 0"/>
+            </filter>
+          </defs>
+          <image href="/sprites/bodies/${esc(bodyKey)}.png"
+                 x="4" y="4" width="48" height="70"
+                 preserveAspectRatio="xMidYMid meet"
+                 filter="url(#thumb-tint-${esc(v.id)})"
+                 style="image-rendering: pixelated;"/>
+        </svg>`;
+
       return `
         <div class="vehicle-card${isSelected ? ' selected' : ''}" data-vehicle-id="${esc(v.id)}">
           <div class="vehicle-thumb">
+            ${thumbSvg}
             <span class="dot ${dotColor}" style="position:absolute;top:4px;right:4px"></span>
           </div>
           <div class="vehicle-info">
