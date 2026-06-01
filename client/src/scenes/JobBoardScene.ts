@@ -1,5 +1,5 @@
 import Phaser from 'phaser';
-import { esc, renderInto, buildSidebarHTML, createHubRoot, wireNavigation, showToast, SidebarOpts } from '../ui/hub';
+import { esc, renderInto, buildSidebarHTML, createHubRoot, wireNavigation, redirectIfUnauthorized, showToast, SidebarOpts } from '../ui/hub';
 
 interface Job {
   id: string; job_type: string; description: string; payout: number;
@@ -90,6 +90,7 @@ export class JobBoardScene extends Phaser.Scene {
       fetch(`http://${host}:3001/api/vehicles`, { headers }),
       fetch(`http://${host}:3001/api/drivers`, { headers }),
     ]);
+    if (redirectIfUnauthorized(this, [jobsRes, activeRes, gangRes, repRes, actRes, vRes, dRes])) return;
 
     if (jobsRes.ok) this.jobs = await jobsRes.json();
     if (activeRes.ok) this.activeJobs = await activeRes.json();

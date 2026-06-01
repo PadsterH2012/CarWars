@@ -83,6 +83,16 @@ export function buildSidebarHTML(o: SidebarOpts): string {
     </div>`;
 }
 
+// If any API response came back 401 the saved token is stale or invalid —
+// clear it and return to the login screen so the player can sign in again.
+// Returns true when the redirect happened; callers should bail out of scene setup.
+export function redirectIfUnauthorized(scene: Phaser.Scene, responses: Response[]): boolean {
+  if (!responses.some(r => r.status === 401)) return false;
+  localStorage.removeItem('cw_token');
+  scene.scene.start('LoginScene');
+  return true;
+}
+
 export function createHubRoot(scene: Phaser.Scene): HTMLDivElement {
   const root = document.createElement('div');
   root.className = 'shell';

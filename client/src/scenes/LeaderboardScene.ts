@@ -1,5 +1,5 @@
 import Phaser from 'phaser';
-import { esc, renderInto, buildSidebarHTML, createHubRoot, wireNavigation, showToast, SidebarOpts } from '../ui/hub';
+import { esc, renderInto, buildSidebarHTML, createHubRoot, wireNavigation, redirectIfUnauthorized, showToast, SidebarOpts } from '../ui/hub';
 
 interface LeaderboardEntry {
   rank: number;
@@ -54,6 +54,7 @@ export class LeaderboardScene extends Phaser.Scene {
       fetch(`http://${host}:3001/api/reports/unread-count`, { headers }),
       fetch(`http://${host}:3001/api/territory/activity/unread-count`, { headers }),
     ]);
+    if (redirectIfUnauthorized(this, [lbRes, gangRes, repRes, actRes])) return;
 
     if (lbRes.ok) this.data_ = await lbRes.json();
     if (gangRes.ok) this.gang = await gangRes.json();

@@ -1,7 +1,7 @@
 import Phaser from "phaser";
 import type { GeneratedWorld, GeneratedSettlement, GeneratedRoad } from "@carwars/shared";
 import { bindFullscreenToggle, onLayout } from "../ui/responsive";
-import { esc, renderInto, buildSidebarHTML, createHubRoot, wireNavigation } from "../ui/hub";
+import { esc, renderInto, buildSidebarHTML, createHubRoot, wireNavigation, redirectIfUnauthorized } from "../ui/hub";
 
 const C_ROAD_HIGHWAY  = 0x555566;
 const C_ROAD_URBAN    = 0x666644;
@@ -237,6 +237,7 @@ class WorldMapScene extends Phaser.Scene {
         fetch(`http://${host}:3001/api/reports/unread-count`, { headers }),
         fetch(`http://${host}:3001/api/territory/activity/unread-count`, { headers }),
       ]);
+      if (redirectIfUnauthorized(this, [meRes, gangRes, repRes, actRes])) return;
       if (meRes.ok) {
         const me = await meRes.json();
         this.money    = me.money    ?? 0;
