@@ -1,5 +1,5 @@
 import Phaser from 'phaser';
-import { paintEmblem, EMBLEM_IDS, type EmblemId } from '../game/CoatOfArms';
+import { type EmblemId } from '../game/CoatOfArms';
 import { bindFullscreenToggle } from '../ui/responsive';
 import { preloadVehicleSprites, bodySpriteKey } from '../game/VehicleSprite';
 import { esc, renderInto, buildSidebarHTML, createHubRoot, wireNavigation, showToast, SidebarOpts } from '../ui/hub';
@@ -162,10 +162,6 @@ export class GarageScene extends Phaser.Scene {
     });
 
     bindFullscreenToggle(this);
-  }
-
-  private renderGarage(): void {
-    // migrated to HTML overlay
   }
 
   // ── Modal infrastructure ──────────────────────────────────────────────
@@ -1065,7 +1061,7 @@ export class GarageScene extends Phaser.Scene {
 
   // Fire-and-forget persistence of the player's current vehicle (and the
   // driver assigned to it, if any). Updates local state immediately so the
-  // highlight survives the next renderGarage(), even if the request races.
+  // highlight re-renders correctly even if the request races.
   private persistSelection(vehicleId: string, driverId: string | null): void {
     const host = window.location.hostname;
     this.selectedVehicleId = vehicleId;
@@ -1094,14 +1090,6 @@ export class GarageScene extends Phaser.Scene {
       mapId,
       gangPrimaryColour: this.gang?.primary_colour,
     });
-  }
-
-  private renderEmblemTexture(key: string, emblem: EmblemId, primary: number, secondary: number, size: number): void {
-    if (this.textures.exists(key)) this.textures.remove(key);
-    const canvas = document.createElement('canvas');
-    canvas.width = size; canvas.height = size;
-    paintEmblem(canvas, emblem, primary, secondary);
-    this.textures.addCanvas(key, canvas);
   }
 
 }
