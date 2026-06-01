@@ -1,0 +1,307 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>CAR WARS — Job Board</title>
+<link rel="stylesheet" href="shared.css">
+<style>
+  .content { display: flex; flex-direction: column; overflow: hidden; }
+  .job-list { flex: 1; overflow-y: auto; padding: 16px 24px; display: flex; flex-direction: column; gap: 10px; }
+
+  .job-card {
+    background: var(--card); border: 1px solid var(--border);
+    padding: 14px 16px; display: flex; gap: 16px; align-items: flex-start;
+    transition: border-color 0.1s;
+  }
+  .job-card:hover { border-color: #2a2a2a; }
+
+  .job-icon {
+    width: 42px; min-width: 42px; height: 42px;
+    background: #1a1a1a; border: 1px solid var(--border);
+    display: flex; align-items: center; justify-content: center; font-size: 20px;
+  }
+
+  .job-body { flex: 1; min-width: 0; }
+  .job-title { font-size: 14px; color: #dddddd; margin-bottom: 5px; font-weight: bold; }
+  .job-desc  { font-size: 12px; color: #777; margin-bottom: 8px; line-height: 1.5; }
+  .job-tags  { display: flex; gap: 7px; flex-wrap: wrap; }
+
+  .tag { font-size: 11px; padding: 2px 8px; border: 1px solid var(--border); color: var(--gray); background: #1a1a1a; }
+  .tag-payout { border-color: #3a3000; color: var(--yellow); background: #1a1500; }
+  .tag-easy   { border-color: #003a00; color: var(--green);  background: #001a00; }
+  .tag-medium { border-color: #3a2000; color: var(--amber);  background: #1a1000; }
+  .tag-hard   { border-color: #3a0000; color: var(--red);    background: #1a0000; }
+
+  .job-actions { display: flex; flex-direction: column; gap: 6px; align-items: flex-end; flex-shrink: 0; }
+  .job-req { font-size: 10px; color: var(--dim); text-align: right; }
+  .job-req.bad { color: var(--red); }
+
+  /* ACTIVE JOBS */
+  .active-card {
+    background: #130e00; border: 1px solid #3a2800; padding: 12px 16px;
+    display: flex; align-items: center; gap: 16px;
+  }
+  .active-card .job-icon { border-color: #3a2800; font-size: 18px; background: #1a1200; }
+  .active-body { flex: 1; min-width: 0; }
+  .active-title { font-size: 13px; color: var(--amber); font-weight: bold; margin-bottom: 4px; }
+  .active-detail { font-size: 11px; color: #777; display: flex; gap: 12px; flex-wrap: wrap; }
+  .active-detail .payout { color: var(--yellow); }
+
+  .eta-block { text-align: right; flex-shrink: 0; }
+  .eta-label { font-size: 10px; color: var(--gray); text-transform: uppercase; letter-spacing: 0.08em; }
+  .eta-time  { font-size: 22px; color: var(--amber); font-weight: bold; letter-spacing: 0.04em; line-height: 1.1; }
+  .progress-bar  { width: 80px; height: 3px; background: #2a1a00; margin-top: 4px; margin-left: auto; }
+  .progress-fill { height: 100%; background: var(--amber); }
+
+  /* SQUAD PICKER MODAL */
+  .squad-check { display: flex; align-items: flex-start; gap: 10px; padding: 10px 0; border-bottom: 1px solid var(--border); }
+  .squad-check:last-child { border-bottom: none; }
+  .squad-check input[type=checkbox] { accent-color: var(--green); width: 15px; height: 15px; margin-top: 2px; cursor: pointer; }
+  .squad-vname   { font-size: 13px; color: #ddd; font-weight: bold; }
+  .squad-vdetail { font-size: 11px; color: var(--gray); margin-top: 2px; }
+  .squad-vwarn   { font-size: 11px; color: var(--red);  margin-top: 2px; }
+</style>
+</head>
+<body>
+<div class="mock-label">JOB BOARD</div>
+<div class="shell">
+
+<nav class="sidebar">
+  <div class="gang-block" onclick="window.location='garage.html'">
+    <svg class="gang-emblem" viewBox="0 0 48 48" fill="none">
+      <polygon points="24,4 44,14 44,34 24,44 4,34 4,14" fill="#1a0000" stroke="#ff4444" stroke-width="1.5"/>
+      <text x="24" y="28" text-anchor="middle" fill="#ff4444" font-family="monospace" font-size="14" font-weight="bold">SW</text>
+    </svg>
+    <div class="gang-name">Steel Wolves</div>
+    <div class="gang-stats">
+      <div class="stat-row"><span class="stat-label">Treasury</span><span class="stat-val-yellow">$14,200</span></div>
+      <div class="stat-row"><span class="stat-label">Reputation</span><span class="stat-val-green">47</span></div>
+      <div class="stat-row"><span class="stat-label">Division</span><span class="stat-val-red">Div 2</span></div>
+    </div>
+  </div>
+  <div class="nav-links">
+    <div class="nav-section">Headquarters</div>
+    <a class="nav-item" href="garage.html"><i class="nav-icon">⚙</i> Garage</a>
+    <a class="nav-item" href="shop.html"><i class="nav-icon">🛒</i> Shop</a>
+    <a class="nav-item active" href="jobboard.html"><i class="nav-icon">📋</i> Job Board</a>
+    <div class="nav-section">Territory</div>
+    <a class="nav-item" href="worldmap.html"><i class="nav-icon">🗺</i> World Map</a>
+    <a class="nav-item" href="leaderboard.html"><i class="nav-icon">🏆</i> Leaderboard</a>
+    <div class="nav-section">Records</div>
+    <a class="nav-item" href="reports.html"><i class="nav-icon">📄</i> Reports <span class="nav-badge">3</span></a>
+    <a class="nav-item" href="activity.html"><i class="nav-icon">📡</i> Activity <span class="nav-badge">7</span></a>
+  </div>
+  <div class="sidebar-footer"><button class="logout-btn">⏏ Logout</button></div>
+</nav>
+
+<div class="main">
+  <div class="page-header">
+    <div class="page-title">Job Board</div>
+    <div class="page-subtitle">Send a crew to earn credits and reputation</div>
+  </div>
+  <div class="content">
+    <div class="job-list">
+
+      <div class="section-heading">In Progress <span class="section-count">2 active</span></div>
+
+      <div class="active-card">
+        <div class="job-icon">🚚</div>
+        <div class="active-body">
+          <div class="active-title">Convoy Escort — Northern Route</div>
+          <div class="active-detail"><span>Vera Koss · 2× vehicles</span><span class="payout">$2,400</span></div>
+        </div>
+        <div class="eta-block">
+          <div class="eta-label">ETA</div>
+          <div class="eta-time" id="eta1">14:32</div>
+          <div class="progress-bar"><div class="progress-fill" style="width:62%"></div></div>
+        </div>
+      </div>
+
+      <div class="active-card">
+        <div class="job-icon">🏗</div>
+        <div class="active-body">
+          <div class="active-title">Salvage Reclaim — Sector 7</div>
+          <div class="active-detail"><span>Jack Thorn · 1× vehicle</span><span class="payout">$900</span></div>
+        </div>
+        <div class="eta-block">
+          <div class="eta-label">ETA</div>
+          <div class="eta-time" id="eta2">1:42:10</div>
+          <div class="progress-bar"><div class="progress-fill" style="width:18%"></div></div>
+        </div>
+      </div>
+
+      <div class="section-heading" style="margin-top:6px">Available Jobs <span class="section-count">5 open</span></div>
+
+      <div class="job-card">
+        <div class="job-icon">⚡</div>
+        <div class="job-body">
+          <div class="job-title">Assault &amp; Secure — Fuel Depot</div>
+          <div class="job-desc">Storm a rival-held fuel depot and hold it long enough for extraction. Expect heavy resistance.</div>
+          <div class="job-tags">
+            <span class="tag tag-payout">$3,800</span>
+            <span class="tag tag-hard">Difficulty 8/10</span>
+            <span class="tag">Min 2 vehicles</span>
+            <span class="tag">Rep +12</span>
+          </div>
+        </div>
+        <div class="job-actions">
+          <button class="btn btn-green" onclick="openSquadPicker('Assault &amp; Secure')">Send Squad →</button>
+          <div class="job-req">2+ vehicles ready</div>
+        </div>
+      </div>
+
+      <div class="job-card">
+        <div class="job-icon">🚗</div>
+        <div class="job-body">
+          <div class="job-title">Courier Run — Express Package</div>
+          <div class="job-desc">Deliver a sealed package across three checkpoints before the window closes. Speed is everything.</div>
+          <div class="job-tags">
+            <span class="tag tag-payout">$1,200</span>
+            <span class="tag tag-easy">Difficulty 2/10</span>
+            <span class="tag">1 vehicle</span>
+            <span class="tag">Rep +4</span>
+          </div>
+        </div>
+        <div class="job-actions">
+          <button class="btn btn-green" onclick="openSquadPicker('Courier Run')">Send Squad →</button>
+          <div class="job-req">1 vehicle ready</div>
+        </div>
+      </div>
+
+      <div class="job-card">
+        <div class="job-icon">🛡</div>
+        <div class="job-body">
+          <div class="job-title">Bodyguard Contract — VIP Transit</div>
+          <div class="job-desc">Escort a corporate VIP from the airstrip to the inner district. Intel suggests three potential ambush sites.</div>
+          <div class="job-tags">
+            <span class="tag tag-payout">$2,100</span>
+            <span class="tag tag-medium">Difficulty 5/10</span>
+            <span class="tag">2 vehicles</span>
+            <span class="tag">Rep +7</span>
+          </div>
+        </div>
+        <div class="job-actions">
+          <button class="btn btn-green" onclick="openSquadPicker('Bodyguard Contract')">Send Squad →</button>
+          <div class="job-req">2 vehicles ready</div>
+        </div>
+      </div>
+
+      <div class="job-card">
+        <div class="job-icon">🔍</div>
+        <div class="job-body">
+          <div class="job-title">Recon — Northern Badlands</div>
+          <div class="job-desc">Scout territory ahead of a major push. Mark enemy positions and return intact.</div>
+          <div class="job-tags">
+            <span class="tag tag-payout">$800</span>
+            <span class="tag tag-easy">Difficulty 3/10</span>
+            <span class="tag">1 vehicle</span>
+            <span class="tag">Rep +3</span>
+          </div>
+        </div>
+        <div class="job-actions">
+          <button class="btn" disabled>No Crew Free</button>
+          <div class="job-req bad">All drivers deployed</div>
+        </div>
+      </div>
+
+      <div class="job-card">
+        <div class="job-icon">💣</div>
+        <div class="job-body">
+          <div class="job-title">Demolition Contract — Bridge Collapse</div>
+          <div class="job-desc">Destroy a supply bridge before a rival faction can use it for a major offensive. Exit route is narrow.</div>
+          <div class="job-tags">
+            <span class="tag tag-payout">$5,500</span>
+            <span class="tag tag-hard">Difficulty 9/10</span>
+            <span class="tag">Min 3 vehicles</span>
+            <span class="tag">Rep +18</span>
+          </div>
+        </div>
+        <div class="job-actions">
+          <button class="btn" disabled>Need 3 Vehicles</button>
+          <div class="job-req bad">Only 1 available</div>
+        </div>
+      </div>
+
+    </div>
+  </div>
+</div>
+</div>
+
+<!-- SQUAD PICKER MODAL -->
+<div class="modal-overlay" id="modal-squad" onclick="if(event.target===this)this.classList.remove('open')">
+  <div class="modal">
+    <div class="modal-title">📋 Send Squad — <span id="squad-job-name"></span></div>
+    <div class="modal-body">
+      <p style="font-size:12px;color:var(--gray);margin-bottom:14px">Choose which vehicles and drivers to send.</p>
+      <div class="squad-check">
+        <input type="checkbox" checked>
+        <div>
+          <div class="squad-vname">Iron Wraith</div>
+          <div class="squad-vdetail">Rex Harmon · Refl 4 · Guns 3 · Full armor</div>
+        </div>
+      </div>
+      <div class="squad-check">
+        <input type="checkbox">
+        <div>
+          <div class="squad-vname">Dust Devil</div>
+          <div class="squad-vdetail">Sadie Vorne · Refl 3 · Guns 2 · Damaged (22/55)</div>
+        </div>
+      </div>
+      <div class="squad-check">
+        <input type="checkbox" disabled>
+        <div>
+          <div class="squad-vname">Phantom Lance</div>
+          <div class="squad-vwarn">⚠ No driver assigned</div>
+        </div>
+      </div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn-ghost" onclick="document.getElementById('modal-squad').classList.remove('open')">Cancel</button>
+      <button class="btn btn-green" onclick="dispatchSquad()">Dispatch →</button>
+    </div>
+  </div>
+</div>
+
+<div class="toast" id="toast"></div>
+
+<script>
+  function openSquadPicker(jobName) {
+    document.getElementById('squad-job-name').textContent = jobName;
+    document.getElementById('modal-squad').classList.add('open');
+  }
+  function dispatchSquad() {
+    document.getElementById('modal-squad').classList.remove('open');
+    showToast('Squad dispatched!');
+  }
+  let toastTimer;
+  function showToast(msg) {
+    const t = document.getElementById('toast');
+    t.textContent = msg;
+    t.classList.add('show');
+    clearTimeout(toastTimer);
+    toastTimer = setTimeout(() => t.classList.remove('show'), 2200);
+  }
+  document.addEventListener('keydown', e => {
+    if (e.key === 'Escape') document.querySelectorAll('.modal-overlay.open').forEach(m => m.classList.remove('open'));
+  });
+
+  // Live countdown tick
+  function tickEta(elId, totalSecs) {
+    let s = totalSecs;
+    setInterval(() => {
+      if (s <= 0) return;
+      s--;
+      const h = Math.floor(s/3600), m = Math.floor((s%3600)/60), sec = s%60;
+      const el = document.getElementById(elId);
+      if (!el) return;
+      el.textContent = h > 0
+        ? `${h}:${String(m).padStart(2,'0')}:${String(sec).padStart(2,'0')}`
+        : `${m}:${String(sec).padStart(2,'0')}`;
+    }, 1000);
+  }
+  tickEta('eta1', 14*60 + 32);
+  tickEta('eta2', 1*3600 + 42*60 + 10);
+</script>
+</body>
+</html>

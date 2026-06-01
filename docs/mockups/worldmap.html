@@ -1,0 +1,415 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>CAR WARS — World Map</title>
+<link rel="stylesheet" href="shared.css">
+<style>
+  .content { display: flex; flex: 1; overflow: hidden; position: relative; }
+
+  .map-area {
+    flex: 1; position: relative; overflow: hidden;
+    background: radial-gradient(ellipse at center, #0d1a0d 0%, #080808 70%);
+  }
+
+  .map-svg { width: 100%; height: 100%; }
+
+  /* road lines */
+  .road-major { stroke: #2a2a1a; stroke-width: 3; fill: none; stroke-linecap: round; }
+  .road-minor { stroke: #1a1a1a; stroke-width: 1.5; fill: none; stroke-linecap: round; stroke-dasharray: 6 4; }
+
+  /* nodes */
+  .node-ring { fill: none; stroke-width: 1.5; cursor: pointer; }
+  .node-fill { cursor: pointer; transition: all 0.15s; }
+  .node-fill:hover { filter: brightness(1.4); }
+  .node-label { font-family: 'Courier New', monospace; font-size: 11px; fill: #aaaaaa; pointer-events: none; text-anchor: middle; }
+  .node-label.home { fill: var(--green); font-weight: bold; }
+
+  /* current location pulse */
+  .pulse { animation: pulse-ring 1.8s ease-out infinite; transform-origin: center; }
+  @keyframes pulse-ring { 0% { opacity: 0.8; r: 14px; } 100% { opacity: 0; r: 24px; } }
+
+  /* influence tint */
+  .zone-influence { opacity: 0.18; pointer-events: none; }
+
+  /* deployment marker */
+  .deploy-marker { fill: none; stroke: var(--amber); stroke-width: 2; animation: deploy-pulse 2s ease-in-out infinite; }
+  @keyframes deploy-pulse { 0%,100% { opacity: 1; } 50% { opacity: 0.3; } }
+  .deploy-label { font-family: 'Courier New', monospace; font-size: 10px; fill: var(--amber); text-anchor: middle; pointer-events: none; }
+
+  /* PANEL */
+  .map-panel {
+    position: absolute; right: 20px; top: 50%; transform: translateY(-50%);
+    width: 280px; background: var(--panel); border: 1px solid #333;
+    display: none;
+  }
+  .map-panel.open { display: block; }
+
+  .map-panel-header {
+    padding: 12px 14px; border-bottom: 1px solid var(--border);
+    display: flex; justify-content: space-between; align-items: center;
+  }
+  .panel-node-name { font-size: 15px; color: var(--yellow); font-weight: bold; text-transform: uppercase; letter-spacing: 0.05em; }
+  .panel-close { background: none; border: none; color: var(--gray); font-size: 18px; cursor: pointer; padding: 0 2px; line-height: 1; }
+  .panel-close:hover { color: #fff; }
+
+  .map-panel-body { padding: 12px 14px; display: flex; flex-direction: column; gap: 8px; }
+
+  .panel-row { display: flex; justify-content: space-between; font-size: 12px; }
+  .panel-row .label { color: var(--gray); }
+  .panel-row .val   { color: #cccccc; }
+  .panel-row .danger-low    { color: var(--green); }
+  .panel-row .danger-medium { color: var(--amber); }
+  .panel-row .danger-high   { color: var(--red); }
+
+  .influence-bar { margin-top: 6px; }
+  .influence-bar-label { font-size: 10px; color: var(--gray); margin-bottom: 4px; text-transform: uppercase; letter-spacing: 0.08em; }
+  .influence-track { height: 4px; background: #1a1a1a; }
+  .influence-fill  { height: 100%; transition: width 0.3s; }
+
+  .map-panel-footer { padding: 12px 14px; border-top: 1px solid var(--border); display: flex; flex-direction: column; gap: 7px; }
+
+  /* DEPLOY PANEL (larger) */
+  .deploy-panel {
+    position: absolute; right: 20px; top: 50%; transform: translateY(-50%);
+    width: 300px; background: var(--panel); border: 1px solid #333;
+    display: none;
+  }
+  .deploy-panel.open { display: block; }
+
+  .deploy-header { padding: 12px 14px; border-bottom: 1px solid var(--border); }
+  .deploy-title  { font-size: 15px; color: var(--yellow); font-weight: bold; text-transform: uppercase; }
+  .deploy-hint   { font-size: 11px; color: var(--gray); margin-top: 3px; }
+
+  .deploy-vehicle-list { max-height: 220px; overflow-y: auto; }
+
+  .deploy-vehicle-row {
+    display: flex; align-items: flex-start; gap: 10px;
+    padding: 9px 14px; border-bottom: 1px solid #181818; cursor: pointer;
+    transition: background 0.1s;
+  }
+  .deploy-vehicle-row:hover { background: #1a1a1a; }
+  .deploy-vehicle-row.disabled { opacity: 0.4; cursor: not-allowed; }
+  .deploy-vehicle-row.disabled:hover { background: none; }
+
+  .deploy-check {
+    width: 14px; height: 14px; border: 1px solid #555; margin-top: 2px;
+    display: flex; align-items: center; justify-content: center; flex-shrink: 0;
+    font-size: 10px; color: var(--green);
+  }
+  .deploy-check.on { background: #001a0d; border-color: var(--green); }
+
+  .deploy-vname   { font-size: 13px; color: #ddd; font-weight: bold; }
+  .deploy-vdetail { font-size: 11px; color: var(--gray); margin-top: 1px; }
+  .deploy-vwarn   { font-size: 11px; color: var(--red);  margin-top: 1px; }
+
+  .deploy-footer  { padding: 12px 14px; border-top: 1px solid var(--border); display: flex; flex-direction: column; gap: 7px; }
+
+  /* live deployment list top-left */
+  .deployments-hud {
+    position: absolute; left: 16px; top: 16px;
+    font-family: var(--font); pointer-events: none;
+  }
+  .deployments-hud-title { font-size: 10px; color: var(--amber); text-transform: uppercase; letter-spacing: 0.1em; margin-bottom: 6px; }
+  .deployment-hud-row    { font-size: 11px; color: #ccaa66; margin-bottom: 3px; }
+  .deployment-hud-row span { color: var(--amber); margin-left: 6px; }
+</style>
+</head>
+<body>
+<div class="mock-label">WORLD MAP</div>
+<div class="shell">
+
+<nav class="sidebar">
+  <div class="gang-block" onclick="window.location='garage.html'">
+    <svg class="gang-emblem" viewBox="0 0 48 48" fill="none">
+      <polygon points="24,4 44,14 44,34 24,44 4,34 4,14" fill="#1a0000" stroke="#ff4444" stroke-width="1.5"/>
+      <text x="24" y="28" text-anchor="middle" fill="#ff4444" font-family="monospace" font-size="14" font-weight="bold">SW</text>
+    </svg>
+    <div class="gang-name">Steel Wolves</div>
+    <div class="gang-stats">
+      <div class="stat-row"><span class="stat-label">Treasury</span><span class="stat-val-yellow">$14,200</span></div>
+      <div class="stat-row"><span class="stat-label">Reputation</span><span class="stat-val-green">47</span></div>
+      <div class="stat-row"><span class="stat-label">Division</span><span class="stat-val-red">Div 2</span></div>
+      <div class="stat-row"><span class="stat-label">Influence</span><span class="stat-val-yellow">312 pts</span></div>
+    </div>
+  </div>
+  <div class="nav-links">
+    <div class="nav-section">Headquarters</div>
+    <a class="nav-item" href="garage.html"><i class="nav-icon">⚙</i> Garage</a>
+    <a class="nav-item" href="shop.html"><i class="nav-icon">🛒</i> Shop</a>
+    <a class="nav-item" href="jobboard.html"><i class="nav-icon">📋</i> Job Board</a>
+    <div class="nav-section">Territory</div>
+    <a class="nav-item active" href="worldmap.html"><i class="nav-icon">🗺</i> World Map</a>
+    <a class="nav-item" href="leaderboard.html"><i class="nav-icon">🏆</i> Leaderboard</a>
+    <div class="nav-section">Records</div>
+    <a class="nav-item" href="reports.html"><i class="nav-icon">📄</i> Reports <span class="nav-badge">3</span></a>
+    <a class="nav-item" href="activity.html"><i class="nav-icon">📡</i> Activity <span class="nav-badge">7</span></a>
+  </div>
+  <div class="sidebar-footer"><button class="logout-btn">⏏ Logout</button></div>
+</nav>
+
+<div class="main">
+  <div class="page-header">
+    <div class="page-title">Midville Region</div>
+    <div class="page-subtitle">Click a node to travel or deploy</div>
+  </div>
+  <div class="content">
+
+    <!-- SVG MAP -->
+    <div class="map-area">
+      <svg class="map-svg" viewBox="0 0 760 500" preserveAspectRatio="xMidYMid meet" id="map-svg">
+        <defs>
+          <filter id="glow">
+            <feGaussianBlur stdDeviation="2" result="coloredBlur"/>
+            <feMerge><feMergeNode in="coloredBlur"/><feMergeNode in="SourceGraphic"/></feMerge>
+          </filter>
+        </defs>
+
+        <!-- ROADS (major) -->
+        <line class="road-major" x1="200" y1="260" x2="340" y2="180"/>
+        <line class="road-major" x1="200" y1="260" x2="340" y2="330"/>
+        <line class="road-major" x1="340" y1="180" x2="500" y2="160"/>
+        <line class="road-major" x1="340" y1="330" x2="500" y2="340"/>
+        <line class="road-major" x1="500" y1="160" x2="620" y2="200"/>
+        <line class="road-major" x1="500" y1="340" x2="620" y2="300"/>
+        <line class="road-major" x1="620" y1="200" x2="620" y2="300"/>
+
+        <!-- ROADS (minor) -->
+        <line class="road-minor" x1="200" y1="260" x2="120" y2="360"/>
+        <line class="road-minor" x1="340" y1="180" x2="340" y2="330"/>
+        <line class="road-minor" x1="500" y1="160" x2="500" y2="340"/>
+        <line class="road-minor" x1="340" y1="330" x2="460" y2="420"/>
+        <line class="road-minor" x1="620" y1="300" x2="680" y2="400"/>
+
+        <!-- ZONE INFLUENCE overlays -->
+        <circle cx="500" cy="160" r="55" fill="#cc4400" class="zone-influence"/>
+        <circle cx="620" cy="200" r="45" fill="#cc4400" class="zone-influence"/>
+        <circle cx="620" cy="300" r="40" fill="#cc4400" class="zone-influence"/>
+        <circle cx="340" cy="330" r="40" fill="#4488cc" class="zone-influence"/>
+        <circle cx="200" cy="260" r="50" fill="#ff4444" class="zone-influence"/>
+
+        <!-- ACTIVE DEPLOYMENT ring at Iron Ridge -->
+        <circle class="deploy-marker" cx="500" cy="160" r="20"/>
+        <text class="deploy-label" x="500" y="190">14m</text>
+
+        <!-- NODES -->
+        <!-- Midville (home) -->
+        <circle cx="200" cy="260" r="22" fill="#001a0d" class="zone-influence" style="opacity:0.4"/>
+        <circle class="pulse" cx="200" cy="260" r="14" fill="none" stroke="#00ff88" stroke-width="1.5"/>
+        <circle cx="200" cy="260" r="12" fill="#001a0d" stroke="#00ff88" stroke-width="2"
+                class="node-fill" onclick="openNode('midville')"/>
+        <text class="node-label home" x="200" y="286">MIDVILLE</text>
+        <text class="node-label" x="200" y="297" style="font-size:9px;fill:#555">home</text>
+
+        <!-- The Crossing -->
+        <circle cx="340" cy="180" r="10" fill="#0d1a0d" stroke="#336633" stroke-width="1.5"
+                class="node-fill" onclick="openNode('crossing')"/>
+        <text class="node-label" x="340" y="163">THE CROSSING</text>
+
+        <!-- Northgate -->
+        <circle cx="340" cy="330" r="10" fill="#0d0d1a" stroke="#334466" stroke-width="1.5"
+                class="node-fill" onclick="openNode('northgate')"/>
+        <text class="node-label" x="340" y="353">NORTHGATE</text>
+
+        <!-- Iron Ridge (enemy held) -->
+        <circle cx="500" cy="160" r="12" fill="#1a0d00" stroke="#cc4400" stroke-width="2"
+                class="node-fill" onclick="openNode('ironridge')"/>
+        <text class="node-label" x="500" y="143">IRON RIDGE</text>
+
+        <!-- Burnt Creek -->
+        <circle cx="500" cy="340" r="10" fill="#1a0a00" stroke="#553300" stroke-width="1.5"
+                class="node-fill" onclick="openNode('burntcreek')"/>
+        <text class="node-label" x="500" y="363">BURNT CREEK</text>
+
+        <!-- Outpost 7 -->
+        <circle cx="620" cy="200" r="10" fill="#1a0000" stroke="#881111" stroke-width="1.5"
+                class="node-fill" onclick="openNode('outpost7')"/>
+        <text class="node-label" x="620" y="183">OUTPOST 7</text>
+
+        <!-- Scrapyard Row -->
+        <circle cx="620" cy="300" r="10" fill="#1a0000" stroke="#771111" stroke-width="1.5"
+                class="node-fill" onclick="openNode('scrapyard')"/>
+        <text class="node-label" x="620" y="323">SCRAPYARD ROW</text>
+
+        <!-- Diesel Flats -->
+        <circle cx="120" cy="360" r="9" fill="#0a0a0a" stroke="#333" stroke-width="1.5"
+                class="node-fill" onclick="openNode('dieselflats')"/>
+        <text class="node-label" x="120" y="380">DIESEL FLATS</text>
+
+        <!-- Scorched Pass -->
+        <circle cx="460" cy="420" r="9" fill="#0a0a0a" stroke="#333" stroke-width="1.5"
+                class="node-fill" onclick="openNode('scorchedpass')"/>
+        <text class="node-label" x="460" y="440">SCORCHED PASS</text>
+
+        <!-- LEGEND -->
+        <circle cx="30" cy="460" r="6" fill="#ff4444" opacity="0.3"/>
+        <text x="42" y="464" font-family="monospace" font-size="9" fill="#555">Steel Wolves</text>
+        <circle cx="95" cy="460" r="6" fill="#cc4400" opacity="0.3"/>
+        <text x="107" y="464" font-family="monospace" font-size="9" fill="#555">Iron Brotherhood</text>
+        <circle cx="178" cy="460" r="6" fill="#4488cc" opacity="0.3"/>
+        <text x="190" y="464" font-family="monospace" font-size="9" fill="#555">Blue Serpents</text>
+      </svg>
+
+      <!-- DEPLOYMENTS HUD -->
+      <div class="deployments-hud">
+        <div class="deployments-hud-title">Active Deployments</div>
+        <div class="deployment-hud-row">Iron Ridge — Vera Koss<span id="deploy-eta">14:32</span></div>
+        <div class="deployment-hud-row">Border Escort<span>1:42:10</span></div>
+      </div>
+    </div>
+
+    <!-- TRAVEL PANEL -->
+    <div class="map-panel" id="travel-panel">
+      <div class="map-panel-header">
+        <div class="panel-node-name" id="panel-node-name">—</div>
+        <button class="panel-close" onclick="closePanel()">✕</button>
+      </div>
+      <div class="map-panel-body">
+        <div class="panel-row"><span class="label">Distance</span><span class="val" id="panel-dist">—</span></div>
+        <div class="panel-row"><span class="label">Road type</span><span class="val" id="panel-road">—</span></div>
+        <div class="panel-row"><span class="label">Danger</span><span id="panel-danger">—</span></div>
+        <div class="influence-bar">
+          <div class="influence-bar-label">Zone control</div>
+          <div class="influence-track"><div class="influence-fill" id="panel-influence-fill" style="width:0%"></div></div>
+        </div>
+        <div style="font-size:11px;color:var(--gray);margin-top:2px" id="panel-controller">—</div>
+      </div>
+      <div class="map-panel-footer">
+        <button class="btn btn-green" id="panel-deploy-btn" onclick="openDeployPanel()">Deploy Squad</button>
+        <button class="btn btn-red" id="panel-travel-btn" onclick="closePanel(); showToast('Travelling...')">Travel There</button>
+        <button class="btn btn-ghost" onclick="closePanel()">Cancel</button>
+      </div>
+    </div>
+
+    <!-- DEPLOY PANEL -->
+    <div class="deploy-panel" id="deploy-panel">
+      <div class="deploy-header">
+        <div class="deploy-title">Deploy to <span id="deploy-node-name">—</span></div>
+        <div class="deploy-hint">Select vehicles · max 3 per zone</div>
+      </div>
+      <div class="deploy-vehicle-list">
+        <div class="deploy-vehicle-row" onclick="toggleDeploy(this)">
+          <div class="deploy-check on">✓</div>
+          <div>
+            <div class="deploy-vname">Iron Wraith</div>
+            <div class="deploy-vdetail">Rex Harmon · Armor 48/60 · 2×MG</div>
+          </div>
+        </div>
+        <div class="deploy-vehicle-row" onclick="toggleDeploy(this)">
+          <div class="deploy-check"></div>
+          <div>
+            <div class="deploy-vname">Dust Devil</div>
+            <div class="deploy-vdetail">Sadie Vorne · Armor 22/55 · Damaged</div>
+          </div>
+        </div>
+        <div class="deploy-vehicle-row disabled">
+          <div class="deploy-check"></div>
+          <div>
+            <div class="deploy-vname">Phantom Lance</div>
+            <div class="deploy-vwarn">⚠ No driver assigned</div>
+          </div>
+        </div>
+      </div>
+      <div class="deploy-footer">
+        <button class="btn btn-green" onclick="dispatchDeploy()">Attend Personally →</button>
+        <button class="btn btn-yellow" onclick="closeDeployPanel(); showToast('Squad delegated!')">Delegate to Squad</button>
+        <button class="btn btn-ghost" onclick="closeDeployPanel()">Cancel</button>
+      </div>
+    </div>
+
+  </div>
+</div>
+</div>
+
+<div class="toast" id="toast"></div>
+
+<script>
+const NODES = {
+  midville:    { name: 'Midville',       dist: '—',       road: 'Home Base',   danger: 0,  inf: 68,  ctrl: 'Steel Wolves',      ctrlColor: '#ff4444',  home: true },
+  crossing:    { name: 'The Crossing',   dist: '12 km',   road: 'Major',       danger: 22, inf: 30,  ctrl: 'Neutral',           ctrlColor: '#555' },
+  northgate:   { name: 'Northgate',      dist: '18 km',   road: 'Major',       danger: 35, inf: 55,  ctrl: 'Blue Serpents',     ctrlColor: '#4488cc' },
+  ironridge:   { name: 'Iron Ridge',     dist: '28 km',   road: 'Major',       danger: 72, inf: 80,  ctrl: 'Iron Brotherhood',  ctrlColor: '#cc4400' },
+  burntcreek:  { name: 'Burnt Creek',    dist: '32 km',   road: 'Major',       danger: 48, inf: 20,  ctrl: 'Neutral',           ctrlColor: '#555' },
+  outpost7:    { name: 'Outpost 7',      dist: '40 km',   road: 'Minor',       danger: 85, inf: 90,  ctrl: 'Iron Brotherhood',  ctrlColor: '#cc4400' },
+  scrapyard:   { name: 'Scrapyard Row',  dist: '44 km',   road: 'Minor',       danger: 78, inf: 70,  ctrl: 'Iron Brotherhood',  ctrlColor: '#cc4400' },
+  dieselflats: { name: 'Diesel Flats',   dist: '8 km',    road: 'Minor',       danger: 15, inf: 15,  ctrl: 'Neutral',           ctrlColor: '#555' },
+  scorchedpass:{ name: 'Scorched Pass',  dist: '38 km',   road: 'Minor',       danger: 60, inf: 10,  ctrl: 'Neutral',           ctrlColor: '#555' },
+};
+
+let currentNode = null;
+
+function openNode(id) {
+  const n = NODES[id];
+  if (!n || n.home) return;
+  currentNode = id;
+
+  document.getElementById('deploy-panel').classList.remove('open');
+  document.getElementById('panel-node-name').textContent = n.name;
+  document.getElementById('panel-dist').textContent = n.dist;
+  document.getElementById('panel-road').textContent = n.road;
+  document.getElementById('deploy-node-name').textContent = n.name;
+
+  const dangerEl = document.getElementById('panel-danger');
+  dangerEl.textContent = n.danger + '%';
+  dangerEl.className = 'val ' + (n.danger < 30 ? 'danger-low' : n.danger < 60 ? 'danger-medium' : 'danger-high');
+
+  document.getElementById('panel-influence-fill').style.width = n.inf + '%';
+  document.getElementById('panel-influence-fill').style.background = n.ctrlColor;
+  document.getElementById('panel-controller').textContent = n.ctrl;
+  document.getElementById('panel-controller').style.color = n.ctrlColor;
+
+  document.getElementById('travel-panel').classList.add('open');
+}
+
+function closePanel() {
+  document.getElementById('travel-panel').classList.remove('open');
+  document.getElementById('deploy-panel').classList.remove('open');
+}
+
+function openDeployPanel() {
+  document.getElementById('travel-panel').classList.remove('open');
+  document.getElementById('deploy-panel').classList.add('open');
+}
+
+function closeDeployPanel() {
+  document.getElementById('deploy-panel').classList.remove('open');
+  document.getElementById('travel-panel').classList.add('open');
+}
+
+function toggleDeploy(row) {
+  if (row.classList.contains('disabled')) return;
+  const check = row.querySelector('.deploy-check');
+  check.classList.toggle('on');
+  check.textContent = check.classList.contains('on') ? '✓' : '';
+}
+
+function dispatchDeploy() {
+  closePanel();
+  showToast('Entering arena at ' + (NODES[currentNode]?.name || '?') + '...');
+}
+
+let toastTimer;
+function showToast(msg) {
+  const t = document.getElementById('toast');
+  t.textContent = msg;
+  t.classList.add('show');
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(() => t.classList.remove('show'), 2200);
+}
+
+document.addEventListener('keydown', e => {
+  if (e.key === 'Escape') closePanel();
+});
+
+// Live deploy ETA
+let etaSecs = 14*60+32;
+setInterval(() => {
+  if (etaSecs <= 0) return; etaSecs--;
+  const m = Math.floor(etaSecs/60), s = etaSecs%60;
+  const el = document.getElementById('deploy-eta');
+  if (el) el.textContent = m + ':' + String(s).padStart(2,'0');
+}, 1000);
+</script>
+</body>
+</html>

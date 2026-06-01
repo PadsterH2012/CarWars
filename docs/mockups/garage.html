@@ -1,0 +1,585 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>CAR WARS — Garage</title>
+<link rel="stylesheet" href="shared.css">
+<style>
+  /* TOPBAR */
+  .topbar {
+    padding: 10px 20px; border-bottom: 1px solid var(--border);
+    display: flex; align-items: center; gap: 12px;
+    background: var(--panel); flex-shrink: 0;
+  }
+  .topbar-label { font-size: 11px; color: var(--gray); text-transform: uppercase; letter-spacing: 0.1em; }
+  .arena-tabs { display: flex; gap: 5px; }
+  .arena-tab {
+    font-family: var(--font); font-size: 11px; padding: 4px 10px;
+    background: none; border: 1px solid var(--border); color: var(--gray);
+    cursor: pointer; text-transform: uppercase; letter-spacing: 0.05em;
+    transition: all 0.1s;
+  }
+  .arena-tab:hover { border-color: #444; color: #ccc; }
+  .arena-tab.active { border-color: var(--red); color: var(--red); }
+  .map-btns { display: flex; gap: 5px; margin-left: auto; }
+
+  /* CONTENT SPLIT */
+  .content { display: flex; flex: 1; overflow: hidden; }
+
+  /* VEHICLE PANEL */
+  .vehicle-panel {
+    flex: 1; min-width: 0; overflow-y: auto; padding: 14px 16px;
+    display: flex; flex-direction: column; gap: 10px;
+  }
+
+  .panel-heading {
+    font-size: 11px; color: var(--gray); text-transform: uppercase;
+    letter-spacing: 0.1em; padding-bottom: 8px; border-bottom: 1px solid var(--border);
+    display: flex; justify-content: space-between; align-items: center; flex-shrink: 0;
+  }
+
+  /* VEHICLE CARDS */
+  .vehicle-card {
+    background: var(--card); border: 1px solid var(--border);
+    display: flex; gap: 12px; padding: 12px; cursor: pointer;
+    transition: border-color 0.1s;
+  }
+  .vehicle-card:hover { border-color: #2a2a2a; }
+  .vehicle-card.selected { border-color: var(--red); }
+
+  .vehicle-thumb {
+    width: 64px; min-width: 64px; height: 86px;
+    background: #1a1a1a; border: 1px solid var(--border);
+    display: flex; align-items: center; justify-content: center; position: relative;
+  }
+  .v-status { position: absolute; top: 4px; right: 4px; }
+  .car-svg { width: 48px; height: 64px; }
+
+  .vehicle-info { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 4px; }
+  .vehicle-name {
+    font-size: 15px; font-weight: bold; text-transform: uppercase;
+    letter-spacing: 0.04em; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  }
+  .vn-green  { color: var(--green); }
+  .vn-yellow { color: var(--yellow); }
+  .vn-gray   { color: #aaaaaa; }
+
+  .vehicle-meta { display: flex; gap: 14px; flex-wrap: wrap; }
+  .vehicle-meta span { font-size: 12px; color: var(--gray); }
+  .vehicle-meta .val { color: #aaaaaa; }
+
+  .vehicle-driver { font-size: 12px; color: #aaaaaa; display: flex; align-items: center; gap: 6px; }
+  .vehicle-driver.unassigned { color: var(--gray); font-style: italic; }
+  .vehicle-weapons { font-size: 11px; color: var(--dim); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+
+  .vehicle-actions { display: flex; gap: 6px; margin-top: 6px; flex-wrap: wrap; }
+  .vehicle-actions .btn { font-size: 11px; padding: 5px 10px; }
+
+  /* CREW PANEL */
+  .crew-panel {
+    width: 278px; min-width: 240px; max-width: 300px;
+    border-left: 1px solid var(--border);
+    display: flex; flex-direction: column; overflow: hidden; background: var(--panel);
+  }
+  @media (max-width: 1100px) { .crew-panel { width: 240px; min-width: 240px; } }
+
+  .crew-header {
+    padding: 11px 14px; border-bottom: 1px solid var(--border);
+    display: flex; justify-content: space-between; align-items: center; flex-shrink: 0;
+  }
+  .crew-title { font-size: 11px; color: var(--gray); text-transform: uppercase; letter-spacing: 0.1em; }
+
+  .driver-list { flex: 1; overflow-y: auto; }
+  .driver-row {
+    padding: 9px 14px; border-bottom: 1px solid #181818;
+    display: flex; align-items: center; gap: 8px; cursor: pointer; transition: background 0.1s;
+  }
+  .driver-row:hover { background: #1a1a1a; }
+  .driver-name { flex: 1; font-size: 13px; color: #dddddd; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .driver-meta { display: flex; flex-direction: column; align-items: flex-end; gap: 1px; flex-shrink: 0; }
+  .driver-meta span { font-size: 10px; }
+  .driver-skills { padding: 0 14px 7px 30px; font-size: 10px; color: #555; border-bottom: 1px solid #181818; margin-top: -4px; }
+
+  .deployments-section { padding: 10px 14px; border-top: 1px solid var(--border); flex-shrink: 0; }
+  .deployments-title { font-size: 10px; color: var(--amber); text-transform: uppercase; letter-spacing: 0.1em; margin-bottom: 6px; }
+  .deployment-row { font-size: 11px; color: #aaaaaa; padding: 2px 0; display: flex; justify-content: space-between; }
+  .deployment-row .eta { color: var(--amber); }
+
+  /* MODALS */
+  .squad-check { display: flex; align-items: flex-start; gap: 10px; padding: 10px 0; border-bottom: 1px solid var(--border); }
+  .squad-check:last-child { border-bottom: none; }
+  .squad-check input[type=checkbox] { accent-color: var(--green); width: 15px; height: 15px; margin-top: 2px; cursor: pointer; }
+  .squad-vname { font-size: 13px; color: #ddd; font-weight: bold; }
+  .squad-vdetail { font-size: 11px; color: var(--gray); margin-top: 2px; }
+  .squad-vwarn  { font-size: 11px; color: var(--red); margin-top: 2px; }
+
+  .repair-detail { padding: 12px 0; }
+  .repair-row { display: flex; justify-content: space-between; padding: 6px 0; font-size: 13px; border-bottom: 1px solid #1a1a1a; }
+  .repair-row:last-child { border: none; font-weight: bold; }
+  .repair-row .cost { color: var(--yellow); }
+
+  .driver-card-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-bottom: 16px; }
+  .driver-card-stat { background: #1a1a1a; padding: 8px 10px; }
+  .driver-card-stat-label { font-size: 10px; color: var(--gray); text-transform: uppercase; letter-spacing: 0.08em; margin-bottom: 2px; }
+  .driver-card-stat-val { font-size: 16px; color: var(--green); font-weight: bold; }
+
+  .skill-tag { display: inline-block; font-size: 11px; padding: 3px 8px; background: #1a1a1a; border: 1px solid var(--border); color: #aaa; margin: 3px 3px 0 0; }
+  .skill-tag.active { border-color: var(--blue); color: var(--blue); }
+
+  .hire-candidate {
+    padding: 10px 0; border-bottom: 1px solid var(--border);
+    display: flex; align-items: center; gap: 10px; cursor: pointer; transition: background 0.1s;
+  }
+  .hire-candidate:hover { background: #1a1a1a; margin: 0 -8px; padding: 10px 8px; }
+  .hire-candidate:last-child { border: none; }
+  .hire-name { font-size: 13px; color: #ddd; font-weight: bold; }
+  .hire-stats { font-size: 11px; color: var(--gray); margin-top: 2px; }
+  .hire-fee { margin-left: auto; font-size: 13px; color: var(--yellow); font-weight: bold; flex-shrink: 0; }
+
+  .confirm-text { font-size: 13px; color: #ccc; line-height: 1.6; }
+  .confirm-text strong { color: #fff; }
+  .confirm-sub { font-size: 12px; color: var(--gray); margin-top: 8px; }
+
+  .gang-color-row { display: flex; gap: 8px; flex-wrap: wrap; margin: 12px 0; }
+  .gang-color-swatch {
+    width: 28px; height: 28px; border-radius: 50%; cursor: pointer;
+    border: 2px solid transparent; transition: border-color 0.1s;
+  }
+  .gang-color-swatch:hover, .gang-color-swatch.selected { border-color: white; }
+</style>
+</head>
+<body>
+<div class="mock-label">GARAGE</div>
+<div class="shell">
+
+<!-- ── SIDEBAR ─────────────────────────────────────────────────── -->
+<nav class="sidebar">
+  <div class="gang-block" onclick="openModal('modal-gang')">
+    <svg class="gang-emblem" viewBox="0 0 48 48" fill="none">
+      <polygon points="24,4 44,14 44,34 24,44 4,34 4,14" fill="#1a0000" stroke="#ff4444" stroke-width="1.5"/>
+      <polygon points="24,10 38,18 38,30 24,38 10,30 10,18" fill="none" stroke="#ff4444" stroke-width="0.8" opacity="0.5"/>
+      <text x="24" y="28" text-anchor="middle" fill="#ff4444" font-family="monospace" font-size="14" font-weight="bold">SW</text>
+    </svg>
+    <div class="gang-name">Steel Wolves</div>
+    <div class="gang-stats">
+      <div class="stat-row"><span class="stat-label">Treasury</span><span class="stat-val-yellow">$14,200</span></div>
+      <div class="stat-row"><span class="stat-label">Reputation</span><span class="stat-val-green">47</span></div>
+      <div class="stat-row"><span class="stat-label">Division</span><span class="stat-val-red">Div 2</span></div>
+      <div class="stat-row"><span class="stat-label">Influence</span><span class="stat-val-yellow">312 pts</span></div>
+    </div>
+  </div>
+  <div class="nav-links">
+    <div class="nav-section">Headquarters</div>
+    <a class="nav-item active" href="garage.html"><i class="nav-icon">⚙</i> Garage</a>
+    <a class="nav-item" href="shop.html"><i class="nav-icon">🛒</i> Shop</a>
+    <a class="nav-item" href="jobboard.html"><i class="nav-icon">📋</i> Job Board</a>
+    <div class="nav-section">Territory</div>
+    <a class="nav-item" href="worldmap.html"><i class="nav-icon">🗺</i> World Map</a>
+    <a class="nav-item" href="leaderboard.html"><i class="nav-icon">🏆</i> Leaderboard</a>
+    <div class="nav-section">Records</div>
+    <a class="nav-item" href="reports.html"><i class="nav-icon">📄</i> Reports <span class="nav-badge">3</span></a>
+    <a class="nav-item" href="activity.html"><i class="nav-icon">📡</i> Activity <span class="nav-badge">7</span></a>
+  </div>
+  <div class="sidebar-footer">
+    <button class="logout-btn" onclick="showToast('Logging out...')">⏏ Logout</button>
+  </div>
+</nav>
+
+<!-- ── MAIN ────────────────────────────────────────────────────── -->
+<div class="main">
+  <div class="topbar">
+    <span class="topbar-label">Arena</span>
+    <div class="arena-tabs">
+      <button class="arena-tab active" onclick="selectTab(this)">Truck Stop</button>
+      <button class="arena-tab" onclick="selectTab(this)">Town Square</button>
+      <button class="arena-tab" onclick="selectTab(this)">Open Arena</button>
+      <button class="arena-tab" onclick="selectTab(this)">Double Drum</button>
+    </div>
+    <div class="map-btns" style="margin-left:auto">
+      <button class="btn btn-ghost" style="font-size:11px;padding:4px 9px" onclick="showToast('Map viewer opened')">View Map</button>
+      <button class="btn btn-ghost" style="font-size:11px;padding:4px 9px" onclick="showToast('Map editor opened')">Edit Map</button>
+    </div>
+  </div>
+
+  <div class="content">
+    <!-- VEHICLE LIST -->
+    <div class="vehicle-panel">
+      <div class="panel-heading">
+        <span>Vehicles (3)</span>
+        <button class="btn btn-green" style="font-size:11px;padding:4px 10px" onclick="showToast('Opening vehicle designer...')">+ Build New</button>
+      </div>
+
+      <!-- IRON WRAITH -->
+      <div class="vehicle-card selected" onclick="selectVehicle(this)">
+        <div class="vehicle-thumb">
+          <svg class="car-svg" viewBox="0 0 48 64" fill="none">
+            <rect x="8" y="16" width="32" height="36" rx="3" fill="#1a2a1a" stroke="#00ff88" stroke-width="1"/>
+            <rect x="14" y="8" width="20" height="16" rx="2" fill="#0d1a0d" stroke="#00ff88" stroke-width="0.8"/>
+            <rect x="4" y="34" width="8" height="12" rx="2" fill="#111" stroke="#444" stroke-width="1"/>
+            <rect x="36" y="34" width="8" height="12" rx="2" fill="#111" stroke="#444" stroke-width="1"/>
+            <rect x="4" y="18" width="8" height="12" rx="2" fill="#111" stroke="#444" stroke-width="1"/>
+            <rect x="36" y="18" width="8" height="12" rx="2" fill="#111" stroke="#444" stroke-width="1"/>
+            <rect x="16" y="38" width="16" height="4" fill="#00ff88" opacity="0.3"/>
+          </svg>
+          <span class="v-status dot dot-green"></span>
+        </div>
+        <div class="vehicle-info">
+          <div class="vehicle-name vn-green">IRON WRAITH</div>
+          <div class="vehicle-meta">
+            <span>Value <span class="val">$8,400</span></span>
+            <span>Div <span class="val">2</span></span>
+            <span>Armor <span class="val">48/60</span></span>
+          </div>
+          <div class="vehicle-driver"><span class="dot dot-green"></span> Rex Harmon · Refl 4 · Guns 3</div>
+          <div class="vehicle-weapons">2× MG · 1× Rocket · Oil Jet</div>
+          <div class="vehicle-actions">
+            <button class="btn btn-red" onclick="event.stopPropagation(); openFight('Iron Wraith')">⚔ Fight</button>
+            <button class="btn btn-yellow" onclick="event.stopPropagation(); openRepair('Iron Wraith', 48, 60, 240)">🔧 Repair</button>
+            <button class="btn btn-blue" onclick="event.stopPropagation(); showToast('Workshop: Iron Wraith')">🔩 Workshop</button>
+            <button class="btn" onclick="event.stopPropagation(); openSell('Iron Wraith', 8400)">💰 Sell</button>
+          </div>
+        </div>
+      </div>
+
+      <!-- DUST DEVIL -->
+      <div class="vehicle-card" onclick="selectVehicle(this)">
+        <div class="vehicle-thumb">
+          <svg class="car-svg" viewBox="0 0 48 64" fill="none">
+            <rect x="6" y="20" width="36" height="28" rx="2" fill="#1a1a0d" stroke="#ffcc00" stroke-width="1"/>
+            <rect x="12" y="12" width="24" height="14" rx="2" fill="#0d0d06" stroke="#ffcc00" stroke-width="0.8"/>
+            <rect x="2" y="32" width="8" height="10" rx="2" fill="#111" stroke="#444" stroke-width="1"/>
+            <rect x="38" y="32" width="8" height="10" rx="2" fill="#111" stroke="#444" stroke-width="1"/>
+            <rect x="2" y="20" width="8" height="10" rx="2" fill="#111" stroke="#444" stroke-width="1"/>
+            <rect x="38" y="20" width="8" height="10" rx="2" fill="#111" stroke="#444" stroke-width="1"/>
+          </svg>
+          <span class="v-status dot dot-yellow"></span>
+        </div>
+        <div class="vehicle-info">
+          <div class="vehicle-name vn-yellow">DUST DEVIL</div>
+          <div class="vehicle-meta">
+            <span>Value <span class="val">$6,200</span></span>
+            <span>Div <span class="val">1</span></span>
+            <span>Armor <span class="val">22/55</span></span>
+          </div>
+          <div class="vehicle-driver"><span class="dot dot-yellow"></span> Sadie Vorne · Refl 3 · Guns 2</div>
+          <div class="vehicle-weapons">1× MG · Smoke · Spike Dropper</div>
+          <div class="vehicle-actions">
+            <button class="btn btn-red" disabled>⚔ Fight</button>
+            <button class="btn btn-yellow" onclick="event.stopPropagation(); openRepair('Dust Devil', 22, 55, 660)">🔧 Repair ($660)</button>
+            <button class="btn btn-blue" onclick="event.stopPropagation(); showToast('Workshop: Dust Devil')">🔩 Workshop</button>
+            <button class="btn" onclick="event.stopPropagation(); openSell('Dust Devil', 6200)">💰 Sell</button>
+          </div>
+        </div>
+      </div>
+
+      <!-- PHANTOM LANCE -->
+      <div class="vehicle-card" onclick="selectVehicle(this)">
+        <div class="vehicle-thumb">
+          <svg class="car-svg" viewBox="0 0 48 64" fill="none">
+            <rect x="10" y="18" width="28" height="32" rx="4" fill="#1a0000" stroke="#ff4444" stroke-width="1"/>
+            <rect x="14" y="10" width="20" height="14" rx="2" fill="#0d0000" stroke="#ff4444" stroke-width="0.8"/>
+            <rect x="4" y="36" width="8" height="10" rx="2" fill="#111" stroke="#444" stroke-width="1"/>
+            <rect x="36" y="36" width="8" height="10" rx="2" fill="#111" stroke="#444" stroke-width="1"/>
+            <rect x="4" y="22" width="8" height="10" rx="2" fill="#111" stroke="#444" stroke-width="1"/>
+            <rect x="36" y="22" width="8" height="10" rx="2" fill="#111" stroke="#444" stroke-width="1"/>
+          </svg>
+          <span class="v-status dot dot-dim"></span>
+        </div>
+        <div class="vehicle-info">
+          <div class="vehicle-name vn-gray">PHANTOM LANCE</div>
+          <div class="vehicle-meta">
+            <span>Value <span class="val">$11,800</span></span>
+            <span>Div <span class="val">3</span></span>
+            <span>Armor <span class="val">60/60</span></span>
+          </div>
+          <div class="vehicle-driver unassigned">— No driver assigned</div>
+          <div class="vehicle-weapons">2× Laser · 1× ATM · Stealth</div>
+          <div class="vehicle-actions">
+            <button class="btn btn-red" disabled>⚔ Fight</button>
+            <button class="btn btn-blue" onclick="event.stopPropagation(); showToast('Workshop: Phantom Lance')">🔩 Workshop</button>
+            <button class="btn" onclick="event.stopPropagation(); openSell('Phantom Lance', 11800)">💰 Sell</button>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- CREW PANEL -->
+    <div class="crew-panel">
+      <div class="crew-header">
+        <span class="crew-title">Crew (5)</span>
+        <button class="btn btn-green" style="font-size:11px;padding:4px 8px" onclick="openModal('modal-hire')">+ Hire</button>
+      </div>
+      <div class="driver-list">
+        <div class="driver-row" onclick="openDriverCard('Rex Harmon', 4, 3, 'Iron Wraith', ['Gunner I','Evasion I','Leadership I'], 340, 400)">
+          <span class="dot dot-green"></span>
+          <div class="driver-name">Rex Harmon</div>
+          <div class="driver-meta"><span style="color:var(--amber)">Iron Wraith</span><span style="color:var(--dim)">Refl 4 · Guns 3</span></div>
+        </div>
+        <div class="driver-skills">Gunner I · Evasion I · Leadership I</div>
+
+        <div class="driver-row" onclick="openDriverCard('Sadie Vorne', 3, 2, 'Dust Devil', ['Mechanic I'], 180, 250)">
+          <span class="dot dot-yellow"></span>
+          <div class="driver-name">Sadie Vorne</div>
+          <div class="driver-meta"><span style="color:var(--amber)">Dust Devil</span><span style="color:var(--dim)">Refl 3 · Guns 2</span></div>
+        </div>
+        <div class="driver-skills">Mechanic I</div>
+
+        <div class="driver-row" onclick="openDriverCard('Cole Maddox', 5, 4, 'Available', ['Gunner II','Precision I'], 280, 500)">
+          <span class="dot dot-dim"></span>
+          <div class="driver-name">Cole Maddox</div>
+          <div class="driver-meta"><span style="color:var(--green)">Available</span><span style="color:var(--dim)">Refl 5 · Guns 4</span></div>
+        </div>
+        <div class="driver-skills">Gunner II · Precision I</div>
+
+        <div class="driver-row" onclick="openDriverCard('Vera Koss', 3, 3, 'On Mission', ['Medic I','Scout I'], 220, 300)">
+          <span class="dot dot-amber"></span>
+          <div class="driver-name">Vera Koss</div>
+          <div class="driver-meta"><span style="color:var(--amber)">On Mission</span><span style="color:var(--dim)">Refl 3 · Guns 3</span></div>
+        </div>
+        <div class="driver-skills">Medic I · Scout I</div>
+
+        <div class="driver-row" onclick="openDriverCard('Jack Thorn', 2, 2, 'Available', [], 90, 150)">
+          <span class="dot dot-dim"></span>
+          <div class="driver-name">Jack Thorn</div>
+          <div class="driver-meta"><span style="color:var(--green)">Available</span><span style="color:var(--dim)">Refl 2 · Guns 2</span></div>
+        </div>
+        <div class="driver-skills">—</div>
+      </div>
+      <div class="deployments-section">
+        <div class="deployments-title">Active Deployments</div>
+        <div class="deployment-row"><span>Dust Valley Run</span><span class="eta">14m</span></div>
+        <div class="deployment-row"><span>Border Escort</span><span class="eta">1h 42m</span></div>
+      </div>
+    </div>
+  </div>
+</div>
+</div>
+
+<!-- ── MODAL: FIGHT / SQUAD PICKER ────────────────────────────── -->
+<div class="modal-overlay" id="modal-fight" onclick="overlayClose(event,'modal-fight')">
+  <div class="modal">
+    <div class="modal-title">⚔ Select Squad — <span id="fight-vname"></span></div>
+    <div class="modal-body">
+      <p style="font-size:12px;color:var(--gray);margin-bottom:14px">Choose vehicles to bring into the arena. The selected vehicle leads; others support.</p>
+      <div id="squad-list">
+        <div class="squad-check"><input type="checkbox" checked disabled><div><div class="squad-vname">Iron Wraith <span style="color:var(--gray);font-size:11px">(lead)</span></div><div class="squad-vdetail">Rex Harmon · Refl 4 · Guns 3 · 2×MG / Rocket</div></div></div>
+        <div class="squad-check"><input type="checkbox"><div><div class="squad-vname">Phantom Lance</div><div class="squad-vwarn">⚠ No driver assigned — cannot deploy</div></div></div>
+      </div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn-ghost" onclick="closeModal('modal-fight')">Cancel</button>
+      <button class="btn btn-red" onclick="closeModal('modal-fight'); showToast('Joining arena...')">⚔ Enter Arena</button>
+    </div>
+  </div>
+</div>
+
+<!-- ── MODAL: REPAIR ──────────────────────────────────────────── -->
+<div class="modal-overlay" id="modal-repair" onclick="overlayClose(event,'modal-repair')">
+  <div class="modal">
+    <div class="modal-title">🔧 Repair Vehicle</div>
+    <div class="modal-body">
+      <div class="repair-detail">
+        <div class="repair-row"><span id="repair-vname">—</span></div>
+        <div class="repair-row"><span>Current armor</span><span id="repair-current" class="cost">—</span></div>
+        <div class="repair-row"><span>Repair to</span><span id="repair-max" style="color:var(--green)">—</span></div>
+        <div class="repair-row"><span>Cost</span><span id="repair-cost" class="cost">—</span></div>
+      </div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn-ghost" onclick="closeModal('modal-repair')">Cancel</button>
+      <button class="btn btn-yellow" onclick="closeModal('modal-repair'); showToast('Vehicle repaired!')">🔧 Confirm Repair</button>
+    </div>
+  </div>
+</div>
+
+<!-- ── MODAL: SELL ────────────────────────────────────────────── -->
+<div class="modal-overlay" id="modal-sell" onclick="overlayClose(event,'modal-sell')">
+  <div class="modal">
+    <div class="modal-title">💰 Sell Vehicle</div>
+    <div class="modal-body">
+      <div class="confirm-text">Sell <strong id="sell-vname">—</strong> for <strong id="sell-price" style="color:var(--yellow)">—</strong>?</div>
+      <div class="confirm-sub">This cannot be undone. Any driver assigned will be unassigned.</div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn-ghost" onclick="closeModal('modal-sell')">Cancel</button>
+      <button class="btn btn-red" onclick="closeModal('modal-sell'); showToast('Vehicle sold!')">💰 Confirm Sale</button>
+    </div>
+  </div>
+</div>
+
+<!-- ── MODAL: DRIVER CARD ─────────────────────────────────────── -->
+<div class="modal-overlay" id="modal-driver" onclick="overlayClose(event,'modal-driver')">
+  <div class="modal">
+    <div class="modal-title" id="driver-modal-title">Driver</div>
+    <div class="modal-body">
+      <div class="driver-card-grid">
+        <div class="driver-card-stat"><div class="driver-card-stat-label">Reflexes</div><div class="driver-card-stat-val" id="dc-refl">—</div></div>
+        <div class="driver-card-stat"><div class="driver-card-stat-label">Gunnery</div><div class="driver-card-stat-val" id="dc-guns">—</div></div>
+        <div class="driver-card-stat"><div class="driver-card-stat-label">Assignment</div><div class="driver-card-stat-val" id="dc-assignment" style="font-size:12px;margin-top:4px;color:var(--amber)">—</div></div>
+        <div class="driver-card-stat"><div class="driver-card-stat-label">XP</div><div class="driver-card-stat-val" id="dc-xp">—</div></div>
+      </div>
+      <div style="margin-bottom:8px;font-size:11px;color:var(--gray);text-transform:uppercase;letter-spacing:0.08em">Skills</div>
+      <div id="dc-skills"></div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn-ghost" onclick="closeModal('modal-driver')">Close</button>
+      <button class="btn btn-blue" id="dc-upgrade-btn" onclick="closeModal('modal-driver'); showToast('Skill upgraded!')">↑ Upgrade Skill</button>
+    </div>
+  </div>
+</div>
+
+<!-- ── MODAL: HIRE DRIVER ─────────────────────────────────────── -->
+<div class="modal-overlay" id="modal-hire" onclick="overlayClose(event,'modal-hire')">
+  <div class="modal">
+    <div class="modal-title">Hire Drivers</div>
+    <div class="modal-body">
+      <p style="font-size:12px;color:var(--gray);margin-bottom:14px">Available for hire in Midville:</p>
+      <div class="hire-candidate" onclick="hireCandidateSelected(this, 'Danny Crow', 2800)">
+        <span class="dot dot-dim"></span>
+        <div><div class="hire-name">Danny Crow</div><div class="hire-stats">Refl 3 · Guns 3 · No skills</div></div>
+        <div class="hire-fee">$2,800</div>
+      </div>
+      <div class="hire-candidate" onclick="hireCandidateSelected(this, 'Bix Tanner', 4200)">
+        <span class="dot dot-dim"></span>
+        <div><div class="hire-name">Bix Tanner</div><div class="hire-stats">Refl 4 · Guns 3 · Gunner I</div></div>
+        <div class="hire-fee">$4,200</div>
+      </div>
+      <div class="hire-candidate" onclick="hireCandidateSelected(this, 'Yola Renn', 3600)">
+        <span class="dot dot-dim"></span>
+        <div><div class="hire-name">Yola Renn</div><div class="hire-stats">Refl 3 · Guns 4 · Mechanic I</div></div>
+        <div class="hire-fee">$3,600</div>
+      </div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn-ghost" onclick="closeModal('modal-hire')">Cancel</button>
+    </div>
+  </div>
+</div>
+
+<!-- ── MODAL: GANG SETTINGS ───────────────────────────────────── -->
+<div class="modal-overlay" id="modal-gang" onclick="overlayClose(event,'modal-gang')">
+  <div class="modal">
+    <div class="modal-title">⚙ Gang Settings</div>
+    <div class="modal-body">
+      <div style="margin-bottom:12px">
+        <div style="font-size:11px;color:var(--gray);text-transform:uppercase;letter-spacing:0.08em;margin-bottom:6px">Gang Name</div>
+        <input type="text" value="Steel Wolves" style="width:100%;background:#1a1a1a;border:1px solid #333;color:#fff;font-family:var(--font);font-size:14px;padding:8px 10px;outline:none;">
+      </div>
+      <div>
+        <div style="font-size:11px;color:var(--gray);text-transform:uppercase;letter-spacing:0.08em;margin-bottom:6px">Gang Colour</div>
+        <div class="gang-color-row">
+          <div class="gang-color-swatch selected" style="background:#ff4444" onclick="selectColor(this)"></div>
+          <div class="gang-color-swatch" style="background:#ff8800" onclick="selectColor(this)"></div>
+          <div class="gang-color-swatch" style="background:#ffcc00" onclick="selectColor(this)"></div>
+          <div class="gang-color-swatch" style="background:#00ff88" onclick="selectColor(this)"></div>
+          <div class="gang-color-swatch" style="background:#00ccff" onclick="selectColor(this)"></div>
+          <div class="gang-color-swatch" style="background:#8844ff" onclick="selectColor(this)"></div>
+          <div class="gang-color-swatch" style="background:#ff44aa" onclick="selectColor(this)"></div>
+          <div class="gang-color-swatch" style="background:#aaaaaa" onclick="selectColor(this)"></div>
+        </div>
+      </div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn-ghost" onclick="closeModal('modal-gang')">Cancel</button>
+      <button class="btn btn-green" onclick="closeModal('modal-gang'); showToast('Gang settings saved!')">Save</button>
+    </div>
+  </div>
+</div>
+
+<!-- TOAST -->
+<div class="toast" id="toast"></div>
+
+<script>
+  function selectVehicle(card) {
+    document.querySelectorAll('.vehicle-card').forEach(c => c.classList.remove('selected'));
+    card.classList.add('selected');
+  }
+
+  function selectTab(btn) {
+    document.querySelectorAll('.arena-tab').forEach(t => t.classList.remove('active'));
+    btn.classList.add('active');
+  }
+
+  function openModal(id) {
+    document.getElementById(id).classList.add('open');
+  }
+  function closeModal(id) {
+    document.getElementById(id).classList.remove('open');
+  }
+  function overlayClose(e, id) {
+    if (e.target === e.currentTarget) closeModal(id);
+  }
+
+  function openFight(name) {
+    document.getElementById('fight-vname').textContent = name;
+    openModal('modal-fight');
+  }
+
+  function openRepair(name, cur, max, cost) {
+    document.getElementById('repair-vname').textContent = name;
+    document.getElementById('repair-current').textContent = cur + '/' + max;
+    document.getElementById('repair-max').textContent = max + '/' + max;
+    document.getElementById('repair-cost').textContent = '$' + cost.toLocaleString();
+    openModal('modal-repair');
+  }
+
+  function openSell(name, price) {
+    document.getElementById('sell-vname').textContent = name;
+    document.getElementById('sell-price').textContent = '$' + price.toLocaleString();
+    openModal('modal-sell');
+  }
+
+  function openDriverCard(name, refl, guns, assignment, skills, xp, maxXp) {
+    document.getElementById('driver-modal-title').textContent = name;
+    document.getElementById('dc-refl').textContent = refl;
+    document.getElementById('dc-guns').textContent = guns;
+    document.getElementById('dc-assignment').textContent = assignment;
+    document.getElementById('dc-xp').textContent = xp + ' / ' + maxXp;
+    const skillsEl = document.getElementById('dc-skills');
+    skillsEl.textContent = '';
+    if (skills.length) {
+      skills.forEach(s => {
+        const tag = document.createElement('span');
+        tag.className = 'skill-tag active';
+        tag.textContent = s;
+        skillsEl.appendChild(tag);
+      });
+    } else {
+      const empty = document.createElement('span');
+      empty.style.cssText = 'font-size:12px;color:var(--dim)';
+      empty.textContent = 'No skills yet';
+      skillsEl.appendChild(empty);
+    }
+    document.getElementById('dc-upgrade-btn').disabled = (xp < maxXp * 0.8);
+    openModal('modal-driver');
+  }
+
+  function hireCandidateSelected(el, name, fee) {
+    closeModal('modal-hire');
+    showToast(`Hired ${name} for $${fee.toLocaleString()}`);
+  }
+
+  function selectColor(el) {
+    document.querySelectorAll('.gang-color-swatch').forEach(s => s.classList.remove('selected'));
+    el.classList.add('selected');
+  }
+
+  let toastTimer;
+  function showToast(msg) {
+    const t = document.getElementById('toast');
+    t.textContent = msg;
+    t.classList.add('show');
+    clearTimeout(toastTimer);
+    toastTimer = setTimeout(() => t.classList.remove('show'), 2200);
+  }
+
+  // Keyboard: Escape closes any open modal
+  document.addEventListener('keydown', e => {
+    if (e.key === 'Escape') {
+      document.querySelectorAll('.modal-overlay.open').forEach(m => m.classList.remove('open'));
+    }
+  });
+</script>
+</body>
+</html>

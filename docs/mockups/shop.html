@@ -1,0 +1,345 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>CAR WARS — Shop</title>
+<link rel="stylesheet" href="shared.css">
+<style>
+  .content { display: flex; flex-direction: column; overflow: hidden; }
+
+  /* TABS */
+  .shop-tabs { padding: 10px 24px 0; border-bottom: 1px solid var(--border); display: flex; gap: 0; flex-shrink: 0; background: var(--panel); }
+  .shop-tab {
+    font-family: var(--font); font-size: 12px; padding: 8px 16px;
+    background: none; border: none; border-bottom: 2px solid transparent;
+    color: var(--gray); cursor: pointer; text-transform: uppercase;
+    letter-spacing: 0.07em; transition: all 0.1s; margin-bottom: -1px;
+  }
+  .shop-tab:hover { color: #ccc; }
+  .shop-tab.active { color: var(--red); border-bottom-color: var(--red); }
+
+  /* GRID */
+  .shop-grid { flex: 1; overflow-y: auto; padding: 16px 24px; display: grid; grid-template-columns: repeat(auto-fill, minmax(240px, 1fr)); gap: 12px; align-content: start; }
+
+  .vehicle-card {
+    background: var(--card); border: 1px solid var(--border);
+    display: flex; flex-direction: column; cursor: pointer;
+    transition: border-color 0.15s;
+  }
+  .vehicle-card:hover { border-color: #333; }
+  .vehicle-card.selected { border-color: var(--green); }
+
+  .card-thumb {
+    height: 110px; background: #111; display: flex; align-items: center;
+    justify-content: center; overflow: hidden; padding: 8px;
+    border-bottom: 1px solid var(--border);
+  }
+  .card-thumb svg { width: 90px; height: 90px; }
+
+  .card-body { padding: 11px 12px; flex: 1; display: flex; flex-direction: column; gap: 5px; }
+  .card-name { font-size: 14px; color: var(--green); font-weight: bold; text-transform: uppercase; letter-spacing: 0.04em; }
+  .card-div  { font-size: 10px; color: var(--yellow); }
+  .card-desc { font-size: 11px; color: #777; line-height: 1.4; flex: 1; }
+  .card-stats { font-size: 10px; color: var(--dim); margin-top: 4px; display: flex; gap: 10px; flex-wrap: wrap; }
+  .card-stats span { color: #888; }
+
+  .card-footer {
+    padding: 10px 12px; border-top: 1px solid var(--border);
+    display: flex; align-items: center; justify-content: space-between;
+  }
+  .card-price { font-size: 14px; color: var(--yellow); font-weight: bold; }
+  .card-price.cant-afford { color: var(--red); opacity: 0.7; }
+
+  /* BUY MODAL */
+  .buy-thumb { width: 120px; height: 120px; background: #1a1a1a; margin: 0 auto 16px; display: flex; align-items: center; justify-content: center; border: 1px solid var(--border); }
+  .buy-thumb svg { width: 96px; height: 96px; }
+  .buy-info { display: flex; flex-direction: column; gap: 6px; margin-bottom: 16px; }
+  .buy-row  { display: flex; justify-content: space-between; font-size: 13px; padding: 5px 0; border-bottom: 1px solid #1a1a1a; }
+  .buy-row:last-child { font-weight: bold; border: none; }
+  .buy-row .label { color: var(--gray); }
+  .buy-row .val   { color: #ccc; }
+  .buy-row .price { color: var(--yellow); }
+  .buy-row .after { color: var(--green); }
+  .buy-row .after.low { color: var(--red); }
+</style>
+</head>
+<body>
+<div class="mock-label">SHOP</div>
+<div class="shell">
+
+<nav class="sidebar">
+  <div class="gang-block" onclick="window.location='garage.html'">
+    <svg class="gang-emblem" viewBox="0 0 48 48" fill="none">
+      <polygon points="24,4 44,14 44,34 24,44 4,34 4,14" fill="#1a0000" stroke="#ff4444" stroke-width="1.5"/>
+      <text x="24" y="28" text-anchor="middle" fill="#ff4444" font-family="monospace" font-size="14" font-weight="bold">SW</text>
+    </svg>
+    <div class="gang-name">Steel Wolves</div>
+    <div class="gang-stats">
+      <div class="stat-row"><span class="stat-label">Treasury</span><span class="stat-val-yellow" id="treasury">$14,200</span></div>
+      <div class="stat-row"><span class="stat-label">Reputation</span><span class="stat-val-green">47</span></div>
+      <div class="stat-row"><span class="stat-label">Division</span><span class="stat-val-red">Div 2</span></div>
+    </div>
+  </div>
+  <div class="nav-links">
+    <div class="nav-section">Headquarters</div>
+    <a class="nav-item" href="garage.html"><i class="nav-icon">⚙</i> Garage</a>
+    <a class="nav-item active" href="shop.html"><i class="nav-icon">🛒</i> Shop</a>
+    <a class="nav-item" href="jobboard.html"><i class="nav-icon">📋</i> Job Board</a>
+    <div class="nav-section">Territory</div>
+    <a class="nav-item" href="worldmap.html"><i class="nav-icon">🗺</i> World Map</a>
+    <a class="nav-item" href="leaderboard.html"><i class="nav-icon">🏆</i> Leaderboard</a>
+    <div class="nav-section">Records</div>
+    <a class="nav-item" href="reports.html"><i class="nav-icon">📄</i> Reports <span class="nav-badge">3</span></a>
+    <a class="nav-item" href="activity.html"><i class="nav-icon">📡</i> Activity <span class="nav-badge">7</span></a>
+  </div>
+  <div class="sidebar-footer"><button class="logout-btn">⏏ Logout</button></div>
+</nav>
+
+<div class="main">
+  <div class="page-header">
+    <div class="page-title">Vehicle Shop</div>
+    <div class="page-subtitle">AADA Official Catalogue · Vol 3</div>
+  </div>
+
+  <div class="content">
+    <div class="shop-tabs">
+      <button class="shop-tab active" onclick="filterDiv(this,'all')">All</button>
+      <button class="shop-tab" onclick="filterDiv(this,'1')">Div 1</button>
+      <button class="shop-tab" onclick="filterDiv(this,'2')">Div 2</button>
+      <button class="shop-tab" onclick="filterDiv(this,'3')">Div 3</button>
+      <button class="shop-tab" onclick="filterDiv(this,'4')">Div 4</button>
+    </div>
+
+    <div class="shop-grid" id="shop-grid">
+
+      <!-- DIV 1 VEHICLES -->
+      <div class="vehicle-card" data-div="1" onclick="selectCard(this); openBuy('Falcon Lite','1','4,800',4800,'A nimble Div 1 runner — fast and cheap but thin armour.','Speed 8 · Armour 35 · Load 3')">
+        <div class="card-thumb">
+          <svg viewBox="0 0 80 80" fill="none">
+            <ellipse cx="40" cy="44" rx="24" ry="14" fill="#0d1a2a" stroke="#88aaff" stroke-width="1.2"/>
+            <rect x="22" y="32" width="36" height="10" rx="2" fill="#0a1520" stroke="#88aaff" stroke-width="0.8"/>
+            <ellipse cx="22" cy="50" rx="7" ry="5" fill="#111" stroke="#333" stroke-width="1"/>
+            <ellipse cx="58" cy="50" rx="7" ry="5" fill="#111" stroke="#333" stroke-width="1"/>
+            <ellipse cx="22" cy="38" rx="7" ry="5" fill="#111" stroke="#333" stroke-width="1"/>
+            <ellipse cx="58" cy="38" rx="7" ry="5" fill="#111" stroke="#333" stroke-width="1"/>
+          </svg>
+        </div>
+        <div class="card-body">
+          <div class="card-name">Falcon Lite</div>
+          <div class="card-div">Division 1</div>
+          <div class="card-desc">Lightweight compact. Bare minimum armour, stripped for speed. Popular with scouts.</div>
+          <div class="card-stats"><span>Spd 8</span><span>Arm 35</span><span>Load 3</span></div>
+        </div>
+        <div class="card-footer">
+          <div class="card-price">$4,800</div>
+          <button class="btn btn-green" style="font-size:11px;padding:4px 10px" onclick="event.stopPropagation(); openBuy('Falcon Lite','1','4,800',4800,'A nimble Div 1 runner.','Speed 8 · Armour 35')">Buy</button>
+        </div>
+      </div>
+
+      <div class="vehicle-card" data-div="1" onclick="selectCard(this); openBuy('Rustler','1','5,200',5200,'Rugged entry-level pickup. More armour than the Lite.','Speed 6 · Armour 45 · Load 5')">
+        <div class="card-thumb">
+          <svg viewBox="0 0 80 80" fill="none">
+            <rect x="16" y="30" width="48" height="26" rx="3" fill="#1a1200" stroke="#ffcc00" stroke-width="1.2"/>
+            <rect x="22" y="22" width="30" height="14" rx="2" fill="#0d0d00" stroke="#ffcc00" stroke-width="0.8"/>
+            <ellipse cx="22" cy="56" rx="7" ry="5" fill="#111" stroke="#444" stroke-width="1"/>
+            <ellipse cx="58" cy="56" rx="7" ry="5" fill="#111" stroke="#444" stroke-width="1"/>
+            <ellipse cx="22" cy="34" rx="7" ry="5" fill="#111" stroke="#444" stroke-width="1"/>
+            <ellipse cx="58" cy="34" rx="7" ry="5" fill="#111" stroke="#444" stroke-width="1"/>
+          </svg>
+        </div>
+        <div class="card-body">
+          <div class="card-name">Rustler</div>
+          <div class="card-div">Division 1</div>
+          <div class="card-desc">Tough entry-level pickup. Extra armour at the cost of speed. Good for beginners.</div>
+          <div class="card-stats"><span>Spd 6</span><span>Arm 45</span><span>Load 5</span></div>
+        </div>
+        <div class="card-footer">
+          <div class="card-price">$5,200</div>
+          <button class="btn btn-green" style="font-size:11px;padding:4px 10px" onclick="event.stopPropagation(); openBuy('Rustler','1','5,200',5200,'Rugged entry-level pickup.','Speed 6 · Armour 45')">Buy</button>
+        </div>
+      </div>
+
+      <!-- DIV 2 VEHICLES -->
+      <div class="vehicle-card" data-div="2" onclick="selectCard(this)">
+        <div class="card-thumb">
+          <svg viewBox="0 0 80 80" fill="none">
+            <rect x="14" y="28" width="52" height="30" rx="3" fill="#1a2a1a" stroke="#00ff88" stroke-width="1.2"/>
+            <rect x="20" y="20" width="36" height="14" rx="2" fill="#0d1a0d" stroke="#00ff88" stroke-width="0.8"/>
+            <ellipse cx="22" cy="58" rx="8" ry="5" fill="#111" stroke="#333" stroke-width="1"/>
+            <ellipse cx="58" cy="58" rx="8" ry="5" fill="#111" stroke="#333" stroke-width="1"/>
+            <ellipse cx="22" cy="32" rx="8" ry="5" fill="#111" stroke="#333" stroke-width="1"/>
+            <ellipse cx="58" cy="32" rx="8" ry="5" fill="#111" stroke="#333" stroke-width="1"/>
+            <rect x="30" y="40" width="20" height="4" fill="#00ff88" opacity="0.3"/>
+          </svg>
+        </div>
+        <div class="card-body">
+          <div class="card-name">Interceptor Mk2</div>
+          <div class="card-div">Division 2</div>
+          <div class="card-desc">Balanced mid-tier combat car. Reliable in both offence and defence. The workhorse of Div 2.</div>
+          <div class="card-stats"><span>Spd 7</span><span>Arm 55</span><span>Load 7</span></div>
+        </div>
+        <div class="card-footer">
+          <div class="card-price">$8,600</div>
+          <button class="btn btn-green" style="font-size:11px;padding:4px 10px" onclick="event.stopPropagation(); openBuy('Interceptor Mk2','2','8,600',8600,'Balanced mid-tier combat car.','Speed 7 · Armour 55')">Buy</button>
+        </div>
+      </div>
+
+      <div class="vehicle-card" data-div="2" onclick="selectCard(this)">
+        <div class="card-thumb">
+          <svg viewBox="0 0 80 80" fill="none">
+            <rect x="18" y="26" width="44" height="30" rx="4" fill="#2a1a00" stroke="#ff8800" stroke-width="1.2"/>
+            <rect x="24" y="18" width="28" height="14" rx="2" fill="#1a0d00" stroke="#ff8800" stroke-width="0.8"/>
+            <ellipse cx="22" cy="56" rx="7" ry="5" fill="#111" stroke="#444" stroke-width="1"/>
+            <ellipse cx="58" cy="56" rx="7" ry="5" fill="#111" stroke="#444" stroke-width="1"/>
+            <ellipse cx="22" cy="30" rx="7" ry="5" fill="#111" stroke="#444" stroke-width="1"/>
+            <ellipse cx="58" cy="30" rx="7" ry="5" fill="#111" stroke="#444" stroke-width="1"/>
+            <rect x="26" y="34" width="4" height="10" fill="#ff8800" opacity="0.6"/>
+            <rect x="50" y="34" width="4" height="10" fill="#ff8800" opacity="0.6"/>
+          </svg>
+        </div>
+        <div class="card-body">
+          <div class="card-name">Blaze Runner</div>
+          <div class="card-div">Division 2</div>
+          <div class="card-desc">High-speed attack platform. Sacrifices armour for firepower mounts. Glass cannon of Div 2.</div>
+          <div class="card-stats"><span>Spd 9</span><span>Arm 40</span><span>Load 9</span></div>
+        </div>
+        <div class="card-footer">
+          <div class="card-price">$9,400</div>
+          <button class="btn btn-green" style="font-size:11px;padding:4px 10px" onclick="event.stopPropagation(); openBuy('Blaze Runner','2','9,400',9400,'High-speed attack platform.','Speed 9 · Armour 40')">Buy</button>
+        </div>
+      </div>
+
+      <!-- DIV 3 VEHICLES -->
+      <div class="vehicle-card" data-div="3" onclick="selectCard(this)">
+        <div class="card-thumb">
+          <svg viewBox="0 0 80 80" fill="none">
+            <rect x="10" y="24" width="60" height="34" rx="4" fill="#1a0000" stroke="#ff4444" stroke-width="1.5"/>
+            <rect x="18" y="16" width="40" height="14" rx="2" fill="#0d0000" stroke="#ff4444" stroke-width="1"/>
+            <ellipse cx="20" cy="58" rx="9" ry="6" fill="#111" stroke="#333" stroke-width="1"/>
+            <ellipse cx="60" cy="58" rx="9" ry="6" fill="#111" stroke="#333" stroke-width="1"/>
+            <ellipse cx="20" cy="28" rx="9" ry="6" fill="#111" stroke="#333" stroke-width="1"/>
+            <ellipse cx="60" cy="28" rx="9" ry="6" fill="#111" stroke="#333" stroke-width="1"/>
+            <rect x="32" y="30" width="16" height="6" rx="1" fill="#ff4444" opacity="0.4"/>
+            <line x1="20" y1="40" x2="60" y2="40" stroke="#ff4444" stroke-width="0.8" opacity="0.5"/>
+          </svg>
+        </div>
+        <div class="card-body">
+          <div class="card-name">Warlord</div>
+          <div class="card-div">Division 3</div>
+          <div class="card-desc">Heavy battle tank for serious arena veterans. Massive armour, devastating firepower.</div>
+          <div class="card-stats"><span>Spd 5</span><span>Arm 80</span><span>Load 14</span></div>
+        </div>
+        <div class="card-footer">
+          <div class="card-price cant-afford">$16,500</div>
+          <button class="btn" disabled style="font-size:11px;padding:4px 10px">No Funds</button>
+        </div>
+      </div>
+
+      <!-- DIV 4 VEHICLES -->
+      <div class="vehicle-card" data-div="4" onclick="selectCard(this)">
+        <div class="card-thumb">
+          <svg viewBox="0 0 80 80" fill="none">
+            <rect x="8" y="22" width="64" height="38" rx="5" fill="#1a001a" stroke="#ff88cc" stroke-width="1.5"/>
+            <rect x="16" y="14" width="44" height="14" rx="2" fill="#0d000d" stroke="#ff88cc" stroke-width="1"/>
+            <ellipse cx="18" cy="60" rx="9" ry="6" fill="#111" stroke="#444" stroke-width="1"/>
+            <ellipse cx="62" cy="60" rx="9" ry="6" fill="#111" stroke="#444" stroke-width="1"/>
+            <ellipse cx="18" cy="26" rx="9" ry="6" fill="#111" stroke="#444" stroke-width="1"/>
+            <ellipse cx="62" cy="26" rx="9" ry="6" fill="#111" stroke="#444" stroke-width="1"/>
+            <rect x="28" y="28" width="24" height="8" rx="2" fill="#ff88cc" opacity="0.3"/>
+            <circle cx="28" cy="41" r="3" fill="#ff88cc" opacity="0.7"/>
+            <circle cx="52" cy="41" r="3" fill="#ff88cc" opacity="0.7"/>
+          </svg>
+        </div>
+        <div class="card-body">
+          <div class="card-name">Nemesis X</div>
+          <div class="card-div">Division 4</div>
+          <div class="card-desc">The pinnacle of armed vehicular combat. Experimental armour and twin heavy weapon mounts.</div>
+          <div class="card-stats"><span>Spd 6</span><span>Arm 100</span><span>Load 20</span></div>
+        </div>
+        <div class="card-footer">
+          <div class="card-price cant-afford">$28,000</div>
+          <button class="btn" disabled style="font-size:11px;padding:4px 10px">No Funds</button>
+        </div>
+      </div>
+
+    </div>
+  </div>
+</div>
+</div>
+
+<!-- BUY MODAL -->
+<div class="modal-overlay" id="modal-buy" onclick="if(event.target===this)this.classList.remove('open')">
+  <div class="modal" style="max-width:380px">
+    <div class="modal-title">Purchase Vehicle</div>
+    <div class="modal-body">
+      <div class="buy-info">
+        <div class="buy-row"><span class="label">Vehicle</span><span class="val" id="buy-name">—</span></div>
+        <div class="buy-row"><span class="label">Division</span><span class="val" id="buy-div">—</span></div>
+        <div class="buy-row"><span class="label">Specs</span><span class="val" id="buy-specs" style="font-size:11px">—</span></div>
+        <div class="buy-row"><span class="label">Price</span><span class="price" id="buy-price">—</span></div>
+        <div class="buy-row"><span class="label">Treasury after</span><span id="buy-after">—</span></div>
+      </div>
+      <div style="font-size:12px;color:var(--gray)">Vehicle will be added to your garage with no weapons or driver installed.</div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn-ghost" onclick="document.getElementById('modal-buy').classList.remove('open')">Cancel</button>
+      <button class="btn btn-green" id="buy-confirm-btn" onclick="confirmBuy()">Buy Vehicle</button>
+    </div>
+  </div>
+</div>
+
+<div class="toast" id="toast"></div>
+
+<script>
+let pendingCost = 0;
+let treasury = 14200;
+
+function filterDiv(btn, div) {
+  document.querySelectorAll('.shop-tab').forEach(t => t.classList.remove('active'));
+  btn.classList.add('active');
+  document.querySelectorAll('.vehicle-card').forEach(card => {
+    card.style.display = (div === 'all' || card.dataset.div === div) ? '' : 'none';
+  });
+}
+
+function selectCard(card) {
+  document.querySelectorAll('.vehicle-card').forEach(c => c.classList.remove('selected'));
+  card.classList.add('selected');
+}
+
+function openBuy(name, div, priceStr, price, desc, specs) {
+  pendingCost = price;
+  const after = treasury - price;
+  document.getElementById('buy-name').textContent = name;
+  document.getElementById('buy-div').textContent = 'Division ' + div;
+  document.getElementById('buy-specs').textContent = specs;
+  document.getElementById('buy-price').textContent = '$' + priceStr;
+  const afterEl = document.getElementById('buy-after');
+  afterEl.textContent = '$' + after.toLocaleString();
+  afterEl.className = after < 2000 ? 'after low' : 'after';
+  document.getElementById('buy-confirm-btn').disabled = after < 0;
+  document.getElementById('modal-buy').classList.add('open');
+}
+
+function confirmBuy() {
+  treasury -= pendingCost;
+  document.getElementById('treasury').textContent = '$' + treasury.toLocaleString();
+  document.getElementById('modal-buy').classList.remove('open');
+  showToast('Vehicle purchased! Check your garage.');
+}
+
+let toastTimer;
+function showToast(msg) {
+  const t = document.getElementById('toast');
+  t.textContent = msg;
+  t.classList.add('show');
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(() => t.classList.remove('show'), 2200);
+}
+document.addEventListener('keydown', e => {
+  if (e.key === 'Escape') document.querySelectorAll('.modal-overlay.open').forEach(m => m.classList.remove('open'));
+});
+</script>
+</body>
+</html>
