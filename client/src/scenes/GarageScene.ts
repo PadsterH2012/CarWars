@@ -179,11 +179,210 @@ export class GarageScene extends Phaser.Scene {
   }
 
   private rebuildMain(): void {
-    renderInto(this.mainEl, '<p style="color:#555;padding:24px;font-family:monospace;font-size:13px">Loading vehicles...</p>');
+    renderInto(this.mainEl, `
+      <div class="topbar">${this.buildArenaTabsHTML()}</div>
+      <div class="garage-content">
+        <div class="vehicle-panel" id="garage-vehicle-panel">${this.buildVehicleListHTML()}</div>
+        <div class="crew-panel" id="garage-crew-panel">${this.buildCrewPanelHTML()}</div>
+      </div>
+    `);
   }
 
-  private onClick(_e: MouseEvent): void {
-    // Filled in by subsequent tasks
+  private buildArenaTabsHTML(): string {
+    const maps = ['Truck Stop', 'Town Square', 'Open Arena', 'Double Drum'];
+    const selectedMap = localStorage.getItem('cw_selected_map') ?? maps[0];
+    const tabs = maps.map(m =>
+      `<button class="arena-tab${m === selectedMap ? ' active' : ''}"
+               data-action="select-map" data-map="${esc(m)}">${esc(m)}</button>`
+    ).join('');
+    return `
+      <span class="topbar-label">Arena</span>
+      <div class="arena-tabs">${tabs}</div>
+      <div class="map-btns" style="margin-left:auto">
+        <button class="btn btn-ghost" data-action="view-map" style="font-size:11px;padding:4px 9px">View Map</button>
+        <button class="btn btn-ghost" data-action="edit-map" style="font-size:11px;padding:4px 9px">Edit Map</button>
+      </div>`;
+  }
+
+  /** Sum all per-facing values in an armor object. */
+  private sumArmor(armorObj: Record<string, number> | undefined): number {
+    if (!armorObj) return 0;
+    return Object.values(armorObj).reduce((s, v) => s + (v ?? 0), 0);
+  }
+
+  private buildVehicleListHTML(): string {
+    if (!this.vehicles.length) {
+      return `<div class="panel-heading">
+        <span>Vehicles (0)</span>
+        <button class="btn btn-green" data-action="build-new" style="font-size:11px;padding:4px 10px">+ Build New</button>
+      </div>
+      <p style="color:var(--gray);padding:16px;font-size:13px">No vehicles yet — buy one from the Shop.</p>`;
+    }
+
+    const cards = this.vehicles.map(v => {
+      const driver = this.drivers.find(d => d.assigned_vehicle_id === v.id && d.alive);
+      const isSelected = v.id === this.selectedVehicleId;
+
+      const maxArmor = this.sumArmor(v.loadout?.armor);
+      const curArmor = this.sumArmor(v.damage_state?.armor);
+      const armourPct = maxArmor > 0 ? curArmor / maxArmor : 1;
+      const nameColor = v.damage_state?.destroyed ? 'vn-gray'
+        : armourPct > 0.6 ? 'vn-green'
+        : armourPct > 0.2 ? 'vn-yellow'
+        : 'vn-red';
+      const dotColor = v.damage_state?.destroyed ? 'dot-dim'
+        : v.status === 'in_arena' ? 'dot-amber'
+        : v.status === 'deployed' || v.status === 'on_job' ? 'dot-yellow'
+        : armourPct > 0.5 ? 'dot-green'
+        : armourPct > 0.2 ? 'dot-yellow'
+        : 'dot-red';
+
+      const canFight = !!driver && !v.damage_state?.destroyed && v.status === 'available';
+
+      // Build a weapon summary from the loadout mounts
+      const mounts: any[] = v.loadout?.mounts ?? [];
+      const weaponsSummary = mounts
+        .filter((m: any) => m.weapon)
+        .map((m: any) => m.weapon.name ?? m.weapon.id ?? '')
+        .filter(Boolean)
+        .join(', ');
+
+      const needsRepair = !v.damage_state?.destroyed && curArmor < maxArmor;
+
+      return `
+        <div class="vehicle-card${isSelected ? ' selected' : ''}" data-vehicle-id="${esc(v.id)}">
+          <div class="vehicle-thumb">
+            <span class="dot ${dotColor}" style="position:absolute;top:4px;right:4px"></span>
+          </div>
+          <div class="vehicle-info">
+            <div class="vehicle-name ${nameColor}">${esc(v.name)}</div>
+            <div class="vehicle-meta">
+              <span>Value <span class="val">$${esc(v.value?.toLocaleString() ?? '0')}</span></span>
+              <span>Div <span class="val">${esc(this.division)}</span></span>
+              <span>Armor <span class="val">${esc(curArmor)}/${esc(maxArmor)}</span></span>
+              ${v.status && v.status !== 'available' ? `<span style="color:var(--amber)">${esc(v.status.replace('_', ' '))}</span>` : ''}
+            </div>
+            <div class="vehicle-driver${driver ? '' : ' unassigned'}">
+              ${driver
+                ? `<span class="dot dot-green"></span> ${esc(driver.name)} · Skill ${esc(driver.skill)}`
+                : '— No driver assigned'}
+            </div>
+            <div class="vehicle-weapons">${esc(weaponsSummary)}</div>
+            <div class="vehicle-actions">
+              <button class="btn btn-red" ${canFight ? '' : 'disabled'}
+                data-action="fight" data-vehicle-id="${esc(v.id)}">Fight</button>
+              ${needsRepair
+                ? `<button class="btn btn-yellow" data-action="repair" data-vehicle-id="${esc(v.id)}">Repair</button>`
+                : ''}
+              <button class="btn btn-blue" data-action="workshop" data-vehicle-id="${esc(v.id)}">Workshop</button>
+              <button class="btn" data-action="sell" data-vehicle-id="${esc(v.id)}">Sell</button>
+            </div>
+          </div>
+        </div>`;
+    }).join('');
+
+    return `
+      <div class="panel-heading">
+        <span>Vehicles (${esc(this.vehicles.length)})</span>
+        <button class="btn btn-green" data-action="build-new" style="font-size:11px;padding:4px 10px">+ Build New</button>
+      </div>
+      ${cards}`;
+  }
+
+  private buildCrewPanelHTML(): string {
+    const driverRows = this.drivers.map(d => {
+      const assignedVehicle = d.assigned_vehicle_id
+        ? this.vehicles.find(v => v.id === d.assigned_vehicle_id)?.name ?? 'Assigned'
+        : null;
+      const status = d.wounded ? 'Wounded'
+        : assignedVehicle ?? 'Available';
+      const dotClass = d.wounded ? 'dot-red'
+        : assignedVehicle ? 'dot-yellow'
+        : 'dot-dim';
+      const statusColor = d.wounded ? 'var(--red)'
+        : assignedVehicle ? 'var(--amber)'
+        : 'var(--green)';
+      const skillKeys = Object.keys(d.skills ?? {}).filter(k => (d.skills![k] ?? 0) > 0);
+      const skillSummary = skillKeys.length
+        ? skillKeys.map(k => `${k.replace(/_/g, ' ')} ${d.skills![k]}`).join(' · ')
+        : '—';
+
+      return `
+        <div class="driver-row" data-action="driver-card" data-driver-id="${esc(d.id)}">
+          <span class="dot ${dotClass}"></span>
+          <div class="driver-name">${esc(d.name)}</div>
+          <div class="driver-meta">
+            <span style="color:${statusColor};font-size:10px">${esc(status)}</span>
+            <span style="color:var(--dim);font-size:10px">Skill ${esc(d.skill)}</span>
+          </div>
+        </div>
+        <div class="driver-skills">${esc(skillSummary)}</div>`;
+    }).join('');
+
+    const deploymentRows = this.deployments.slice(0, 4).map(dep =>
+      `<div class="deployment-row">
+         <span>${esc(dep.assignment ?? dep.zone_id)}</span>
+         <span class="eta">${esc(fmtRemaining(dep.eta_seconds))}</span>
+       </div>`
+    ).join('');
+
+    return `
+      <div class="crew-header">
+        <span class="crew-title">Crew (${esc(this.drivers.length)})</span>
+        <button class="btn btn-green" data-action="hire" style="font-size:11px;padding:4px 8px">+ Hire</button>
+      </div>
+      <div class="driver-list">${driverRows || '<p style="color:var(--dim);font-size:12px;padding:12px 14px">No crew hired yet.</p>'}</div>
+      ${deploymentRows ? `
+        <div class="deployments-section">
+          <div class="deployments-title">Active Deployments</div>
+          ${deploymentRows}
+        </div>` : ''}`;
+  }
+
+  private rebuildVehiclePanel(): void {
+    const el = this.mainEl.querySelector('#garage-vehicle-panel') as HTMLElement | null;
+    if (el) renderInto(el, this.buildVehicleListHTML());
+  }
+
+  private onClick(e: MouseEvent): void {
+    const target = e.target as HTMLElement;
+
+    // Vehicle card selection (click on card but not a button)
+    const card = target.closest<HTMLElement>('.vehicle-card');
+    if (card && !target.closest('button')) {
+      this.selectedVehicleId = card.dataset.vehicleId ?? '';
+      this.rebuildVehiclePanel();
+      return;
+    }
+
+    const actionEl = target.closest<HTMLElement>('[data-action]');
+    if (!actionEl) return;
+    const action = actionEl.dataset.action!;
+
+    switch (action) {
+      case 'select-map': {
+        const map = actionEl.dataset.map ?? '';
+        localStorage.setItem('cw_selected_map', map);
+        const topbar = this.mainEl.querySelector('.topbar') as HTMLElement | null;
+        if (topbar) renderInto(topbar, this.buildArenaTabsHTML());
+        break;
+      }
+      case 'view-map':
+        this.scene.start('MapViewerScene', { token: this.token });
+        break;
+      case 'edit-map':
+        this.scene.start('MapEditorScene', { token: this.token });
+        break;
+      case 'build-new':
+        this.scene.start('VehicleDesignerScene', { token: this.token, mode: 'new' });
+        break;
+      case 'workshop': {
+        const vid = actionEl.dataset.vehicleId ?? '';
+        this.scene.start('VehicleDesignerScene', { token: this.token, vehicleId: vid });
+        break;
+      }
+      // fight, repair, sell, driver-card, hire handled in Task 6
+    }
   }
 
   private async doDefend(logEntryId: string): Promise<void> {
@@ -207,8 +406,9 @@ export class GarageScene extends Phaser.Scene {
     });
   }
 
-  private async doSimulate(logEntryId: string, btn: Phaser.GameObjects.Text): Promise<void> {
-    btn.setText('[SIMULATING...]').setColor('#888888');
+  private async doSimulate(logEntryId: string, btn: HTMLButtonElement): Promise<void> {
+    btn.textContent = '[SIMULATING...]';
+    btn.style.color = '#888888';
     const h = window.location.hostname;
     const res = await fetch(`http://${h}:3001/api/territory/attack/simulate`, {
       method: 'POST',
@@ -217,13 +417,14 @@ export class GarageScene extends Phaser.Scene {
     });
     if (!res.ok) {
       const err = await res.json().catch(() => ({}));
-      btn.setText('[SIMULATE]').setColor('#ffaa44');
+      btn.textContent = '[SIMULATE]';
+      btn.style.color = '#ffaa44';
       alert(err.error ?? 'Simulation failed');
       return;
     }
     const result = await res.json();
     this.activityLog = this.activityLog.filter(e => e.id !== logEntryId);
-    this.renderGarage();
+    this.rebuildMain();
     const msg = result.playerWon
       ? `DEFENSE SUCCESS vs ${result.gangName} — ${result.gangName} lost influence in ${result.settlementName}.${result.repairCost ? ` Repairs: $${result.repairCost.toLocaleString()}` : ''}`
       : `DEFENSE FAILED vs ${result.gangName} — you lost influence in ${result.settlementName}. Repairs: $${(result.repairCost ?? 0).toLocaleString()}`;
