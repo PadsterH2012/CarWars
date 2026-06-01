@@ -119,16 +119,9 @@ export function wireNavigation(root: HTMLElement, scene: Phaser.Scene, token: st
     const item = (e.target as HTMLElement).closest<HTMLElement>('[data-nav]');
     if (!item) return;
     e.preventDefault();
-    const id = item.dataset.nav!;
-    if (id === 'logout') {
-      localStorage.removeItem('cw_token');
-      scene.scene.start('LoginScene');
-      return;
-    }
-    const sceneName = NAV_SCENES[id];
+    const sceneName = NAV_SCENES[item.dataset.nav!];
     if (sceneName) scene.scene.start(sceneName, { token });
   });
-  // Also wire the logout button in sidebar footer
   root.querySelector('.logout-btn')?.addEventListener('click', () => {
     localStorage.removeItem('cw_token');
     scene.scene.start('LoginScene');
