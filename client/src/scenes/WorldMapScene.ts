@@ -17,7 +17,6 @@ const C_NODE_MARKET     = 0xff88ff;
 
 const C_CURRENT_RING = 0x00ff88;
 const C_HOVER_RING   = 0xffffff;
-const C_PANEL_BG     = 0x0f0f18;
 
 function nodeColour(kind: GeneratedSettlement["kind"]): number {
   switch (kind) {
@@ -195,6 +194,9 @@ class WorldMapScene extends Phaser.Scene {
       canvas.style.cssText = `display:block;width:${availW}px;height:${window.innerHeight}px;`;
       // Also update Phaser's scale manager so the map renders to the correct size
       this.scale.resize(availW, window.innerHeight);
+      // Sync uiCam immediately so first-frame overlays use the correct bounds
+      this.uiCam?.setPosition(0, 0);
+      this.uiCam?.setSize(availW, window.innerHeight);
     }
 
     // Panel overlay layer (travel panel + deploy panel)
