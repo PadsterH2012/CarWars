@@ -692,12 +692,48 @@ export class GarageScene extends Phaser.Scene {
     return Object.values(armorObj).reduce((s, v) => s + (v ?? 0), 0);
   }
 
+  // Storage label for the vehicle panel heading — "Vehicles (1/1)" when the
+  // garage status has loaded, plain count otherwise.
+  private vehicleCountLabel(): string {
+    const max = this.garage?.maxVehicles;
+    return max ? `${this.vehicles.length}/${max}` : `${this.vehicles.length}`;
+  }
+
+  // Garage bay status strip — storage usage plus either the bay's perks
+  // (owned) or a Buy button wired to POST /api/garages/purchase. Restores the
+  // purchase flow lost in the Phaser → HTML hub migration.
+  private buildGarageBayHTML(): string {
+    const g = this.garage;
+    if (!g) return '';
+    if (g.owned) {
+      const discount = Math.round((g.repairDiscount ?? 0) * 100);
+      return `
+        <div class="garage-bay owned">
+          <span class="dot dot-green"></span>
+          <span class="bay-note">Garage Bay — ${esc(g.vehicleCount)}/${esc(g.maxVehicles)} slots used</span>
+          <span class="bay-perks">${esc(discount)}% repair discount · $${esc((g.accumulatedIncome ?? 0).toLocaleString())} income earned</span>
+        </div>`;
+    }
+    const cost = g.cost ?? 50000;
+    const canAfford = this.money >= cost;
+    return `
+      <div class="garage-bay">
+        <span class="bay-note">No garage bay — storage capped at ${esc(g.maxVehicles)} vehicle${g.maxVehicles === 1 ? '' : 's'}.</span>
+        <button class="btn btn-green" data-action="buy-garage" ${canAfford ? '' : 'disabled'}
+          title="${canAfford ? 'Unlocks 3 vehicle slots, a repair discount and passive income' : `need $${esc((cost - this.money).toLocaleString())} more`}"
+          style="font-size:11px;padding:4px 10px">
+          Buy Garage Bay — $${esc(cost.toLocaleString())}
+        </button>
+      </div>`;
+  }
+
   private buildVehicleListHTML(): string {
     if (!this.vehicles.length) {
       return `<div class="panel-heading">
-        <span>Vehicles (0)</span>
+        <span>Vehicles (${esc(this.vehicleCountLabel())})</span>
         <button class="btn btn-green" data-action="build-new" style="font-size:11px;padding:4px 10px">+ Build New</button>
       </div>
+      ${this.buildGarageBayHTML()}
       <p style="color:var(--gray);padding:16px;font-size:13px">No vehicles yet — buy one from the Shop.</p>`;
     }
 
@@ -800,9 +836,10 @@ export class GarageScene extends Phaser.Scene {
 
     return `
       <div class="panel-heading">
-        <span>Vehicles (${esc(this.vehicles.length)})</span>
+        <span>Vehicles (${esc(this.vehicleCountLabel())})</span>
         <button class="btn btn-green" data-action="build-new" style="font-size:11px;padding:4px 10px">+ Build New</button>
       </div>
+      ${this.buildGarageBayHTML()}
       ${cards}`;
   }
 
@@ -940,6 +977,9 @@ export class GarageScene extends Phaser.Scene {
       case 'hire':
         this.openHireModal().catch(() => showToast(this.root, 'Could not load hire candidates.'));
         break;
+      case 'buy-garage':
+        this.doPurchaseGarageBay().catch(() => showToast(this.root, 'Garage purchase failed'));
+        break;
       case 'gang-settings':
         this.openGangSettingsModal();
         break;
@@ -987,6 +1027,22 @@ export class GarageScene extends Phaser.Scene {
         }
         break;
       }
+    }
+  }
+
+  // Buy a garage bay ($50k). On success, restart the scene so the storage cap,
+  // discount and income status all refresh from the server.
+  private async doPurchaseGarageBay(): Promise<void> {
+    const host = window.location.hostname;
+    const res = await fetch(`http://${host}:3001/api/garages/purchase`, {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${this.token}` },
+    });
+    if (res.ok) {
+      this.scene.restart({ token: this.token });
+    } else {
+      const body = await res.json().catch(() => ({}));
+      showToast(this.root, body.error ?? 'Garage purchase failed');
     }
   }
 

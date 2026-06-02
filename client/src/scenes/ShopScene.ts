@@ -32,6 +32,10 @@ interface Gang {
   reputation?: number; influence?: number;
 }
 
+interface GarageStatus {
+  owned: boolean; cost?: number; vehicleCount: number; maxVehicles: number;
+}
+
 export class ShopScene extends Phaser.Scene {
   private token = '';
   private treasury = 0;
@@ -43,6 +47,7 @@ export class ShopScene extends Phaser.Scene {
   private unreadReports = 0;
   private unreadActivity = 0;
   private stock: StockVehicle[] = [];
+  private garage: GarageStatus | null = null;
   private filter: 'all' | number = 'all';
   private root!: HTMLDivElement;
   private mainEl!: HTMLElement;
@@ -58,17 +63,20 @@ export class ShopScene extends Phaser.Scene {
     const host = window.location.hostname;
     const headers = { Authorization: `Bearer ${this.token}` };
 
-    const [stockRes, meRes, gangRes, repRes, actRes] = await Promise.all([
+    const [stockRes, meRes, gangRes, repRes, actRes, bayRes] = await Promise.all([
       fetch(`http://${host}:3001/api/stock`, { headers }),
       fetch(`http://${host}:3001/api/me`, { headers }),
       fetch(`http://${host}:3001/api/gangs/mine`, { headers }),
       fetch(`http://${host}:3001/api/reports/unread-count`, { headers }),
       fetch(`http://${host}:3001/api/territory/activity/unread-count`, { headers }),
+      // Storage cap status — used to disable Buy buttons and explain the limit.
+      fetch(`http://${host}:3001/api/garages`, { headers }),
     ]);
 
-    if (redirectIfUnauthorized(this, [stockRes, meRes, gangRes, repRes, actRes])) return;
+    if (redirectIfUnauthorized(this, [stockRes, meRes, gangRes, repRes, actRes, bayRes])) return;
 
     if (stockRes.ok) this.stock = await stockRes.json();
+    if (bayRes.ok) this.garage = await bayRes.json();
     if (meRes.ok) {
       const me = await meRes.json();
       if (typeof me.money === 'number') this.treasury = me.money;
@@ -148,6 +156,8 @@ export class ShopScene extends Phaser.Scene {
       const body = await res.json().catch(() => ({}));
       if (res.ok) {
         this.treasury = body.moneyRemaining ?? this.treasury;
+        // The new vehicle takes a storage slot — keep the cap banner/buttons accurate.
+        if (this.garage) this.garage.vehicleCount += 1;
         showToast(this.root, `${body.name} delivered to garage — $${this.treasury.toLocaleString()} left`);
         this.rebuildMain();
       } else {
@@ -189,7 +199,30 @@ export class ShopScene extends Phaser.Scene {
       .shop-price { color: var(--yellow); font-size: 13px; font-weight: bold; }
       .shop-empty { color: #666; text-align: center; padding: 40px; font-size: 13px; }
       .shop-source { padding: 8px 24px 16px; font-size: 10px; color: #555; }
+      .shop-storage-banner {
+        margin: 14px 24px 0; padding: 10px 14px;
+        background: #2a1a11; border: 1px solid var(--yellow); color: var(--yellow);
+        font-size: 12px; letter-spacing: 0.5px;
+      }
     </style>`;
+  }
+
+  // True when the player can't take delivery of another vehicle — the server
+  // would reject the purchase with "Vehicle limit reached".
+  private storageFull(): boolean {
+    return !!this.garage && this.garage.vehicleCount >= this.garage.maxVehicles;
+  }
+
+  private renderStorageBanner(): string {
+    if (!this.storageFull()) return '';
+    const g = this.garage!;
+    const hint = g.owned
+      ? 'Sell or scrap a vehicle to free up a slot.'
+      : 'Buy a garage bay in the Garage to unlock more slots.';
+    return `
+      <div class="shop-storage-banner">
+        ⚠ Garage storage full (${esc(g.vehicleCount)}/${esc(g.maxVehicles)}) — ${esc(hint)}
+      </div>`;
   }
 
   private buildMainHTML(): string {
@@ -200,6 +233,7 @@ export class ShopScene extends Phaser.Scene {
       </div>
       <div class="topbar">${this.renderTabs()}</div>
       <div class="content" style="overflow-y:auto;">
+        ${this.renderStorageBanner()}
         ${this.renderGrid()}
         <div class="shop-source">Source: AADA Vehicle Guide Vol 3</div>
       </div>`;
@@ -239,6 +273,12 @@ export class ShopScene extends Phaser.Scene {
       : '—';
     const armorTotal = Object.values(v.loadout.armor ?? {}).reduce((s, n) => s + (n as number), 0);
     const affordable = this.treasury >= v.cost;
+    const storageFull = this.storageFull();
+    const canBuy = affordable && !storageFull;
+    const buyLabel = storageFull ? 'Storage Full' : affordable ? 'Buy' : 'No Funds';
+    const buyTitle = storageFull
+      ? (this.garage?.owned ? 'garage storage full — sell a vehicle to free up a slot' : 'garage storage full — buy a garage bay to store more vehicles')
+      : affordable ? 'purchase & add to garage' : `need $${(v.cost - this.treasury).toLocaleString()} more`;
     const tint = this.tintFilterAttr();
 
     return `
@@ -264,9 +304,9 @@ export class ShopScene extends Phaser.Scene {
         <footer>
           <span class="shop-price">$${esc(v.cost.toLocaleString())}</span>
           <button class="btn btn-green" data-action="buy" data-value="${esc(v.id)}"
-                  ${affordable ? '' : 'disabled'}
-                  title="${affordable ? 'purchase & add to garage' : `need $${(v.cost - this.treasury).toLocaleString()} more`}">
-            ${affordable ? 'Buy' : 'No Funds'}
+                  ${canBuy ? '' : 'disabled'}
+                  title="${esc(buyTitle)}">
+            ${esc(buyLabel)}
           </button>
         </footer>
       </div>`;
