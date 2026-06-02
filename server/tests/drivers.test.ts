@@ -65,6 +65,36 @@ describe('driver CRUD', () => {
     expect(res.status).toBe(200);
   });
 
+  it('POST /api/drivers/assign displaces the previous driver on that vehicle', async () => {
+    // driverId is already assigned to a vehicle from the previous test —
+    // assigning a second driver to the same vehicle must unassign the first.
+    const db = getDb();
+    const prev = await db.query(`SELECT assigned_vehicle_id FROM drivers WHERE id = $1`, [driverId]);
+    const vehicleId = prev.rows[0].assigned_vehicle_id;
+    expect(vehicleId).toBeTruthy();
+
+    const hire = await request(app)
+      .post('/api/drivers')
+      .set('Authorization', `Bearer ${token}`)
+      .send({ name: 'Replacement Rita' });
+    const secondDriverId = hire.body.id;
+
+    const res = await request(app)
+      .post('/api/drivers/assign')
+      .set('Authorization', `Bearer ${token}`)
+      .send({ driverId: secondDriverId, vehicleId });
+    expect(res.status).toBe(200);
+
+    const after = await db.query(
+      `SELECT id, assigned_vehicle_id FROM drivers WHERE id = ANY(ARRAY[$1, $2]::uuid[])`,
+      [driverId, secondDriverId]
+    );
+    const first  = after.rows.find((r: any) => r.id === driverId);
+    const second = after.rows.find((r: any) => r.id === secondDriverId);
+    expect(second.assigned_vehicle_id).toBe(vehicleId);
+    expect(first.assigned_vehicle_id).toBeNull();
+  });
+
   it('GET /api/drivers/candidates returns tiered candidates with a tier field', async () => {
     const res = await request(app)
       .get('/api/drivers/candidates')

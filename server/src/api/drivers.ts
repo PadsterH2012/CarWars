@@ -135,7 +135,24 @@ driversRouter.post('/assign', async (req: AuthRequest, res) => {
   if (!driverCheck.rows.length) return res.status(403).json({ error: 'Driver not found' });
   if (!vehicleCheck.rows.length) return res.status(403).json({ error: 'Vehicle not found' });
 
-  await db.query(`UPDATE drivers SET assigned_vehicle_id = $1 WHERE id = $2`, [vehicleId, driverId]);
+  const client = await db.connect();
+  try {
+    await client.query('BEGIN');
+    // Displace any other driver currently on this vehicle so a vehicle never
+    // ends up with two assigned drivers.
+    await client.query(
+      `UPDATE drivers SET assigned_vehicle_id = NULL
+        WHERE assigned_vehicle_id = $1 AND player_id = $2 AND id != $3`,
+      [vehicleId, req.playerId, driverId]
+    );
+    await client.query(`UPDATE drivers SET assigned_vehicle_id = $1 WHERE id = $2`, [vehicleId, driverId]);
+    await client.query('COMMIT');
+  } catch (err) {
+    await client.query('ROLLBACK');
+    throw err;
+  } finally {
+    client.release();
+  }
   return res.json({ ok: true });
 });
 
