@@ -729,7 +729,13 @@ export class GarageScene extends Phaser.Scene {
         .filter(Boolean)
         .join(', ');
 
-      const needsRepair = !v.damage_state?.destroyed && curArmor < maxArmor;
+      // Anything broken — wrecked, lost armour, dead engine, blown tires —
+      // gets a Repair button. The repair endpoint restores wrecks too
+      // (it clears the destroyed flag).
+      const needsRepair = !!v.damage_state?.destroyed
+        || curArmor < maxArmor
+        || !!v.damage_state?.engineDamaged
+        || (v.damage_state?.tiresBlown?.length ?? 0) > 0;
 
       // Body sprite thumbnail — neutral-grey PNG tinted to the gang primary
       // colour via feColorMatrix, same approach as the Vehicle Designer.
@@ -768,6 +774,7 @@ export class GarageScene extends Phaser.Scene {
               <span>Value <span class="val">$${esc(v.value?.toLocaleString() ?? '0')}</span></span>
               <span>Div <span class="val">${esc(this.division)}</span></span>
               <span>Armor <span class="val">${esc(curArmor)}/${esc(maxArmor)}</span></span>
+              ${v.damage_state?.destroyed ? '<span style="color:var(--red);font-weight:bold">WRECKED</span>' : ''}
               ${v.status && v.status !== 'available' ? `<span style="color:var(--amber)">${esc(v.status.replace('_', ' '))}</span>` : ''}
             </div>
             <div class="vehicle-driver${driver ? '' : ' unassigned'}">
