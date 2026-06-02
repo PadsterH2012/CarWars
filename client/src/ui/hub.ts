@@ -93,12 +93,39 @@ export function redirectIfUnauthorized(scene: Phaser.Scene, responses: Response[
   return true;
 }
 
+// If a shell captured the Phaser canvas (WorldMapScene embeds it so the map
+// sits beside the sidebar), return it to the #game container before the shell
+// is discarded — otherwise the canvas silently drops out of the document and
+// Phaser-rendered scenes become invisible.
+function rescueCanvas(shell: Element): void {
+  const canvas = shell.querySelector('canvas');
+  if (canvas) {
+    canvas.style.cssText = '';
+    document.getElementById('game')?.appendChild(canvas);
+  }
+}
+
 export function createHubRoot(scene: Phaser.Scene): HTMLDivElement {
   const root = document.createElement('div');
   root.className = 'shell';
   root.style.cssText = 'position:fixed;inset:0;z-index:50;display:flex;';
+
+  // Hub scenes await API fetches before building their DOM, so by the time we
+  // get here the scene may already have been superseded (restarted, or the
+  // player navigated away mid-load). Installing a shell for a dead scene
+  // stacks an orphaned UI over the live one — return it detached instead so
+  // the superseded create() renders into the void.
+  if (scene.sys.settings.status >= Phaser.Scenes.SHUTDOWN) {
+    return root;
+  }
+
+  // At most one shell is ever legitimate. A scene restart mid-create can leave
+  // the previous create()'s shell behind (its SHUTDOWN cleanup wasn't
+  // registered yet when the restart fired) — clear any strays.
+  document.querySelectorAll('.shell').forEach(el => { rescueCanvas(el); el.remove(); });
+
   document.body.appendChild(root);
-  scene.events.once(Phaser.Scenes.Events.SHUTDOWN, () => root.remove());
+  scene.events.once(Phaser.Scenes.Events.SHUTDOWN, () => { rescueCanvas(root); root.remove(); });
   return root;
 }
 
