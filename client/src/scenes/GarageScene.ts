@@ -239,6 +239,17 @@ export class GarageScene extends Phaser.Scene {
         </div>
       </div>
 
+      <!-- Assign Driver to Vehicle -->
+      <div class="modal-overlay" id="modal-assign">
+        <div class="modal">
+          <div class="modal-title" id="modal-assign-title">Assign Driver</div>
+          <div class="modal-body" id="modal-assign-body"></div>
+          <div class="modal-footer">
+            <button class="btn btn-ghost" data-action="close-modal" data-modal="modal-assign">Cancel</button>
+          </div>
+        </div>
+      </div>
+
       <!-- Hire Drivers -->
       <div class="modal-overlay" id="modal-hire">
         <div class="modal" style="max-width:640px;">
@@ -469,6 +480,19 @@ export class GarageScene extends Phaser.Scene {
       ? '<div style="color:#555;font-size:11px;padding:8px 0;">No skills yet — earn XP by fighting!</div>'
       : skillRowsHtml;
 
+    // Assignment section — one button per vehicle. Wrecked vehicles are shown
+    // but disabled so the player can see why they can't be assigned.
+    const assignRows = this.vehicles.map(v => {
+      const isWrecked = !!v.damage_state?.destroyed;
+      const isCurrent = driver.assigned_vehicle_id === v.id;
+      const occupant = this.drivers.find(d => d.id !== driver.id && d.assigned_vehicle_id === v.id && d.alive);
+      const note = isWrecked ? ' (wrecked)' : isCurrent ? ' ✓' : occupant ? ` (replaces ${esc(occupant.name)})` : '';
+      const disabled = isCurrent || isWrecked;
+      return `<button class="btn${isCurrent ? ' btn-green' : ''}" data-action="assign-driver"
+                data-driver-id="${esc(driver.id)}" data-vehicle-id="${esc(v.id)}"
+                ${disabled ? 'disabled' : ''} style="font-size:11px;margin:2px 4px 2px 0;">${esc(v.name)}${note}</button>`;
+    }).join('');
+
     renderInto(bodyEl, `
       <div style="margin-bottom:4px;font-size:10px;color:#666;">PC STATS</div>
       <div style="display:flex;gap:20px;padding:8px 0;margin-bottom:4px;border-bottom:1px solid #2a2a44;">
@@ -480,6 +504,10 @@ export class GarageScene extends Phaser.Scene {
       </div>
       <div style="margin-bottom:4px;font-size:11px;color:#aac;">SKILLS</div>
       ${noSkillsMsg}
+      <div style="margin-top:12px;margin-bottom:4px;font-size:11px;color:#aac;">ASSIGN TO VEHICLE</div>
+      <div style="display:flex;flex-wrap:wrap;">
+        ${assignRows || '<span style="color:#555;font-size:11px;">No vehicles — buy one from the Shop.</span>'}
+      </div>
       <div style="margin-top:12px;font-size:11px;color:#666;">
         ${esc(driver.title ?? '')} · ${esc(assignedVehicle)}
       </div>
@@ -745,7 +773,9 @@ export class GarageScene extends Phaser.Scene {
             <div class="vehicle-driver${driver ? '' : ' unassigned'}">
               ${driver
                 ? `<span class="dot dot-green"></span> ${esc(driver.name)} · Skill ${esc(driver.skill)}`
-                : '— No driver assigned'}
+                : `— No driver assigned
+                   <button class="btn" data-action="assign-vehicle-driver" data-vehicle-id="${esc(v.id)}"
+                     style="font-size:10px;padding:2px 8px;margin-left:6px;">+ Assign Driver</button>`}
             </div>
             <div class="vehicle-weapons">${esc(weaponsSummary)}</div>
             <div class="vehicle-actions">
@@ -841,9 +871,11 @@ export class GarageScene extends Phaser.Scene {
       return;
     }
 
-    const actionEl = target.closest<HTMLElement>('[data-action]');
+    // data-attr / data-skill buttons (driver card upgrades) carry no
+    // data-action — include them so the default case below can handle them.
+    const actionEl = target.closest<HTMLElement>('[data-action],[data-attr],[data-skill]');
     if (!actionEl) return;
-    const action = actionEl.dataset.action!;
+    const action = actionEl.dataset.action ?? '';
 
     switch (action) {
       case 'select-map': {
@@ -885,6 +917,17 @@ export class GarageScene extends Phaser.Scene {
       case 'driver-card': {
         const did = actionEl.closest<HTMLElement>('[data-driver-id]')?.dataset.driverId ?? actionEl.dataset.driverId ?? '';
         this.openDriverCardModal(did);
+        break;
+      }
+      case 'assign-vehicle-driver': {
+        const vid = actionEl.dataset.vehicleId ?? '';
+        this.openAssignDriverModal(vid);
+        break;
+      }
+      case 'assign-driver': {
+        const did = actionEl.dataset.driverId ?? '';
+        const vid = actionEl.dataset.vehicleId ?? '';
+        this.doAssignDriver(did, vid);
         break;
       }
       case 'hire':
@@ -1000,6 +1043,63 @@ export class GarageScene extends Phaser.Scene {
       const body = await res.json().catch(() => ({}));
       showToast(this.root, body.error ?? 'Save failed');
     }
+  }
+
+  // ── Driver assignment ────────────────────────────────────────────────
+
+  // Vehicle-centric direction: pick a living driver for this vehicle.
+  private openAssignDriverModal(vehicleId: string): void {
+    const vehicle = this.vehicles.find(v => v.id === vehicleId);
+    if (!vehicle) return;
+    const titleEl = this.root.querySelector('#modal-assign-title') as HTMLElement | null;
+    if (titleEl) titleEl.textContent = `Assign Driver — ${vehicle.name}`;
+
+    const bodyEl = this.root.querySelector('#modal-assign-body') as HTMLElement;
+    const candidates = this.drivers.filter(d => d.alive);
+    const rows = candidates.map(d => {
+      const isCurrent = d.assigned_vehicle_id === vehicleId;
+      const currentVehicle = d.assigned_vehicle_id && !isCurrent
+        ? this.vehicles.find(v => v.id === d.assigned_vehicle_id)?.name ?? null
+        : null;
+      const note = isCurrent ? ' ✓ assigned'
+        : currentVehicle ? ` — currently on ${esc(currentVehicle)}`
+        : ' — unassigned';
+      return `<button class="btn${isCurrent ? ' btn-green' : ''}" data-action="assign-driver"
+                data-driver-id="${esc(d.id)}" data-vehicle-id="${esc(vehicleId)}"
+                ${isCurrent ? 'disabled' : ''}
+                style="display:block;width:100%;text-align:left;margin-bottom:6px;font-size:12px;">
+                ${esc(d.name)} · Skill ${esc(d.skill)}${note}</button>`;
+    }).join('');
+
+    renderInto(bodyEl, rows ||
+      '<p style="font-size:12px;color:var(--gray)">No living drivers — hire one from the crew panel.</p>');
+    this.openModal('modal-assign');
+  }
+
+  private async doAssignDriver(driverId: string, vehicleId: string): Promise<void> {
+    if (!driverId || !vehicleId) return;
+    const host = window.location.hostname;
+    const res = await fetch(`http://${host}:3001/api/drivers/assign`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${this.token}` },
+      body: JSON.stringify({ driverId, vehicleId }),
+    });
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({}));
+      showToast(this.root, err.error ?? 'Assignment failed');
+      return;
+    }
+    // Mirror the server's displacement rule locally, then re-render.
+    for (const d of this.drivers) {
+      if (d.assigned_vehicle_id === vehicleId && d.id !== driverId) d.assigned_vehicle_id = null;
+    }
+    const driver = this.drivers.find(d => d.id === driverId);
+    if (driver) driver.assigned_vehicle_id = vehicleId;
+    this.closeModal('modal-assign');
+    this.closeModal('modal-driver');
+    this.rebuildMain();
+    const vehicleName = this.vehicles.find(v => v.id === vehicleId)?.name ?? 'vehicle';
+    showToast(this.root, `${driver?.name ?? 'Driver'} assigned to ${vehicleName}`);
   }
 
   private async doAttrUpgrade(driverId: string, attrKey: string, cost: number): Promise<void> {
