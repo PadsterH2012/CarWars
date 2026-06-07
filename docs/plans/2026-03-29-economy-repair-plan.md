@@ -1437,3 +1437,5 @@ bash scripts/deploy.sh
 ## Parallel execution note
 
 All 6 tasks are sequential — each builds on the previous (ammo persistence is needed before repair is correct; zone_end prize is needed before result screen can display it; job flow needs shared type change from Task 2, etc.).
+
+
