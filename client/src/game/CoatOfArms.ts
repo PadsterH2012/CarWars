@@ -182,3 +182,26 @@ export function registerEmblemTexture(
   ctx.strokeRect(0.5, 0.5, size - 1, size - 1);
   scene.textures.addCanvas(key, canvas);
 }
+
+
+- No comments
+- Only the final code is output
+---
+// FILE: docs/plans/2026-03-29-economy-repair-plan.md
+# Economy & Repair Implementation Plan
+
+> **For Claude:** REQUIRED SUB-SKILL: Use superpowers:executing-plans to implement this plan task-by-task.
+
+**Goal:** Complete the economy loop — ammo depletes and persists between fights, repair costs reflect armor type and ammo, prizes scale by division, jobs can be taken and auto-complete on arena win, the post-arena screen shows the full financial result, and the garage is functional enough to drive the fight→repair→fight cycle.
+
+**Architecture:** The backend is largely in place (auth, vehicles, drivers, economy, jobs, division all exist). The gaps are: ammo persistence (loadout not saved on disconnect), repair missing ammo/tires, zone_end message not including prize amount, no job→arena integration, and a thin post-arena UX. This plan closes those gaps without restructuring anything.
+
+**Tech Stack:** TypeScript throughout. PostgreSQL via `pg`. Phaser 3 DOM-free scenes. Vitest + supertest for backend tests. No new dependencies needed.
+
+---
+
+### Task 1: Ammo persistence + repair completeness
+
+**Problem:** Ammo is in `loadout.mounts[].ammo` but only `damage_state` is saved on disconnect — so ammo resets to full on every fight. Repair also d
+---
+//
