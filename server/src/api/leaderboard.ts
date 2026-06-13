@@ -60,9 +60,20 @@ leaderboardRouter.get('/', requireAuth, async (req: AuthRequest, res) => {
       };
     });
 
-    const top20      = ranked.slice(0, 20);
-    const playerEntry = ranked.find(r => r.isPlayer);
-    const playerRank  = playerEntry?.rank ?? ranked.length + 1;
+    const top20 = ranked.slice(0, 20);
+    // Always surface the player's own row so the client can pin it even when the
+    // gang is outside the top 20 — or unranked entirely (a new gang with no
+    // influence has no zone_influence rows, so it isn't in `ranked`).
+    const playerEntry = ranked.find(r => r.isPlayer) ?? {
+      rank:            ranked.length + 1,
+      gangId:          playerGang.id,
+      gangName:        playerGang.name,
+      primaryColour:   playerGang.primary_colour,
+      isPlayer:        true,
+      totalInfluence:  0,
+      settlementCount: 0,
+    };
+    const playerRank = playerEntry.rank;
 
     // Endgame check: 3 real-time hours at #1 triggers the win state
     let endgame = false;
@@ -85,8 +96,11 @@ leaderboardRouter.get('/', requireAuth, async (req: AuthRequest, res) => {
 
     return res.json({
       entries:     top20,
+      playerEntry,
       playerRank,
-      totalGangs:  ranked.length,
+      // Count the player's gang too when it's unranked (no influence rows), so
+      // the footer reads "#19 of 19", not "#19 of 18".
+      totalGangs:  Math.max(ranked.length, playerRank),
       endgame,
       retired:     playerGang.retired,
       retireBonus: playerGang.retire_bonus,

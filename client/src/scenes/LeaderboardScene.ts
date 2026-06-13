@@ -13,6 +13,7 @@ interface LeaderboardEntry {
 
 interface LeaderboardData {
   entries: LeaderboardEntry[];
+  playerEntry?: LeaderboardEntry;
   playerRank: number;
   totalGangs: number;
   endgame: boolean;
@@ -99,11 +100,10 @@ export class LeaderboardScene extends Phaser.Scene {
   private buildMainHTML(): string {
     const d = this.data_;
 
-    const tableBody = d
-      ? d.entries.map(e => {
-          const hexColor = '#' + e.primaryColour.toString(16).padStart(6, '0');
-          const playerClass = e.isPlayer ? ' player-row' : '';
-          return `
+    const rowHtml = (e: LeaderboardEntry): string => {
+      const hexColor = '#' + e.primaryColour.toString(16).padStart(6, '0');
+      const playerClass = e.isPlayer ? ' player-row' : '';
+      return `
             <tr class="${playerClass}">
               <td class="rank">#${esc(e.rank)}</td>
               <td>
@@ -113,8 +113,21 @@ export class LeaderboardScene extends Phaser.Scene {
               <td class="pts">${esc(e.totalInfluence.toLocaleString())}</td>
               <td class="zones">${esc(e.settlementCount)}</td>
             </tr>`;
-        }).join('')
-      : `<tr><td colspan="4" style="padding:32px;text-align:center;color:var(--gray)">Loading…</td></tr>`;
+    };
+
+    let tableBody: string;
+    if (!d) {
+      tableBody = `<tr><td colspan="4" style="padding:32px;text-align:center;color:var(--gray)">Loading…</td></tr>`;
+    } else {
+      let rows = d.entries.map(rowHtml).join('');
+      // Pin the player's own row when it's not already in the visible top 20.
+      const inTop = d.entries.some(e => e.isPlayer);
+      if (!inTop && d.playerEntry) {
+        rows += `<tr><td colspan="4" style="text-align:center;color:var(--dim);padding:6px;">⋯</td></tr>`;
+        rows += rowHtml(d.playerEntry);
+      }
+      tableBody = rows;
+    }
 
     const endgameBanner = (d?.endgame && !d?.retired) ? `
       <div class="endgame-banner">
@@ -133,13 +146,13 @@ export class LeaderboardScene extends Phaser.Scene {
         </div>
       </div>` : '');
 
-    const playerRankFooter = (d && d.playerRank > 20) ? `
-      <div style="padding:12px 24px;border-top:1px solid var(--border);font-size:13px;color:var(--gold);">
-        Your rank: #${esc(d.playerRank)} of ${esc(d.totalGangs)} gangs
-      </div>` : (d ? `
+    const unranked = !!d && (d.playerEntry?.totalInfluence ?? 0) === 0;
+    const playerRankFooter = d ? `
       <div style="padding:12px 24px;border-top:1px solid var(--border);font-size:12px;color:var(--gray);">
-        ${esc(d.totalGangs)} gangs total
-      </div>` : '');
+        Your gang: #${esc(d.playerRank)} of ${esc(d.totalGangs)} gangs${unranked
+          ? ` — <span style="color:var(--amber)">no territory yet; take jobs and patrol settlements to gain influence</span>`
+          : ''}
+      </div>` : '';
 
     return `
       <div class="page-header">
