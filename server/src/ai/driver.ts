@@ -1,8 +1,12 @@
-import type { VehicleState, ArenaMap, SquadOrder } from '@carwars/shared';
+import type { VehicleState, ArenaMap, SquadOrder, Position } from '@carwars/shared';
 import { WEAPONS } from '../rules/data/weapons';
 import type { AiContext } from './types';
 import { ContextRing } from './context-ring';
 import { writeWallDanger, writeVehicleDanger, writeWreckageDanger, writeGoalInterest, writePathInterest } from './writers';
+import {
+  computeVisibleEnemies, rememberSightings, planSearch, scoutPoints, ambushPatience,
+  type Sighting,
+} from './perception';
 
 export type { AiContext } from './types';
 
@@ -32,6 +36,9 @@ interface DriverState {
   fireCooldown: number;   // ticks until next shot allowed (Car Wars: once per phase = 10 ticks)
   ring: ContextRing;      // per-vehicle context ring — mutated in place each tick
   ticksSinceLastFire: number;  // how long since this AI last pulled the trigger (for standoff-break)
+  memory: Map<string, Sighting>; // last-known position per enemy id (perception)
+  scoutTarget: Position | null;  // current rotating scout destination when searching
+  ambushTicks: number;           // consecutive ticks held in ambush (patience timeout)
 }
 const driverState = new Map<string, DriverState>();
 
@@ -57,6 +64,9 @@ function getState(vehicleId: string): DriverState {
       fireCooldown: 0,
       ring: new ContextRing(),
       ticksSinceLastFire: 0,
+      memory: new Map(),
+      scoutTarget: null,
+      ambushTicks: 0,
     });
   }
   return driverState.get(vehicleId)!;
@@ -302,6 +312,78 @@ function chooseTactic(
   return 'aggressive';
 }
 
+// Movement when no enemy is visible — pursue last-known, scout spawns/hotspots,
+// or hold and ambush. Reuses the danger writers already populated this tick
+// (walls/vehicles/wreckage) so navigation still avoids obstacles; the
+// pathfinder routes around buildings to the chosen goal.
+function computeSearchInput(
+  self: VehicleState,
+  ds: DriverState,
+  ctx: AiContext,
+  map: ArenaMap | undefined,
+): AiInput {
+  const skill = ctx.skill;
+  const aggression = ctx.aggression ?? 3;
+  const healthFrac = armorFrac(self);
+  const w = pickWeapon(self);
+  // Long-range loadouts prefer to lie in wait rather than chase blind.
+  const ambusher = !!w && (w.longRange ?? 0) >= 16 && aggression < 4;
+
+  const plan = planSearch({
+    self, memory: ds.memory, map, tick: ctx.tick, skill, aggression,
+    healthFrac, ambusher, scoutTarget: ds.scoutTarget,
+  });
+
+  // Ambush patience — hold only so long, then go hunting, so two cautious
+  // vehicles don't both wait forever.
+  if (plan.mode === 'ambush') {
+    ds.ambushTicks++;
+    if (ds.ambushTicks > ambushPatience(skill)) {
+      plan.mode = 'scout';
+      plan.hold = false;
+    }
+  } else {
+    ds.ambushTicks = 0;
+  }
+
+  if (plan.mode === 'pursue') {
+    ds.scoutTarget = null; // chasing a real sighting, not patrolling
+  } else {
+    // Adopt a scout target; rotate to a fresh one once this one is reached.
+    if (!ds.scoutTarget) ds.scoutTarget = plan.goal;
+    else if (dist2d(self.position, ds.scoutTarget) < 4) {
+      const pts = scoutPoints(self, map);
+      ds.scoutTarget = pts.find(p => dist2d(p, ds.scoutTarget!) > 4) ?? pts[0] ?? ds.scoutTarget;
+    }
+  }
+  const goal = plan.mode === 'pursue' ? plan.goal : (ds.scoutTarget ?? plan.goal);
+
+  const maxTurn = Math.round(MAX_TURN * (0.5 + (skill - 1) / 10));
+  const clampSteer = (b: number) => Math.max(-maxTurn, Math.min(maxTurn, shortestTurn(self.facing, b)));
+
+  if (plan.hold) {
+    // Ambush — hold position and turn to cover the likely approach.
+    console.log(`[SEARCH] ${self.id.padEnd(10)} AMBUSH hold → (${goal.x.toFixed(0)},${goal.y.toFixed(0)})`);
+    return { speed: 0, steer: clampSteer(bearingTo(self.position, goal)), fireWeapon: null };
+  }
+
+  // Route to the goal around walls; the ring (danger already written this tick)
+  // picks the safest heading near that route.
+  let bearing = bearingTo(self.position, goal);
+  const path = ctx.pathfinder?.find(self.position, goal);
+  if (path && path.length) {
+    const first = path.find(p => dist2d(self.position, p) >= 2) ?? path[path.length - 1];
+    bearing = bearingTo(self.position, first);
+  }
+  writeGoalInterest(ds.ring, self, bearing, 0.9);
+  const picked = ds.ring.pick(self.facing);
+  const speed = plan.mode === 'pursue'
+    ? Math.floor(self.stats.maxSpeed * 0.7)
+    : Math.floor(self.stats.maxSpeed * 0.55);
+  console.log(`[SEARCH] ${self.id.padEnd(10)} ${plan.mode.toUpperCase()} → (${goal.x.toFixed(0)},${goal.y.toFixed(0)}) spd=${speed}`);
+  return { speed, steer: clampSteer(picked.bearing), fireWeapon: null };
+}
+
 // ── Main AI function ─────────────────────────────────────────────────────────
 
 export function computeAiInput(
@@ -438,11 +520,26 @@ export function computeAiInput(
     ds.orbitFlipIn = 40 + Math.floor(Math.random() * 40);
   }
 
-  // Attack order pins target selection to a specific enemy if it's still alive
+  // ── Perception: what can we actually SEE this tick? ──────────────────────
+  // Gates the omniscient enemy list by sensor range + line-of-sight, and
+  // refreshes last-known memory. When nothing is visible the driver searches
+  // (pursue last-known → scout spawns/hotspots → hold and ambush) instead of
+  // tracking the enemy perfectly through walls.
+  const visibleEnemies = computeVisibleEnemies(self, enemies, map?.walls ?? [], skill);
+  rememberSightings(ds.memory, visibleEnemies, ctx.tick);
+
+  // A commander 'attack' order designates a target even out of sight (the
+  // player saw it); autonomous targeting only uses what the AI can see.
   const attackTarget = order?.type === 'attack'
     ? enemies.find(e => e.id === order.targetId)
     : undefined;
-  const target = attackTarget ?? pickTarget(self, enemies, ctx);
+
+  if (!attackTarget && visibleEnemies.length === 0) {
+    return computeSearchInput(self, ds, ctx, map);
+  }
+
+  const target = attackTarget ?? pickTarget(self, visibleEnemies, ctx);
+  ds.ambushTicks = 0; // back in contact — reset ambush patience
   const d = dist2d(self.position, target.position);
   const bearing = bearingTo(self.position, target.position);
   const w = pickWeapon(self);

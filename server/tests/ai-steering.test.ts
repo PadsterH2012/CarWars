@@ -131,6 +131,17 @@ describe('AI steering — scenario tests', () => {
     expect(auto.speed).toBeLessThanOrEqual(10);
   });
 
+  it('does not fire at an enemy hidden behind a wall (no line of sight)', () => {
+    // Wall directly between self and the enemy → out of sight → the AI can't
+    // target or shoot it; it drops into search instead of tracking through.
+    const map = makeArena([{ x: 0, y: -4, w: 6, h: 1, type: 'wall' }], 40, 40);
+    const self  = makeVehicle('ai1', 'a', 0, 0, 0);   // facing north toward the enemy
+    const enemy = makeVehicle('t1', 'b', 0, -8, 180);
+    const ctx: AiContext = { skill: 3, map, allVehicles: [self, enemy], wreckage: [], tick: 5 };
+    const input = computeAiInput(self, ctx);
+    expect(input.fireWeapon).toBeNull();
+  });
+
   it('sidesteps a wreck placed directly between self and enemy', () => {
     // Empty map, wreckage at (0, -10), vehicle at (0, 0) facing north (0°),
     // enemy at (0, -20). Straight-line pursuit would drive through the wreck.
