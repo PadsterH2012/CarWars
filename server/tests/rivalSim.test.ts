@@ -39,6 +39,34 @@ afterEach(() => vi.restoreAllMocks());
 
 // ── simulateTurn — unit tests ─────────────────────────────────────────────────
 
+describe('simulateTurn — economy', () => {
+  it('a broke gang cannot expand (spend gate)', () => {
+    vi.spyOn(Math, 'random').mockReturnValue(0.5); // expand (0.40–0.65)
+    const poor: GeneratedGang = { ...GANG_A, id: 'poor', treasury: 100 };
+    const inf = new Map([[key('s1', 'poor'), 5]]); // foothold; s2 is a valid expand target
+    const log = simulateTurn(poor, WORLD, inf, [poor]);
+    expect(log).toBeNull();                          // can't afford the 1200 expand cost
+    expect(inf.get(key('s2', 'poor')) ?? 0).toBe(0); // no new territory taken
+  });
+
+  it('held territory earns net income each turn', () => {
+    vi.spyOn(Math, 'random').mockReturnValue(0.99); // attack → free threat, no extra spend
+    const g: GeneratedGang = { ...GANG_A, id: 'rich', treasury: 1000 };
+    const inf = new Map([[key('s1', 'rich'), 10]]);
+    simulateTurn(g, WORLD, inf, [g]);
+    expect(g.treasury).toBeGreaterThan(1000); // income(120) > upkeep(~83)
+  });
+
+  it('a gang that cannot pay upkeep loses ground (super-linear ceiling)', () => {
+    vi.spyOn(Math, 'random').mockReturnValue(0.99); // attack → no action spend
+    const dom: GeneratedGang = { ...GANG_A, id: 'dom', treasury: 0 };
+    const inf = new Map([[key('s1', 'dom'), 200]]); // income 2400 < upkeep ~2880 → deficit
+    simulateTurn(dom, WORLD, inf, [dom]);
+    expect(inf.get(key('s1', 'dom'))!).toBe(197);   // decayWhenBroke = 3
+    expect(dom.treasury).toBe(0);
+  });
+});
+
 describe('simulateTurn — patrol', () => {
   it('gains influence in a settlement the gang already controls', () => {
     vi.spyOn(Math, 'random')

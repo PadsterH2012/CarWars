@@ -58,7 +58,10 @@ export function generateGangs(world: GeneratedWorld, seed: number): GeneratedGan
       name:              gangName(rng, used),
       primary_colour:    Math.floor(rng() * 0xffffff),
       secondary_colour:  Math.floor(rng() * 0xffffff),
-      starting_influence: 30 + Math.floor(rng() * 20),
+      // A small home foothold only (3–8). Big territory must be EARNED through
+      // the economy sim (rivalSim.ts), not handed out free at world-gen — see
+      // docs/territory-economy.md. Enough to let the gang act (patrol/expand).
+      starting_influence: 3 + Math.floor(rng() * 6),
       home_settlement_id: homeId,
       treasury:          5000 + Math.floor(rng() * 10001),
     });

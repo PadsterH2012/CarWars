@@ -42,12 +42,14 @@ describe('generateGangs', () => {
     );
   });
 
-  it('starting_influence is in range 30–49', () => {
+  it('starting_influence is a small home foothold (3–8)', () => {
+    // Big territory must be earned via the economy sim, not seeded free — see
+    // docs/territory-economy.md. Kept ≥1 so a gang always has somewhere to act.
     const world = generateWorld(42);
     const gangs = generateGangs(world, 42);
     gangs.forEach(g => {
-      expect(g.starting_influence).toBeGreaterThanOrEqual(30);
-      expect(g.starting_influence).toBeLessThanOrEqual(49);
+      expect(g.starting_influence).toBeGreaterThanOrEqual(3);
+      expect(g.starting_influence).toBeLessThanOrEqual(8);
     });
   });
 
