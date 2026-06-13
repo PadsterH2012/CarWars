@@ -697,27 +697,10 @@ export function computeAiInput(
     }
   }
 
-  // Collision-avoidance brake when a non-squadmate is dangerously close.
-  // Bench showed that on small arenas vehicles rammed each other at 80+ mph
-  // before any weapon resolved — the fire cooldown is 10 ticks so you need
-  // at least 1 second of alive + in-arc to land a shot. Scaling speed down
-  // inside 3 units ensures an enemy doesn't close faster than the trigger
-  // can pull. Separate from the AVOID overlay which only handles squadmates.
-  if (!isRecovering && allVehicles && desiredSpeed > 0) {
-    let nearestEnemyDist = Infinity;
-    for (const v of allVehicles) {
-      if (v.id === self.id) continue;
-      if (v.playerId === self.playerId) continue;
-      if (v.stats.damageState.destroyed) continue;
-      const dd = dist2d(self.position, v.position);
-      if (dd < nearestEnemyDist) nearestEnemyDist = dd;
-    }
-    if (nearestEnemyDist < 3) {
-      desiredSpeed = Math.min(desiredSpeed, 15);
-    } else if (nearestEnemyDist < 5) {
-      desiredSpeed = Math.min(desiredSpeed, 30);
-    }
-  }
+  // NOTE: the enemy-proximity speed brake runs as the FINAL speed authority
+  // (just before steering), not here — otherwise the survival overlay's
+  // "flee fast when hurt" boost re-raises speed after the brake and the AI
+  // rams at full tilt. See the clamp below the wall-brake.
 
   // Tactic goal → context ring interest. When a pathfinder is available
   // (Phase 3) and there's meaningful geometry between self and target, use
@@ -898,6 +881,28 @@ export function computeAiInput(
       if (wall.urgency >= 0.7) {
         console.log(`[WALL] ${self.id.padEnd(10)} urgency=${wall.urgency.toFixed(2)} speed-brake`);
       }
+    }
+  }
+
+  // ── Enemy-proximity speed brake (FINAL speed authority) ──────────────────
+  // Runs last so it overrides the survival overlay's "flee fast" boost — a
+  // low-armour vehicle (minFace=0) otherwise floors speed to ~0.94×max and
+  // rams the enemy head-on at lethal closing speed (bench + live logs). Hard
+  // cap inside the collision zone, softer beyond. Autopilot brakes earlier
+  // and wider so the player's car keeps clear.
+  if (!isRecovering && allVehicles && desiredSpeed > 0) {
+    let nearestEnemyDist = Infinity;
+    for (const v of allVehicles) {
+      if (v.id === self.id || v.playerId === self.playerId || v.stats.damageState.destroyed) continue;
+      const dd = dist2d(self.position, v.position);
+      if (dd < nearestEnemyDist) nearestEnemyDist = dd;
+    }
+    const hardRange = ctx.autopilot ? 4 : 3;
+    const softRange = ctx.autopilot ? 7 : 5;
+    if (nearestEnemyDist < hardRange) {
+      desiredSpeed = Math.min(desiredSpeed, ctx.autopilot ? 10 : 15);
+    } else if (nearestEnemyDist < softRange) {
+      desiredSpeed = Math.min(desiredSpeed, 30);
     }
   }
 

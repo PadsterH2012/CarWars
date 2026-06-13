@@ -110,6 +110,27 @@ describe('AI steering — scenario tests', () => {
     expect(avgAbs).toBeLessThan(12);
   });
 
+  it('brakes near an enemy even when survival urgency is high (low-armour vehicle)', () => {
+    // A vehicle with a zero-armour face triggers survival urgency 0.85, whose
+    // "flee fast when hurt" boost used to floor speed to ~0.94×max and ram the
+    // enemy head-on. The final speed brake must win when an enemy is inside the
+    // collision zone, regardless of survival urgency.
+    const self  = makeVehicle('ai1', 'a', 0, 0);
+    self.stats.loadout.armor      = { front: 6, back: 0, left: 5, right: 5, top: 2, underbody: 2 } as any;
+    self.stats.damageState.armor  = { front: 6, back: 0, left: 5, right: 5, top: 2, underbody: 2 } as any;
+    const enemy = makeVehicle('t1', 'b', 0, -2.5, 180); // 2.5 units away → inside the brake range
+    const ctx: AiContext = { skill: 3, allVehicles: [self, enemy], wreckage: [], tick: 10 };
+    const input = computeAiInput(self, ctx);
+    expect(input.speed).toBeLessThanOrEqual(15);
+  });
+
+  it('autopilot brakes earlier than enemy AI near a foe', () => {
+    const self  = makeVehicle('ai1', 'a', 0, 0);
+    const enemy = makeVehicle('t1', 'b', 0, -3.5, 180); // 3.5 units: inside autopilot hardRange(4), outside default(3)
+    const auto = computeAiInput(self, { skill: 3, allVehicles: [self, enemy], wreckage: [], tick: 10, autopilot: true });
+    expect(auto.speed).toBeLessThanOrEqual(10);
+  });
+
   it('sidesteps a wreck placed directly between self and enemy', () => {
     // Empty map, wreckage at (0, -10), vehicle at (0, 0) facing north (0°),
     // enemy at (0, -20). Straight-line pursuit would drive through the wreck.
