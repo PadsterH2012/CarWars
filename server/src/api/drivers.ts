@@ -129,10 +129,11 @@ driversRouter.post('/assign', async (req: AuthRequest, res) => {
 
   const db = getDb();
   const [driverCheck, vehicleCheck] = await Promise.all([
-    db.query(`SELECT id FROM drivers WHERE id = $1 AND player_id = $2`, [driverId, req.playerId]),
+    db.query(`SELECT id, alive FROM drivers WHERE id = $1 AND player_id = $2`, [driverId, req.playerId]),
     db.query(`SELECT id FROM vehicles WHERE id = $1 AND player_id = $2`, [vehicleId, req.playerId])
   ]);
   if (!driverCheck.rows.length) return res.status(403).json({ error: 'Driver not found' });
+  if (!driverCheck.rows[0].alive) return res.status(409).json({ error: 'Driver is dead — assign a living driver' });
   if (!vehicleCheck.rows.length) return res.status(403).json({ error: 'Vehicle not found' });
 
   const client = await db.connect();

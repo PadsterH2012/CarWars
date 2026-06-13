@@ -293,7 +293,10 @@ export async function resolveDueDeployments(playerId: string): Promise<void> {
       // Drivers: dead, wounded (sidelined to recover), or freed to act again.
       for (const d of result.perDriver) {
         if (d.status === 'dead') {
-          await client.query(`UPDATE drivers SET alive = FALSE, available_at = NOW() WHERE id = $1`, [d.driverId]);
+          // Clear the vehicle assignment too — a dead driver must not keep
+          // occupying the slot, or the vehicle reads as "no driver" and can't
+          // be fielded until manually reassigned (matches the arena death path).
+          await client.query(`UPDATE drivers SET alive = FALSE, assigned_vehicle_id = NULL, available_at = NOW() WHERE id = $1`, [d.driverId]);
         } else if (d.status === 'wounded') {
           await client.query(
             `UPDATE drivers SET wounded = TRUE, wounded_until = NOW() + ($2 || ' minutes')::interval, available_at = NOW() WHERE id = $1`,
