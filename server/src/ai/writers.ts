@@ -84,6 +84,16 @@ export function writeWallDanger(
 const FRIEND_AVOID_RANGE = 5;
 const BLAST_HAZARD_RANGE = 5;
 const LOW_HP_FRACTION   = 0.30;
+// Healthy-enemy collision avoidance. Without this, no danger is written around
+// an enemy at full health, so the tactic's goal-interest steers the AI dead
+// into its target — both cars take 20+ collision damage and mutually destroy.
+// A modest bubble (collisions happen inside ~2 units) lets the AI still close
+// to weapon range while the ring veers it to pass ALONGSIDE rather than ram.
+const ENEMY_AVOID_RANGE    = 4;
+const ENEMY_AVOID_STRENGTH = 0.9;
+// A ramplate vehicle that's still healthy is allowed to ram — that's its job —
+// so it skips enemy avoidance. Below this health it stops suiciding too.
+const RAM_HEALTH_FLOOR     = 0.4;
 
 function vehicleHealthFrac(v: VehicleState): number {
   const ds = v.stats.damageState;
@@ -106,6 +116,9 @@ export function writeVehicleDanger(
   self: VehicleState,
   allVehicles: VehicleState[],
 ): void {
+  // A healthy ramplate vehicle is on a ramming tactic — it should NOT avoid
+  // enemies. Everyone else (and a wrecked rammer) steers clear of collisions.
+  const ramming = !!self.stats.loadout?.hasRamplate && vehicleHealthFrac(self) > RAM_HEALTH_FLOOR;
   for (const v of allVehicles) {
     if (v.id === self.id) continue;
     if (v.stats.damageState.destroyed) continue;
@@ -118,6 +131,13 @@ export function writeVehicleDanger(
     if (hp < LOW_HP_FRACTION && d < BLAST_HAZARD_RANGE) {
       const blastUrgency = 1 - d / BLAST_HAZARD_RANGE;
       urgency = Math.max(urgency, blastUrgency * 1.2); // blast trumps squad spacing
+    }
+    // Healthy enemy — avoid the collision. sqrt ramp so danger rises sharply
+    // as the gap closes, giving the ring time to pick a tangential heading
+    // before the cars overlap. Skipped when WE are ramming on purpose.
+    if (!ramming && v.playerId !== self.playerId && d < ENEMY_AVOID_RANGE) {
+      const proximity = Math.sqrt(Math.max(0, 1 - d / ENEMY_AVOID_RANGE));
+      urgency = Math.max(urgency, proximity * ENEMY_AVOID_STRENGTH);
     }
     if (urgency <= 0) continue;
     const bearing = bearingTo(self.position, v.position);

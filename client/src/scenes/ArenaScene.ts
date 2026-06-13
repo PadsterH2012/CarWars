@@ -47,6 +47,7 @@ export class ArenaScene extends Phaser.Scene {
   private token = '';
   private jobId = '';
   private defenseZoneId: string | undefined;
+  private rivalId: string | undefined; // free-pick opponent chosen in the garage
   private lastInputSent = 0;
   private zoneEnded = false;
   private encounterTravelContext: { fromNodeId: string; toNodeId: string } | null = null;
@@ -95,7 +96,7 @@ export class ArenaScene extends Phaser.Scene {
     super({ key: 'ArenaScene' });
   }
 
-  init(data: { token?: string; vehicleId?: string; jobId?: string; squadVehicleIds?: string[]; mapId?: string; gangPrimaryColour?: number; defenseZoneId?: string }): void {
+  init(data: { token?: string; vehicleId?: string; jobId?: string; squadVehicleIds?: string[]; mapId?: string; gangPrimaryColour?: number; defenseZoneId?: string; rivalId?: string }): void {
     this.token = data.token ?? '';
     this.myVehicleId = data.vehicleId ?? 'v1';
     this.squadVehicleIds = data.squadVehicleIds && data.squadVehicleIds.length > 0
@@ -105,6 +106,7 @@ export class ArenaScene extends Phaser.Scene {
     this.gangPrimaryColour = data.gangPrimaryColour;
     this.jobId = data.jobId ?? '';
     this.defenseZoneId = data.defenseZoneId;
+    this.rivalId = data.rivalId;
 
     // Class-field state must be reset on every scene restart — Phaser reuses the
     // same scene instance when scene.start() is called a second time, so field
@@ -310,6 +312,7 @@ export class ArenaScene extends Phaser.Scene {
         jobId: this.jobId || undefined,
         squadVehicleIds: this.squadVehicleIds,
         mapId: this.mapId,
+        rivalId: this.rivalId,
       });
     });
     this.connection.onMessage((msg) => {

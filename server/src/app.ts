@@ -22,6 +22,13 @@ import { leaderboardRouter } from './api/leaderboard';
 import { requireAuth, AuthRequest } from './api/middleware';
 import { getDb } from './db/client';
 import { lastResults } from './ws/handler';
+import {
+  eligibleRivals, rivalSignatureLineup, fieldedStockIds, stockFleetValue,
+  rivalEffectiveSkill, adaptGeneratedGang, type RivalGang,
+} from './rules/rivals';
+import { sidePower, calcMatchPrize, threatLabel, NOMINAL_RIVAL_VEHICLE_VALUE } from './rules/power';
+import type { GeneratedGang } from './rules/gangGen';
+import type { VehicleLoadout } from '@carwars/shared';
 
 export function createApp() {
   const app = express();
@@ -109,6 +116,81 @@ export function createApp() {
     const result = lastResults.get(req.playerId!) ?? null;
     if (result) lastResults.delete(req.playerId!);
     return res.json(result);
+  });
+
+  // Free-pick opponent slate. The player picks who to duel; each candidate
+  // carries a threat label + estimated prize derived from the same power model
+  // the match uses, so what they see is what they'll be paid. `vehicleIds`
+  // (comma-separated) is the squad they intend to field — defaults to their
+  // selected vehicle. Returns rivals the player can choose to take on.
+  app.get('/api/me/rivals', requireAuth, async (req: AuthRequest, res) => {
+    const db = getDb();
+    try {
+      const pRes = await db.query<{ division: number; selected_vehicle_id: string | null }>(
+        `SELECT division, selected_vehicle_id FROM players WHERE id = $1`,
+        [req.playerId],
+      );
+      if (!pRes.rows.length) return res.status(404).json({ error: 'Not found' });
+      const division = pRes.rows[0].division ?? 5;
+
+      const gRes = await db.query<{ id: string; generated_gangs: GeneratedGang[] | null }>(
+        `SELECT id, generated_gangs FROM gangs WHERE owner_player_id = $1`,
+        [req.playerId],
+      );
+      const gangId = gRes.rows[0]?.id ?? null;
+      const generatedGangs: GeneratedGang[] = gRes.rows[0]?.generated_gangs ?? [];
+
+      // Resolve the intended squad → player power.
+      const idsParam = String(req.query.vehicleIds ?? '').split(',').map(s => s.trim()).filter(Boolean);
+      const squadIds = idsParam.length ? idsParam : (pRes.rows[0].selected_vehicle_id ? [pRes.rows[0].selected_vehicle_id] : []);
+      let playerFleetValue = 0, skillSum = 0, skillCount = 0;
+      for (const vid of squadIds) {
+        const vr = await db.query<{ loadout: VehicleLoadout }>(
+          `SELECT loadout FROM vehicles WHERE id = $1 AND player_id = $2`, [vid, req.playerId],
+        );
+        playerFleetValue += vr.rows[0]?.loadout?.totalCost ?? 0;
+        const dr = await db.query<{ skill: number }>(
+          `SELECT skill FROM drivers WHERE assigned_vehicle_id = $1 AND alive = TRUE LIMIT 1`, [vid],
+        );
+        if (dr.rows.length) { skillSum += dr.rows[0].skill; skillCount++; }
+      }
+      const squadSize = Math.max(1, squadIds.length);
+      const playerPower = sidePower(playerFleetValue || NOMINAL_RIVAL_VEHICLE_VALUE, skillCount ? skillSum / skillCount : 3);
+
+      // Candidate rivals: eligible static rivals + the player's wasteland gangs.
+      const statics = await eligibleRivals(db, division);
+      const generated = generatedGangs.map(adaptGeneratedGang);
+      const candidates: RivalGang[] = [...statics, ...generated].slice(0, 12);
+
+      const repRes = gangId
+        ? await db.query<{ rival_id: string; grudge: number }>(
+            `SELECT rival_id, grudge FROM player_rival_rep WHERE player_gang_id = $1`, [gangId])
+        : { rows: [] as { rival_id: string; grudge: number }[] };
+      const grudgeBy = new Map(repRes.rows.map(r => [r.rival_id, r.grudge]));
+
+      const rivals = [];
+      for (const r of candidates) {
+        const lineup = rivalSignatureLineup(r);
+        const fielded = fieldedStockIds(lineup, squadSize);
+        const fleetValue = lineup.length
+          ? await stockFleetValue(db, fielded)
+          : NOMINAL_RIVAL_VEHICLE_VALUE * squadSize;
+        const skill = rivalEffectiveSkill(r, grudgeBy.get(r.id) ?? 0);
+        const rivalPower = sidePower(fleetValue, skill);
+        rivals.push({
+          id: r.id, name: r.name, description: r.description,
+          primary_colour: r.primary_colour, secondary_colour: r.secondary_colour, emblem_id: r.emblem_id,
+          skill, fleetValue,
+          threat: threatLabel(playerPower, rivalPower),
+          estPrize: calcMatchPrize(playerPower, rivalPower, squadSize),
+        });
+      }
+
+      return res.json({ playerPower: Math.round(playerPower), squadSize, rivals });
+    } catch (e) {
+      console.error('Failed to build rival slate:', e);
+      return res.status(500).json({ error: 'Failed to build rival slate' });
+    }
   });
 
   app.post('/api/me/claim-starter', requireAuth, async (req: AuthRequest, res) => {

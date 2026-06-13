@@ -379,6 +379,19 @@ html, body {
 .squad-vdetail { font-size: 11px; color: var(--gray); margin-top: 2px; }
 .squad-vwarn  { font-size: 11px; color: var(--red); margin-top: 2px; }
 
+/* ── MODAL: OPPONENT PICKER (free-pick duel) ───────────────────── */
+.rival-row { display: flex; align-items: center; justify-content: space-between; gap: 12px;
+             padding: 11px 10px; border: 1px solid var(--border); margin-bottom: 8px; cursor: pointer;
+             transition: border-color 0.12s, background 0.12s; }
+.rival-row:hover { border-color: #555; background: var(--card); }
+.rival-main { min-width: 0; }
+.rival-name { font-size: 13px; color: #ddd; font-weight: bold; }
+.rival-detail { font-size: 11px; color: var(--gray); margin-top: 2px; }
+.rival-meta { display: flex; flex-direction: column; align-items: flex-end; gap: 4px; flex-shrink: 0; }
+.rival-threat { font-size: 10px; font-weight: bold; letter-spacing: 0.08em; text-transform: uppercase;
+                border: 1px solid; padding: 1px 6px; }
+.rival-prize { font-size: 13px; color: var(--green); font-weight: bold; }
+
 /* ── MODAL: REPAIR ─────────────────────────────────────────────── */
 .repair-detail { padding: 12px 0; }
 .repair-row { display: flex; justify-content: space-between; padding: 6px 0; font-size: 13px; border-bottom: 1px solid #1a1a1a; }

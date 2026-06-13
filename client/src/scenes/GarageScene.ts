@@ -9,6 +9,17 @@ interface Vehicle { id: string; name: string; value: number; damage_state: any; 
 interface DriverAttributes { st: number; dx: number; iq: number; ht: number; }
 interface Driver { id: string; name: string; skill: number; xp: number; xp_pool?: number; assigned_vehicle_id: string | null; alive: boolean; wounded: boolean; wounded_until: string | null; title?: string; xpToNext?: number; status?: AvailabilityStatus; remainingSeconds?: number; attributes?: DriverAttributes; skills?: Record<string, number>; }
 interface Deployment { id: string; zone_id: string; job_id?: string | null; assignment: string; status: string; eta_seconds: number; }
+interface RivalSlateEntry { id: string; name: string; description: string; primary_colour: number; secondary_colour: number; emblem_id: string; skill: number; fleetValue: number; threat: 'easy' | 'even' | 'tough' | 'deadly'; estPrize: number; }
+
+// Arena map tabs: the stored value MUST be the server slug (see server
+// rules/maps/index.ts), not the display label — getMap() silently falls back
+// to Open Arena for any unknown id, which was sending duels to the wrong map.
+const ARENA_MAPS: { id: string; label: string }[] = [
+  { id: 'truck-stop',  label: 'Truck Stop' },
+  { id: 'town-square', label: 'Town Square' },
+  { id: 'open',        label: 'Open Arena' },
+  { id: 'double-drum', label: 'Double Drum' },
+];
 
 // Compact ETA used by the status pills + deployments list ("1m 20s" / "45s").
 function fmtRemaining(seconds: number): string {
@@ -60,6 +71,10 @@ export class GarageScene extends Phaser.Scene {
   private pendingFightVehicleId = '';
   private pendingRepairVehicleId = '';
   private pendingSellVehicleId = '';
+  // Squad + map chosen at the squad-picker step, held while the player picks
+  // their opponent from the free-pick slate.
+  private pendingSquadIds: string[] = [];
+  private pendingMapId = 'truck-stop';
   private pendingDriverCardId = '';
   private root!: HTMLDivElement;
   private sidebarEl!: HTMLElement;
@@ -200,6 +215,18 @@ export class GarageScene extends Phaser.Scene {
           <div class="modal-footer">
             <button class="btn btn-ghost" data-action="close-modal" data-modal="modal-fight">Cancel</button>
             <button class="btn btn-red" data-action="confirm-fight">⚔ Enter Arena</button>
+          </div>
+        </div>
+      </div>
+
+      <!-- Opponent Picker (free-pick duel) -->
+      <div class="modal-overlay" id="modal-opponent">
+        <div class="modal" style="max-width:560px;">
+          <div class="modal-title">⚔ Choose Your Fight</div>
+          <div class="modal-body" id="modal-opponent-body"><p style="font-size:12px;color:var(--gray)">Scouting rivals…</p></div>
+          <div class="modal-footer">
+            <button class="btn btn-ghost" data-action="close-modal" data-modal="modal-opponent">Cancel</button>
+            <button class="btn btn-yellow" data-action="random-challenger">🎲 Random Challenger</button>
           </div>
         </div>
       </div>
@@ -670,12 +697,18 @@ export class GarageScene extends Phaser.Scene {
     `);
   }
 
+  // Selected arena map slug, validated against the known maps (legacy/stale
+  // localStorage values — e.g. an old display label — fall back to the default).
+  private currentMapId(): string {
+    const stored = localStorage.getItem('cw_selected_map') ?? '';
+    return ARENA_MAPS.some(m => m.id === stored) ? stored : ARENA_MAPS[0].id;
+  }
+
   private buildArenaTabsHTML(): string {
-    const maps = ['Truck Stop', 'Town Square', 'Open Arena', 'Double Drum'];
-    const selectedMap = localStorage.getItem('cw_selected_map') ?? maps[0];
-    const tabs = maps.map(m =>
-      `<button class="arena-tab${m === selectedMap ? ' active' : ''}"
-               data-action="select-map" data-map="${esc(m)}">${esc(m)}</button>`
+    const selectedMap = this.currentMapId();
+    const tabs = ARENA_MAPS.map(m =>
+      `<button class="arena-tab${m.id === selectedMap ? ' active' : ''}"
+               data-action="select-map" data-map="${esc(m.id)}">${esc(m.label)}</button>`
     ).join('');
     return `
       <span class="topbar-label">Arena</span>
@@ -993,9 +1026,21 @@ export class GarageScene extends Phaser.Scene {
           this.root.querySelectorAll<HTMLInputElement>('input[data-squad-vehicle]:checked')
         );
         const squadIds = [this.pendingFightVehicleId, ...checkboxes.map(cb => cb.dataset.squadVehicle!)];
-        const mapId = localStorage.getItem('cw_selected_map') ?? 'truck-stop';
+        const mapId = this.currentMapId();
         this.closeModal('modal-fight');
-        this.launchArena(squadIds, mapId);
+        // Free-pick: choose the opponent before entering the arena.
+        void this.openOpponentModal(squadIds, mapId);
+        break;
+      }
+      case 'pick-rival': {
+        const rivalId = actionEl.dataset.rivalId ?? '';
+        this.closeModal('modal-opponent');
+        this.launchArena(this.pendingSquadIds, this.pendingMapId, rivalId || undefined);
+        break;
+      }
+      case 'random-challenger': {
+        this.closeModal('modal-opponent');
+        this.launchArena(this.pendingSquadIds, this.pendingMapId);
         break;
       }
       case 'confirm-repair':
@@ -1272,7 +1317,57 @@ export class GarageScene extends Phaser.Scene {
     }
   }
 
-  private launchArena(squadVehicleIds: string[], mapId: string = 'truck-stop'): void {
+  // Fetch and show the free-pick opponent slate for the chosen squad. Each
+  // rival carries a threat label + estimated prize from the server's power
+  // model, so the player sees the risk/reward before committing.
+  private async openOpponentModal(squadIds: string[], mapId: string): Promise<void> {
+    this.pendingSquadIds = squadIds;
+    this.pendingMapId = mapId;
+    const bodyEl = this.root.querySelector('#modal-opponent-body') as HTMLElement;
+    renderInto(bodyEl, `<p style="font-size:12px;color:var(--gray)">Scouting rivals…</p>`);
+    this.openModal('modal-opponent');
+    const host = window.location.hostname;
+    try {
+      const r = await fetch(
+        `http://${host}:3001/api/me/rivals?vehicleIds=${encodeURIComponent(squadIds.join(','))}`,
+        { headers: { Authorization: `Bearer ${this.token}` } },
+      );
+      if (!r.ok) throw new Error('slate fetch failed');
+      const data = await r.json() as { playerPower: number; squadSize: number; rivals: RivalSlateEntry[] };
+      this.renderOpponentSlate(bodyEl, data.rivals);
+    } catch {
+      renderInto(bodyEl, `<p style="font-size:12px;color:var(--red)">Couldn't scout rivals — take a random challenger instead.</p>`);
+    }
+  }
+
+  private renderOpponentSlate(bodyEl: HTMLElement, rivals: RivalSlateEntry[]): void {
+    if (!rivals.length) {
+      renderInto(bodyEl, `<p style="font-size:12px;color:var(--gray)">No known rivals nearby — take a random challenger.</p>`);
+      return;
+    }
+    const THREAT: Record<string, { label: string; color: string }> = {
+      easy:   { label: 'EASY',   color: 'var(--green)' },
+      even:   { label: 'EVEN',   color: 'var(--yellow)' },
+      tough:  { label: 'TOUGH',  color: 'var(--amber)' },
+      deadly: { label: 'DEADLY', color: 'var(--red)' },
+    };
+    const rows = rivals.map(rv => {
+      const t = THREAT[rv.threat] ?? THREAT.even;
+      return `<div class="rival-row" data-action="pick-rival" data-rival-id="${esc(rv.id)}">
+        <div class="rival-main">
+          <div class="rival-name">${esc(rv.name)}</div>
+          <div class="rival-detail">${esc(rv.description)}</div>
+        </div>
+        <div class="rival-meta">
+          <span class="rival-threat" style="color:${t.color};border-color:${t.color}">${t.label}</span>
+          <span class="rival-prize">$${esc(rv.estPrize.toLocaleString())}</span>
+        </div>
+      </div>`;
+    }).join('');
+    renderInto(bodyEl, `<p style="font-size:12px;color:var(--gray);margin-bottom:12px">Pick who to take on — tougher gangs pay more.</p>${rows}`);
+  }
+
+  private launchArena(squadVehicleIds: string[], mapId: string = 'truck-stop', rivalId?: string): void {
     const activeJobId = localStorage.getItem('cw_active_job') ?? undefined;
     this.scene.start('ArenaScene', {
       token: this.token,
@@ -1281,6 +1376,7 @@ export class GarageScene extends Phaser.Scene {
       jobId: activeJobId,
       mapId,
       gangPrimaryColour: this.gang?.primary_colour,
+      rivalId,
     });
   }
 

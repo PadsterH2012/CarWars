@@ -6,7 +6,8 @@ import { ZoneRunner } from '../world/zone-runner';
 import { getDb } from '../db/client';
 import { deriveStats } from '../rules/vehicle';
 import type { Pool } from 'pg';
-import { pickRivalForMatch, pickGeneratedRivalForMatch, recordRivalOutcome, rivalEffectiveSkill, adaptGeneratedGang, type RivalGang } from '../rules/rivals';
+import { pickRivalForMatch, pickGeneratedRivalForMatch, recordRivalOutcome, rivalEffectiveSkill, adaptGeneratedGang, rivalSignatureLineup, rivalLineupForDivision, fieldedStockIds, type RivalGang } from '../rules/rivals';
+import { sidePower, calcMatchPrize, NOMINAL_RIVAL_VEHICLE_VALUE } from '../rules/power';
 import type { GeneratedGang } from '../rules/gangGen';
 import { playerOwnsGarage } from '../api/garages';
 import type { TickSnapshot } from '../rules/engine';
@@ -49,6 +50,9 @@ function skillToMaxSteer(skill: number): number {
   return 30;
 }
 
+// Legacy division-based purse. Superseded for live matches by the power-gap
+// model in rules/power.ts (calcMatchPrize) — retained for the unit tests and
+// as a simple reference formula.
 export function calcPrize(division: number, squadSize: number = 1): number {
   // Base purse scales by division; squad multiplier rewards bigger fights.
   // 1v1 → 1.0×, 2v2 → 1.5×, 3v3 → 2.0×, 4v4 → 2.5×
@@ -521,10 +525,26 @@ async function handleMessage(ws: WebSocket, raw: string): Promise<void> {
           try {
             const pRes = await db.query(`SELECT division FROM players WHERE id = $1`, [winnerId]);
             const division = pRes.rows[0]?.division ?? 5;
-            // Prize scales with squad size — reward bigger fights
+
+            // Power-scaled prize: fold the winner's fleet value + crew skill
+            // into a power score, compare against the rival fleet's power
+            // (stashed at match setup), and let the gap drive the purse — so
+            // punching up against a tougher gang pays more.
             const winnerWs2 = [...clientPlayers.entries()].find(([, pid]) => pid === winnerId)?.[0];
-            const squadSize = winnerWs2 ? (clientSquads.get(winnerWs2)?.length ?? 1) : 1;
-            const prize = calcPrize(division, squadSize);
+            const winnerSquad = (winnerWs2 ? clientSquads.get(winnerWs2) : null) ?? mySquad;
+            const squadSize = Math.max(1, winnerSquad.length);
+            let playerFleetValue = 0, skillSum = 0, skillCount = 0;
+            for (const vid of winnerSquad) {
+              const vr = await db.query<{ loadout: VehicleLoadout }>(`SELECT loadout FROM vehicles WHERE id = $1`, [vid]);
+              playerFleetValue += vr.rows[0]?.loadout?.totalCost ?? 0;
+              const dr = await db.query<{ skill: number }>(
+                `SELECT skill FROM drivers WHERE assigned_vehicle_id = $1 AND alive = TRUE LIMIT 1`, [vid],
+              );
+              if (dr.rows.length) { skillSum += dr.rows[0].skill; skillCount++; }
+            }
+            const playerPower = sidePower(playerFleetValue || NOMINAL_RIVAL_VEHICLE_VALUE, skillCount ? skillSum / skillCount : 3);
+            const rivalPower  = runner.getMatchRivalPower() || playerPower;
+            const prize = calcMatchPrize(playerPower, rivalPower, squadSize);
 
             // Find winner's WebSocket to check for active job
             let jobPayout = 0;
@@ -689,6 +709,10 @@ async function handleMessage(ws: WebSocket, raw: string): Promise<void> {
         // and zone_end (for the post-match banner).
         let rival: RivalGang | null = null;
         let rivalGrudge = 0;
+        // True when the player picked this rival from the free-pick slate — they
+        // then face the rival's full signature fleet rather than a tier-matched
+        // lineup, and accept the (reward-scaled) power gap.
+        let chosenRival = false;
 
         // Defense zone: force the attacking gang as the rival instead of picking normally
         if (msg.zoneId.startsWith('arena-defense-')) {
@@ -755,8 +779,24 @@ async function handleMessage(ws: WebSocket, raw: string): Promise<void> {
               const generatedGangs: GeneratedGang[] = gangRowRes.rows[0]?.generated_gangs ?? [];
               const currentSettlementId             = gangRowRes.rows[0]?.current_world_node_id ?? '';
 
-              // Prefer generated gangs with local territory presence
-              if (generatedGangs.length && currentSettlementId) {
+              // Free-pick: the player chose this rival from the opponent slate.
+              if (msg.rivalId) {
+                const staticRes = await db.query<RivalGang>(
+                  `SELECT id, name, description, base_skill, primary_colour, secondary_colour,
+                          emblem_id, min_division, boast_lines, defeat_lines, lineup
+                   FROM rival_gangs WHERE id = $1`,
+                  [msg.rivalId],
+                );
+                if (staticRes.rows.length) {
+                  rival = staticRes.rows[0];
+                  chosenRival = true;
+                } else {
+                  const gen = generatedGangs.find(g => g.id === msg.rivalId);
+                  if (gen) { rival = adaptGeneratedGang(gen); chosenRival = true; }
+                }
+              }
+              // Auto-pick fallback — prefer generated gangs with local territory presence
+              if (!rival && generatedGangs.length && currentSettlementId) {
                 rival = await pickGeneratedRivalForMatch(db, currentSettlementId, generatedGangs);
               }
               if (!rival) {
@@ -795,23 +835,33 @@ async function handleMessage(ws: WebSocket, raw: string): Promise<void> {
         };
         const rivalSkills = { ...rivalGunnery, ...rivalDriving };
 
-        // If the rival has a lineup for the player's division, field those
-        // stock blueprints. Otherwise fall back to the generic test vehicle so
-        // matches always have enemies even before lineups are populated.
+        // Decide which stock blueprints the rival fields. A free-pick rival
+        // brings its full signature fleet (no tier lock — the spec is the
+        // rival's own); an auto-picked rival is matched to the player's
+        // division so the fallback path stays sensible. Empty → generic rig.
         let lineupLoadouts: Map<string, { name: string; loadout: VehicleLoadout }> = new Map();
         let lineupIds: string[] = [];
         if (rival && rival.lineup) {
-          // Resolve the player's division from the same rival-selection path above
-          const divStr = String((await (async () => {
+          const playerDivision = await (async () => {
             const r = await getDb().query<{ division: number }>(
               `SELECT p.division FROM vehicles v JOIN players p ON p.id = v.player_id WHERE v.id = $1`,
               [msg.vehicleId],
             );
             return r.rows[0]?.division ?? 5;
-          })()));
-          lineupIds = rival.lineup[divStr] ?? [];
+          })();
+          lineupIds = chosenRival ? rivalSignatureLineup(rival) : rivalLineupForDivision(rival, playerDivision);
           if (lineupIds.length) lineupLoadouts = await fetchStockLoadouts(getDb(), lineupIds);
         }
+
+        // Power score of the rival's fielded fleet (value × skill factor), used
+        // at zone-end to scale the prize by the power gap. Sum the cost of the
+        // actually-fielded vehicles (round-robin to squad size); fall back to a
+        // nominal per-vehicle value when fielding the generic rig.
+        const fielded = fieldedStockIds(lineupIds, squadSize);
+        const rivalFleetValue = fielded.length
+          ? fielded.reduce((sum, id) => sum + (lineupLoadouts.get(id)?.loadout.totalCost ?? NOMINAL_RIVAL_VEHICLE_VALUE), 0)
+          : NOMINAL_RIVAL_VEHICLE_VALUE * squadSize;
+        runner.setMatchRivalPower(sidePower(rivalFleetValue, rivalSkill));
 
         enemyPositions.forEach((sp, i) => {
           const name = names[i] ?? `ai-${i}`;
