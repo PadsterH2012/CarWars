@@ -111,11 +111,25 @@ function vehicleHealthFrac(v: VehicleState): number {
 // avoidance bubble OR any vehicle looking ready to cook off. Danger is
 // strongest at the bearing TO the hazard — the ring will then naturally
 // steer to the lowest-danger direction (usually away from it).
+// Cautious-profile overrides (used by the player's autopilot) — wider blast
+// avoidance, earlier reaction to vehicles that might pop, bigger enemy standoff.
+export interface VehicleDangerOpts {
+  friendRange?: number;
+  blastRange?: number;
+  lowHpFrac?: number;
+  enemyAvoidRange?: number;
+}
+
 export function writeVehicleDanger(
   ring: ContextRing,
   self: VehicleState,
   allVehicles: VehicleState[],
+  opts: VehicleDangerOpts = {},
 ): void {
+  const friendRange = opts.friendRange     ?? FRIEND_AVOID_RANGE;
+  const blastRange  = opts.blastRange      ?? BLAST_HAZARD_RANGE;
+  const lowHpFrac   = opts.lowHpFrac       ?? LOW_HP_FRACTION;
+  const enemyRange  = opts.enemyAvoidRange ?? ENEMY_AVOID_RANGE;
   // A healthy ramplate vehicle is on a ramming tactic — it should NOT avoid
   // enemies. Everyone else (and a wrecked rammer) steers clear of collisions.
   const ramming = !!self.stats.loadout?.hasRamplate && vehicleHealthFrac(self) > RAM_HEALTH_FLOOR;
@@ -124,19 +138,19 @@ export function writeVehicleDanger(
     if (v.stats.damageState.destroyed) continue;
     const d = dist2d(self.position, v.position);
     let urgency = 0;
-    if (v.playerId === self.playerId && d < FRIEND_AVOID_RANGE) {
-      urgency = 1 - d / FRIEND_AVOID_RANGE;
+    if (v.playerId === self.playerId && d < friendRange) {
+      urgency = 1 - d / friendRange;
     }
     const hp = vehicleHealthFrac(v);
-    if (hp < LOW_HP_FRACTION && d < BLAST_HAZARD_RANGE) {
-      const blastUrgency = 1 - d / BLAST_HAZARD_RANGE;
+    if (hp < lowHpFrac && d < blastRange) {
+      const blastUrgency = 1 - d / blastRange;
       urgency = Math.max(urgency, blastUrgency * 1.2); // blast trumps squad spacing
     }
     // Healthy enemy — avoid the collision. sqrt ramp so danger rises sharply
     // as the gap closes, giving the ring time to pick a tangential heading
     // before the cars overlap. Skipped when WE are ramming on purpose.
-    if (!ramming && v.playerId !== self.playerId && d < ENEMY_AVOID_RANGE) {
-      const proximity = Math.sqrt(Math.max(0, 1 - d / ENEMY_AVOID_RANGE));
+    if (!ramming && v.playerId !== self.playerId && d < enemyRange) {
+      const proximity = Math.sqrt(Math.max(0, 1 - d / enemyRange));
       urgency = Math.max(urgency, proximity * ENEMY_AVOID_STRENGTH);
     }
     if (urgency <= 0) continue;

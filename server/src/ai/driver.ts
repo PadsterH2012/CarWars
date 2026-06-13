@@ -390,7 +390,11 @@ export function computeAiInput(
   // parallel with the legacy logic without changing behaviour yet.
   ds.ring.reset();
   if (map) writeWallDanger(ds.ring, self.position, self.facing, map.walls, self.speed);
-  writeVehicleDanger(ds.ring, self, ctx.allVehicles);
+  // Autopilot (the player's own car) runs a cautious profile: wider blast
+  // avoidance, reacts to enemies that might pop sooner (50% vs 30% hp), and
+  // keeps a bigger gap so it isn't crowding the enemy or sitting in cook-off range.
+  writeVehicleDanger(ds.ring, self, ctx.allVehicles,
+    ctx.autopilot ? { blastRange: 9, lowHpFrac: 0.5, enemyAvoidRange: 6 } : undefined);
   writeWreckageDanger(ds.ring, self, ctx.wreckage);
 
   // Record current position in the ring buffer (last 20 ticks)
@@ -486,7 +490,10 @@ export function computeAiInput(
   // Range at aggression 6 ≈ −3 units, at aggression 1 ≈ +2 units.
   const aggressionRangeOffset = 3 - (ctx.aggression ?? 3);
 
-  const prefRange  = Math.max(4, (w?.preferredRange ?? 12) + personalityRangeOffset + aggressionRangeOffset);
+  // Autopilot keeps its distance — a standoff bonus pushes the orbit/approach
+  // range out so the player's car hangs back rather than crowding the target.
+  const autopilotStandoff = ctx.autopilot ? 5 : 0;
+  const prefRange  = Math.max(ctx.autopilot ? 8 : 4, (w?.preferredRange ?? 12) + personalityRangeOffset + aggressionRangeOffset + autopilotStandoff);
   const fireRange  = w?.longRange ?? 16;
   const closeRange = w?.shortRange ?? 6;
 
@@ -813,9 +820,12 @@ export function computeAiInput(
   // 2-3 units guarantees blast-chain deaths. 5 units keeps everyone outside
   // the 2-unit cook-off radius with headroom for momentum.
   if (allVehicles && allVehicles.length > 1 && desiredSpeed > 0) {
+    // Autopilot widens the blast-hazard bubble and reacts to vehicles that
+    // might pop sooner, so the player's car backs off explosions, not just
+    // squad spacing.
     const FRIEND_AVOID_RANGE  = 5;   // 360° soft bubble around friendlies
-    const BLAST_HAZARD_RANGE  = 5;   // steer clear of low-hp vehicles at this range
-    const LOW_HP_FRACTION     = 0.30;
+    const BLAST_HAZARD_RANGE  = ctx.autopilot ? 9 : 5;   // steer clear of low-hp vehicles at this range
+    const LOW_HP_FRACTION     = ctx.autopilot ? 0.5 : 0.30;
 
     const healthOf = (v: VehicleState): number => {
       const ds = v.stats.damageState;

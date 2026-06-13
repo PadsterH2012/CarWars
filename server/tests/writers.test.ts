@@ -67,4 +67,21 @@ describe('writeVehicleDanger — enemy collision avoidance', () => {
     const eastSlot = slotOf(90);
     expect(ring.danger[eastSlot]).toBe(0);
   });
+
+  it('cautious profile widens blast avoidance (autopilot)', () => {
+    // A half-health enemy 7 units away: ignored by the default profile (blast
+    // range 5, hp threshold 0.30) but avoided by the cautious autopilot
+    // profile (blast range 9, hp threshold 0.5).
+    const self     = makeVehicle('ai', 'a', 0, 0);
+    const halfHpEnemy = makeVehicle('en', 'b', 7, 0, { armorFrac: 0.4 }); // ~0.42 hp: >0.30 (default ignores), <0.5 (cautious avoids)
+    const eastSlot = slotOf(90);
+
+    const ringDefault = new ContextRing();
+    writeVehicleDanger(ringDefault, self, [self, halfHpEnemy]);
+    expect(ringDefault.danger[eastSlot]).toBe(0);
+
+    const ringCautious = new ContextRing();
+    writeVehicleDanger(ringCautious, self, [self, halfHpEnemy], { blastRange: 9, lowHpFrac: 0.5, enemyAvoidRange: 6 });
+    expect(ringCautious.danger[eastSlot]).toBeGreaterThan(0);
+  });
 });

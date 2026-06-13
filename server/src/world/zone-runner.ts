@@ -407,7 +407,7 @@ export class ZoneRunner {
         const squad = this.squadsByPlayer.get(vehicle.playerId);
         const aiInput = computeAiInput(
           vehicle,
-          { ...ctxBase, skill: stats.skill, aggression: stats.aggression, loyalty: stats.loyalty, squad },
+          { ...ctxBase, skill: stats.skill, aggression: stats.aggression, loyalty: stats.loyalty, squad, autopilot: isHuman && hasAutopilot },
           order,
         );
         this.engine.queueInput(vehicle.id, aiInput);

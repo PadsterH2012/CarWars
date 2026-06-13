@@ -30,4 +30,9 @@ export interface AiContext {
   tick: number;
   pathfinder?: Pathfinder;
   squad?: SquadContext;
+  // True when this is the player's own vehicle running on autopilot. Drives a
+  // more cautious profile: bigger standoff distance and wider blast/explosion
+  // avoidance, so the player's car doesn't crowd the enemy or get caught in
+  // ammo cook-off radius. Enemy AI leaves this unset (stays aggressive).
+  autopilot?: boolean;
 }
