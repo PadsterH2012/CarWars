@@ -70,6 +70,10 @@ export class ZoneRunner {
   private squadOrders = new Map<string, SquadOrder>(); // vehicleId → current order (commander mode)
   private pausedBy: WebSocket | null = null;   // the client that initiated the pause; only they can unpause
   private rival: RivalInfo | null = null;      // rival gang for this match, if set by handler
+  // Power score of the rival's fielded fleet (fleet value × skill factor),
+  // computed by the handler at match setup. Read at zone-end to scale the
+  // prize by the power gap between the two sides. 0 = not an arena/no rival.
+  private matchRivalPower = 0;
   private map: ArenaMap;
   // One pathfinder per arena — constructed at match start, its wreckage
   // obstacle layer is refreshed only when the wreckage list changes (hashed).
@@ -235,6 +239,12 @@ export class ZoneRunner {
   }
   getRival(): RivalInfo | null {
     return this.rival;
+  }
+  setMatchRivalPower(power: number): void {
+    this.matchRivalPower = power;
+  }
+  getMatchRivalPower(): number {
+    return this.matchRivalPower;
   }
 
   getSquadOrder(vehicleId: string): SquadOrder | undefined {

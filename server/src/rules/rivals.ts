@@ -106,6 +106,62 @@ export function rivalEffectiveSkill(rival: RivalGang, grudge: number): number {
   return Math.min(6, rival.base_skill + Math.floor(grudge / 20));
 }
 
+// All rivals eligible for a player's division (same rule as pickRivalForMatch:
+// the player's division number must be ≤ the rival's min_division threshold).
+// Used to build the free-pick opponent slate.
+export async function eligibleRivals(db: Pool, division: number): Promise<RivalGang[]> {
+  const res = await db.query<RivalGang>(
+    `SELECT id, name, description, base_skill, primary_colour, secondary_colour,
+            emblem_id, min_division, boast_lines, defeat_lines, lineup
+     FROM rival_gangs WHERE min_division >= $1 ORDER BY min_division ASC, name ASC`,
+    [division],
+  );
+  return res.rows;
+}
+
+// The lineup a rival fields when the PLAYER chose to fight them (free-pick
+// duel): the gang's signature fleet — a stable, identity-defining tier rather
+// than one pinned to the player's division. Division number tracks fleet value
+// (div 5 ≈ rookie rigs, div 40 ≈ heavy hardware — see calcDivision), so picking
+// a CHARACTERISTIC tier per gang (deterministic from its id) gives the
+// opponent slate a genuine spread of threats: some gangs are a fair fight,
+// others are a deadly gamble for a fat purse. Same gang → same fleet every time.
+export function rivalSignatureLineup(rival: RivalGang): string[] {
+  const nums = Object.keys(rival.lineup ?? {}).map(Number).filter(n => !Number.isNaN(n)).sort((a, b) => a - b);
+  if (!nums.length) return [];
+  const hash = [...rival.id].reduce((h, c) => ((h << 5) - h + c.charCodeAt(0)) | 0, 0);
+  const tier = nums[Math.abs(hash) % nums.length];
+  return rival.lineup[String(tier)] ?? [];
+}
+
+// The lineup an AUTO-picked rival fields — matched to the player's tier so the
+// fallback (non-free-pick, defense) path stays sensible.
+export function rivalLineupForDivision(rival: RivalGang, division: number): string[] {
+  return rival.lineup?.[String(division)] ?? [];
+}
+
+// Cycle a lineup out to the match's squad size — a 4-car squad against a
+// 2-design lineup gets mixed pairs rather than 4 identical rigs. Mirrors the
+// round-robin the handler uses when spawning enemy vehicles.
+export function fieldedStockIds(lineupIds: string[], squadSize: number): string[] {
+  if (!lineupIds.length) return [];
+  const n = Math.max(1, squadSize);
+  return Array.from({ length: n }, (_, i) => lineupIds[i % lineupIds.length]);
+}
+
+// Total cost of a set of stock vehicles (duplicates counted), from the
+// stock_vehicles catalogue. Feeds the rival's fleet value in the power model.
+export async function stockFleetValue(db: Pool, stockIds: string[]): Promise<number> {
+  if (!stockIds.length) return 0;
+  const uniq = [...new Set(stockIds)];
+  const res = await db.query<{ id: string; cost: number }>(
+    `SELECT id, cost FROM stock_vehicles WHERE id = ANY($1)`,
+    [uniq],
+  );
+  const costById = new Map(res.rows.map(r => [r.id, r.cost ?? 0]));
+  return stockIds.reduce((sum, id) => sum + (costById.get(id) ?? 0), 0);
+}
+
 // Adapt a GeneratedGang to the RivalGang shape the arena expects.
 // Generated gangs have no lineup, so the arena falls back to generic AI vehicles.
 export function adaptGeneratedGang(gang: GeneratedGang): RivalGang {
