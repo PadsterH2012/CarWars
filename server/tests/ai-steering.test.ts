@@ -131,6 +131,17 @@ describe('AI steering — scenario tests', () => {
     expect(auto.speed).toBeLessThanOrEqual(10);
   });
 
+  it('autopilot scouts (moves) instead of camping when it has no target', () => {
+    // Enemy hidden behind a wall → no LOS → search. A timid driver would
+    // normally ambush (speed 0); the player's autopilot must hunt instead.
+    const map = makeArena([{ x: 0, y: -4, w: 6, h: 1, type: 'wall' }], 40, 40);
+    const self  = makeVehicle('ai1', 'a', 0, 0, 0);
+    const enemy = makeVehicle('t1', 'b', 0, -8, 180);
+    const ctx: AiContext = { skill: 3, map, allVehicles: [self, enemy], wreckage: [], tick: 5, aggression: 1, autopilot: true };
+    const input = computeAiInput(self, ctx);
+    expect(input.speed).toBeGreaterThan(0);
+  });
+
   it('does not fire at an enemy hidden behind a wall (no line of sight)', () => {
     // Wall directly between self and the enemy → out of sight → the AI can't
     // target or shoot it; it drops into search instead of tracking through.

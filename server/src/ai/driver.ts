@@ -332,6 +332,7 @@ function computeSearchInput(
   const plan = planSearch({
     self, memory: ds.memory, map, tick: ctx.tick, skill, aggression,
     healthFrac, ambusher, scoutTarget: ds.scoutTarget,
+    proactive: !!ctx.autopilot, // the player's autopilot hunts, never camps
   });
 
   // Ambush patience — hold only so long, then go hunting, so two cautious

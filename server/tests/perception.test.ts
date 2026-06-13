@@ -75,4 +75,10 @@ describe('perception — search planning', () => {
     expect(p.mode).toBe('scout');
     expect(p.hold).toBe(false);
   });
+
+  it('proactive (autopilot) always scouts, never camps — even when timid/hurt', () => {
+    const p = planSearch({ self, memory: new Map(), map: undefined, tick: 0, skill: 3, aggression: 1, healthFrac: 0.3, ambusher: true, scoutTarget: null, proactive: true });
+    expect(p.mode).toBe('scout');
+    expect(p.hold).toBe(false);
+  });
 });

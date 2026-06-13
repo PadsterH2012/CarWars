@@ -135,6 +135,8 @@ export function scoutPoints(self: VehicleState, map: ArenaMap | undefined): Posi
 //   - fresh last-known sighting  → pursue it
 //   - cautious / hurt / sniper   → hold and ambush (let them come)
 //   - otherwise                  → scout toward enemy spawns / hotspots
+// `proactive` (the player's autopilot) never ambushes — the player engaged
+// autopilot to go FIND the fight, not camp spawn — so it always scouts/pursues.
 export function planSearch(opts: {
   self: VehicleState;
   memory: Map<string, Sighting>;
@@ -145,6 +147,7 @@ export function planSearch(opts: {
   healthFrac: number;
   ambusher: boolean;          // long-range / sniper loadout prefers to wait
   scoutTarget: Position | null; // current rotating scout target from driver state
+  proactive?: boolean;        // true = always hunt (player autopilot), never camp
 }): SearchPlan {
   const fresh = freshestSighting(opts.memory, opts.tick, memoryTtl(opts.skill));
   if (fresh) {
@@ -152,8 +155,9 @@ export function planSearch(opts: {
   }
 
   // Ambush when timid, hurt, or built for range — sit tight and wait for a
-  // target to walk into view rather than chasing blind.
-  const wantsAmbush = opts.aggression <= 2 || opts.healthFrac < 0.4 || opts.ambusher;
+  // target to walk into view rather than chasing blind. Proactive (autopilot)
+  // drivers skip this and always go looking.
+  const wantsAmbush = !opts.proactive && (opts.aggression <= 2 || opts.healthFrac < 0.4 || opts.ambusher);
   if (wantsAmbush) {
     // Face toward the likeliest approach (current scout target / centre).
     const face = opts.scoutTarget ?? scoutPoints(opts.self, opts.map)[0] ?? { x: 0, y: 0 };
