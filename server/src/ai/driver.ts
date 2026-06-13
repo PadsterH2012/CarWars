@@ -521,11 +521,10 @@ export function computeAiInput(
   }
 
   // ── Perception: what can we actually SEE this tick? ──────────────────────
-  // Gates the omniscient enemy list by sensor range + line-of-sight, and
-  // refreshes last-known memory. When nothing is visible the driver searches
-  // (pursue last-known → scout spawns/hotspots → hold and ambush) instead of
-  // tracking the enemy perfectly through walls.
-  const visibleEnemies = computeVisibleEnemies(self, enemies, map?.walls ?? [], skill);
+  // Detection is line-of-sight only (walls block it), plus radar if fitted.
+  // When nothing is detected the driver searches (pursue last-known → scout
+  // spawns/hotspots → hold and ambush) instead of tracking through walls.
+  const visibleEnemies = computeVisibleEnemies(self, enemies, map?.walls ?? []);
   rememberSightings(ds.memory, visibleEnemies, ctx.tick);
 
   // A commander 'attack' order designates a target even out of sight (the

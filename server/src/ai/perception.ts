@@ -8,13 +8,18 @@
 
 import type { VehicleState, Rect, Position, ArenaMap } from '@carwars/shared';
 
-// ── Sensor range ─────────────────────────────────────────────────────────────
-// Scales with crew skill: a veteran spots and tracks better than a rookie.
-export const SENSOR_BASE = 16;
-export const SENSOR_PER_SKILL = 3; // skill 1 ≈ 19u, skill 3 ≈ 25u, skill 6 ≈ 34u
+// ── Detection ────────────────────────────────────────────────────────────────
+// Default detection is LINE OF SIGHT only — no magic "sensor radius". If a
+// clear line exists between the two vehicles, they see each other; a wall
+// breaks it. The only way to know an enemy's position without LOS is:
+//   - an ASSUMPTION (scout known spawn points / last-known), or
+//   - dedicated EQUIPMENT — the 'radar' accessory detects through obstacles
+//     within radar range (infrared is night-vision, a separate concern).
+export const RADAR_ID = 'radar';
+export const RADAR_RANGE = 60; // radar detects vehicles (even through walls) within this
 
-export function sensorRange(skill: number): number {
-  return SENSOR_BASE + Math.max(0, skill) * SENSOR_PER_SKILL;
+function hasRadar(v: VehicleState): boolean {
+  return !!v.stats.loadout?.accessories?.some(a => a.id === RADAR_ID);
 }
 
 // How long (ticks) a last-known sighting stays useful before it goes stale.
@@ -62,17 +67,19 @@ export function hasLineOfSight(from: Position, to: Position, walls: Rect[]): boo
   return true;
 }
 
-// The enemies this vehicle can actually see right now.
+// The enemies this vehicle can actually detect right now: anything in clear
+// line of sight, plus — if fitted with radar — anything within radar range
+// even through walls.
 export function computeVisibleEnemies(
   self: VehicleState,
   enemies: VehicleState[],
   walls: Rect[],
-  skill: number,
 ): VehicleState[] {
-  const range = sensorRange(skill);
+  const radar = hasRadar(self);
   return enemies.filter(e => {
-    if (dist2d(self.position, e.position) > range) return false;
-    return hasLineOfSight(self.position, e.position, walls);
+    if (hasLineOfSight(self.position, e.position, walls)) return true;
+    if (radar && dist2d(self.position, e.position) <= RADAR_RANGE) return true;
+    return false;
   });
 }
 
