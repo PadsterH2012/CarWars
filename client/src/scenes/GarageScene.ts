@@ -877,7 +877,9 @@ export class GarageScene extends Phaser.Scene {
   }
 
   private buildCrewPanelHTML(): string {
-    const driverRows = this.drivers.map(d => {
+    // Only living crew — the dead are gone (permadeath), not "available".
+    const livingDrivers = this.drivers.filter(d => d.alive);
+    const driverRows = livingDrivers.map(d => {
       const assignedVehicle = d.assigned_vehicle_id
         ? this.vehicles.find(v => v.id === d.assigned_vehicle_id)?.name ?? 'Assigned'
         : null;
@@ -915,7 +917,7 @@ export class GarageScene extends Phaser.Scene {
 
     return `
       <div class="crew-header">
-        <span class="crew-title">Crew (${esc(this.drivers.length)})</span>
+        <span class="crew-title">Crew (${esc(livingDrivers.length)})</span>
         <button class="btn btn-green" data-action="hire" style="font-size:11px;padding:4px 8px">+ Hire</button>
       </div>
       <div class="driver-list">${driverRows || '<p style="color:var(--dim);font-size:12px;padding:12px 14px">No crew hired yet.</p>'}</div>
