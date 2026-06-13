@@ -281,6 +281,22 @@ describe('POST /api/vehicles/design', () => {
     expect(res.body.error).toMatch(/top/);
   });
 
+  it('counts turret-ring spaces in capacity (regression: preview undercounted vs save)', async () => {
+    const base = {
+      bodyType: 'mid_sized', chassisType: 'standard', suspensionType: 'standard',
+      powerPlantType: 'elec_medium', tireType: 'standard', armorType: 'ablative',
+      armor: { front: 1, back: 1, left: 1, right: 1, top: 0, underbody: 0 },
+    };
+    const noTurret = await request(app).post('/api/vehicles/design')
+      .send({ ...base, mounts: [{ id: 'm0', weaponId: 'mg', arc: 'turret', ammo: 10 }] });
+    const withTurret = await request(app).post('/api/vehicles/design')
+      .send({ ...base, mounts: [{ id: 'm0', weaponId: 'mg', arc: 'turret', ammo: 10, turretSize: 'standard' }] });
+    expect(noTurret.status).toBe(200);
+    expect(withTurret.status).toBe(200);
+    // Standard turret ring = 2 spaces; preview must include it (was dropped before).
+    expect(withTurret.body.capacity.spacesUsed).toBe(noTurret.body.capacity.spacesUsed + 2);
+  });
+
   it('returns 400 if cycle body uses a car power plant', async () => {
     const res = await request(app).post('/api/vehicles/design').send({
       bodyType: 'med_cycle',

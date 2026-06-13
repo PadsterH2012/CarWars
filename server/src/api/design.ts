@@ -73,14 +73,18 @@ designRouter.post('/', (req, res) => {
   // tireCount mirrors the rule in deriveStats: cycles have 2, cars have 4, trikes have 3
   const tireCount = body.tireCount ?? (body.isCycle ? 2 : 4);
 
-  // Resolve mounts: array of { weaponId, arc, ammo } from the request
-  const mountList: { id: string; weaponId: string; arc: string; ammo: number }[] =
+  // Resolve mounts from the request. turretSize MUST be carried through —
+  // capacity.ts only charges the turret-ring spaces when both arc==='turret'
+  // and turretSize are present, so dropping it here made the preview undercount
+  // (e.g. 12/13) vs the save path on the raw loadout (16/13).
+  const mountList: { id: string; weaponId: string; arc: string; ammo: number; turretSize?: string }[] =
     Array.isArray(mounts)
       ? mounts.map((m: any, i: number) => ({
           id: m.id ?? `m${i}`,
           weaponId: m.weaponId,
           arc: m.arc ?? 'front',
           ammo: typeof m.ammo === 'number' ? m.ammo : 0,
+          ...(m.turretSize ? { turretSize: m.turretSize } : {}),
         })).filter((m: { weaponId: string }) => WEAPONS.find(w => w.id === m.weaponId))
       : [];
 
