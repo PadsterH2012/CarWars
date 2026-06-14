@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, afterEach, afterAll } from 'vitest';
 import request from 'supertest';
-import { simulateTurn } from '../src/rules/rivalSim';
+import { simulateTurn, settlementInfluenceCap, sustainableInfluence } from '../src/rules/rivalSim';
 import { createApp } from '../src/app';
 import { getDb } from '../src/db/client';
 import type { GeneratedGang } from '../src/rules/gangGen';
@@ -57,13 +57,53 @@ describe('simulateTurn — economy', () => {
     expect(g.treasury).toBeGreaterThan(1000); // income(120) > upkeep(~83)
   });
 
-  it('a gang that cannot pay upkeep loses ground (super-linear ceiling)', () => {
+  it('a broke gang sheds influence proportional to its size (super-linear ceiling)', () => {
     vi.spyOn(Math, 'random').mockReturnValue(0.99); // attack → no action spend
     const dom: GeneratedGang = { ...GANG_A, id: 'dom', treasury: 0 };
     const inf = new Map([[key('s1', 'dom'), 200]]); // income 2400 < upkeep ~2880 → deficit
     simulateTurn(dom, WORLD, inf, [dom]);
-    expect(inf.get(key('s1', 'dom'))!).toBe(197);   // decayWhenBroke = 3
+    // decay = max(decayWhenBroke 3, ceil(200 × 0.05)) = 10
+    expect(inf.get(key('s1', 'dom'))!).toBe(190);
     expect(dom.treasury).toBe(0);
+  });
+});
+
+describe('simulateTurn — sustainability ceiling & caps', () => {
+  it('settlementInfluenceCap scales with population and clamps to [15, 50]', () => {
+    expect(settlementInfluenceCap(500)).toBe(15);       // tiny outpost → floor
+    expect(settlementInfluenceCap(100_000)).toBe(22);   // round(6.67)=7 + 15
+    expect(settlementInfluenceCap(10_000_000)).toBe(50); // huge → ceiling
+  });
+
+  it('sustainableInfluence reflects the income/upkeep equilibrium (~125)', () => {
+    expect(sustainableInfluence()).toBe(125);
+  });
+
+  it('a gang at the sustainable ceiling stops expanding', () => {
+    vi.spyOn(Math, 'random').mockReturnValue(0.5); // expand
+    const g: GeneratedGang = { ...GANG_A, treasury: 100_000 };
+    const inf = new Map([[key('s1', 'ga'), 130]]); // total ≥ 125
+    const log = simulateTurn(g, WORLD, inf, [g]);
+    expect(log).toBeNull();
+    expect(inf.get(key('s2', 'ga')) ?? 0).toBe(0); // no new territory taken
+  });
+
+  it('a gang at the sustainable ceiling stops patrolling', () => {
+    vi.spyOn(Math, 'random').mockReturnValueOnce(0.1).mockReturnValueOnce(0.0); // patrol, index 0
+    const g: GeneratedGang = { ...GANG_A, treasury: 100_000 };
+    const inf = new Map([[key('s1', 'ga'), 130]]);
+    const log = simulateTurn(g, WORLD, inf, [g]);
+    expect(log).toBeNull();
+  });
+
+  it('patrol cannot push a settlement past its population cap', () => {
+    vi.spyOn(Math, 'random').mockReturnValueOnce(0.1).mockReturnValueOnce(0.0); // patrol s3
+    const g: GeneratedGang = { ...GANG_A, treasury: 100_000 };
+    // s3 (pop 500) caps at 15; seed it AT the cap with total under the ceiling.
+    const inf = new Map([[key('s3', 'ga'), 15]]);
+    const log = simulateTurn(g, WORLD, inf, [g]);
+    expect(log).toBeNull();                       // already saturated → no gain
+    expect(inf.get(key('s3', 'ga'))!).toBe(15);
   });
 });
 

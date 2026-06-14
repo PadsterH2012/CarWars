@@ -56,8 +56,31 @@ export const TERRITORY_ECONOMY = {
   patrolCost:              150,  // reinforce a held settlement
   expandCost:             1200,  // move into a new adjacent settlement
   harassCost:              500,  // raid a rival's settlement
-  decayWhenBroke:            3,  // influence lost / turn when upkeep can't be paid
+  decayWhenBroke:            3,  // min influence lost / turn when upkeep can't be paid
+  decayBrokeFraction:     0.05,  // …or 5% of total influence, whichever is larger
 };
+
+// Per-gang influence a single settlement can sustain, scaled by population — a
+// guardrail so no one settlement balloons, and the place where the otherwise-
+// unused population finally matters. Deliberately generous: the real bound on a
+// gang's TOTAL size is the sustainability gate (sustainableInfluence) below.
+export function settlementInfluenceCap(population: number): number {
+  return Math.max(15, Math.min(50, Math.round((population || 0) / 15_000) + 15));
+}
+
+// The total influence at which a gang's territory income equals its upkeep — the
+// natural ceiling. Gangs stop GROWING (patrol/expand) at or above it, so they
+// settle near this size instead of ballooning past it. Derived from the economy
+// constants: income (I·incomePerInfluence) == upkeep (I·maint·(1+I/K)).
+export function sustainableInfluence(): number {
+  const E = TERRITORY_ECONOMY;
+  return Math.round(E.maintenanceScaleK * (E.incomePerInfluence / E.maintenancePerInfluence - 1));
+}
+
+function settlementCapFor(world: GeneratedWorld, sid: string): number {
+  const s = world.settlements.find(x => x.id === sid);
+  return settlementInfluenceCap(s?.population ?? 0);
+}
 
 function gangTotalInfluence(influence: InfluenceMap, world: GeneratedWorld, gid: string): number {
   return world.settlements.reduce((sum, s) => sum + getInf(influence, s.id, gid), 0);
@@ -91,7 +114,10 @@ function applyEconomy(gang: GeneratedGang, world: GeneratedWorld, influence: Inf
     gang.treasury -= upkeep;
   } else {
     gang.treasury = 0;
-    decayInfluence(gang, world, influence, E.decayWhenBroke);
+    // Shed ground proportional to size, so an overshot empire corrects in a few
+    // turns instead of crawling down 3-at-a-time over ~20.
+    const decay = Math.max(E.decayWhenBroke, Math.ceil(I * E.decayBrokeFraction));
+    decayInfluence(gang, world, influence, decay);
   }
 }
 
@@ -109,25 +135,31 @@ export function simulateTurn(
 
   if (action === 'patrol') {
     if (gang.treasury < E.patrolCost) return null; // can't fund the patrol
+    // At the sustainable ceiling a gang consolidates rather than growing.
+    if (gangTotalInfluence(influence, world, gang.id) >= sustainableInfluence()) return null;
     const present = world.settlements.filter(s => getInf(influence, s.id, gang.id) > 0);
     if (!present.length) return null;
     const target = present[Math.floor(Math.random() * present.length)];
+    const cur  = getInf(influence, target.id, gang.id);
+    const gain = Math.min(1 + Math.floor(cur / 20), Math.max(0, settlementCapFor(world, target.id) - cur));
+    if (gain <= 0) return null; // settlement already at its population cap
     gang.treasury -= E.patrolCost;
-    const gain   = 1 + Math.floor(getInf(influence, target.id, gang.id) / 20);
-    setInf(influence, target.id, gang.id, getInf(influence, target.id, gang.id) + gain);
+    setInf(influence, target.id, gang.id, cur + gain);
     return { gangId: gang.id, gangName: gang.name, settlementId: target.id, settlementName: target.name,
       actionType: 'patrol', description: `${gang.name} patrolled ${target.name} → +${gain} influence` };
   }
 
   if (action === 'expand') {
     if (gang.treasury < E.expandCost) return null; // can't fund the expansion
+    // Don't grab new ground once already at the sustainable ceiling.
+    if (gangTotalInfluence(influence, world, gang.id) >= sustainableInfluence()) return null;
     const present = world.settlements.filter(s => getInf(influence, s.id, gang.id) > 0).map(s => s.id);
     const adjIds  = new Set(present.flatMap(sid => adjacentTo(world, sid)));
     const targets = world.settlements.filter(s => adjIds.has(s.id) && getInf(influence, s.id, gang.id) === 0);
     if (!targets.length) return null;
     const target = targets[Math.floor(Math.random() * targets.length)];
     gang.treasury -= E.expandCost;
-    const gain   = 5 + Math.floor(Math.random() * 6);
+    const gain   = Math.min(5 + Math.floor(Math.random() * 6), settlementCapFor(world, target.id));
     setInf(influence, target.id, gang.id, gain);
     return { gangId: gang.id, gangName: gang.name, settlementId: target.id, settlementName: target.name,
       actionType: 'expand', description: `${gang.name} expanded into ${target.name} → +${gain} influence` };

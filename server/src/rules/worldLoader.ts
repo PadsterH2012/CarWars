@@ -2,24 +2,32 @@ import type { Pool } from 'pg';
 import type { GeneratedWorld } from '@carwars/shared';
 import { generateWorld } from './worldGen';
 import { generateGangs, type GeneratedGang } from './gangGen';
+import { settlementInfluenceCap } from './rivalSim';
 
 export async function seedGangInfluence(
   db: Pool,
   world: GeneratedWorld,
   gangs: GeneratedGang[],
 ): Promise<void> {
+  const popOf = new Map(world.settlements.map(s => [s.id, s.population]));
+  const cap = (sid: string): number => settlementInfluenceCap(popOf.get(sid) ?? 0);
+
   for (const gang of gangs) {
+    // Home stronghold (capped by population).
     await db.query(
       `INSERT INTO zone_influence (settlement_id, gang_id, influence)
        VALUES ($1, $2, $3) ON CONFLICT DO NOTHING`,
-      [gang.home_settlement_id, gang.id, gang.starting_influence],
+      [gang.home_settlement_id, gang.id, Math.min(gang.starting_influence, cap(gang.home_settlement_id))],
     );
-    const adjRoads = world.roads.filter(
-      r => r.from === gang.home_settlement_id || r.to === gang.home_settlement_id,
-    );
-    for (const road of adjRoads) {
-      const adjId  = road.from === gang.home_settlement_id ? road.to : road.from;
-      const adjInf = 10 + Math.floor(Math.random() * 10);
+    // A small foothold in up to TWO adjacent settlements — enough reach to start
+    // from, but well UNDER the sustainable ceiling so the sim grows each gang
+    // into its territory. (Previously every adjacent was seeded at 10-20, which
+    // started gangs far above the ceiling and ballooned the leaderboard.)
+    const adjIds = world.roads
+      .filter(r => r.from === gang.home_settlement_id || r.to === gang.home_settlement_id)
+      .map(r => (r.from === gang.home_settlement_id ? r.to : r.from));
+    for (const adjId of adjIds.slice(0, 2)) {
+      const adjInf = Math.min(4 + Math.floor(Math.random() * 6), cap(adjId)); // 4-9
       await db.query(
         `INSERT INTO zone_influence (settlement_id, gang_id, influence)
          VALUES ($1, $2, $3) ON CONFLICT DO NOTHING`,
