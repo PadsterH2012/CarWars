@@ -27,9 +27,30 @@ function approachSpeed(current: number, target: number, accelStat: number): numb
   return Math.max(target, current - Math.max(MIN_BRAKE_PER_TICK, accelStat * BRAKE_MULTIPLIER));
 }
 
+// Cornering speed limit: tyres can only hold so much speed through a turn, so
+// turning lowers the speed the car can actually sustain. We model this as a CAP
+// on the commanded target (not a per-tick nibble) — the car brakes INTO a
+// corner and accelerates back OUT of it, which is both realistic and clearly
+// visible on the speedo. Loss scales quadratically with how hard you turn
+// (steer / max); better handling (higher HC) mitigates it. At full lock a
+// poor-handling car is held to ~55% of its commanded speed; gentle turns barely
+// cost anything. Because it's a bounded cap (not compounding), a constantly-
+// correcting AI is slowed but never trapped. Tunable.
+const MAX_STEER = 30;
+const CORNER_LIMIT = 0.45; // fraction of speed shed at full lock, HC1
+function corneringSpeedCap(target: number, steer: number, handlingClass: number): number {
+  const turnFrac = Math.min(1, Math.abs(steer) / MAX_STEER);
+  if (turnFrac <= 0 || target <= 0) return target;
+  const penalty = turnFrac * turnFrac;
+  const hcMitigation = 1 - Math.min(0.5, Math.max(0, (handlingClass - 1)) * 0.1); // HC1=1.0 … HC6=0.5
+  return target * (1 - CORNER_LIMIT * penalty * hcMitigation);
+}
+
 export function computeMovement(vehicle: VehicleState, input: MovementInput): VehicleState {
-  // Ease the actual speed toward the commanded target, then move by it.
-  const speed = approachSpeed(vehicle.speed, input.speed, vehicle.stats.acceleration ?? MIN_ACCEL_PER_TICK);
+  // Turning caps the achievable speed, then the actual speed eases toward that
+  // cap — so cornering visibly brakes the car and exiting visibly accelerates it.
+  const turnTarget = corneringSpeedCap(input.speed, input.steer, vehicle.stats.handlingClass ?? 3);
+  const speed = approachSpeed(vehicle.speed, turnTarget, vehicle.stats.acceleration ?? MIN_ACCEL_PER_TICK);
 
   // Car Wars: speed (mph) ÷ 5 = inches per phase over 5 phases/turn.
   // We run 10 ticks/turn, so divide by 10 to get the correct inches per tick.

@@ -43,6 +43,11 @@ interface DriverState {
 }
 const driverState = new Map<string, DriverState>();
 
+// Clear all per-vehicle AI state — for test isolation (the map is a module
+// singleton, so reused vehicle ids would otherwise leak orbit dir / memory /
+// tactic across tests). Not used at runtime.
+export function __resetDriverState(): void { driverState.clear(); }
+
 const POS_HISTORY_LEN = 20;
 const REVERSE_BURST_TICKS = 10;   // after hitting a stuck state, reverse for this many ticks
 const REVERSE_SPEED = -25;

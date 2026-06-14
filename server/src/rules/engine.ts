@@ -372,7 +372,9 @@ export function createTurnEngine(initialState: ZoneState, map?: ArenaMap, opts: 
             // Add to any existing slide (compounds if already sliding)
             slideVelocity.set(vehicle.id, (slideVelocity.get(vehicle.id) ?? 0) + spin);
             console.log(`[t${state.tick}] CTRL  ${vehicle.id} fishtail (D${accumulated}, HC${vehicle.stats.handlingClass}) slide=${spin > 0 ? '+' : ''}${spin.toFixed(0)}°`);
-            return vehicle; // spin applied gradually each tick
+            // A fishtail scrubs ~15% speed (a skid below halves it); the slide
+            // is applied gradually over the next ticks.
+            return { ...vehicle, speed: Math.floor(vehicle.speed * 0.85) };
           }
 
           // Skid or worse: physics-based spin + halve speed

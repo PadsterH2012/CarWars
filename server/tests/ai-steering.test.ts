@@ -1,8 +1,14 @@
-import { describe, it, expect } from 'vitest';
-import { computeAiInput } from '../src/ai/driver';
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
+import { computeAiInput, __resetDriverState } from '../src/ai/driver';
 import type { AiContext } from '../src/ai/types';
 import { computeMovement } from '../src/rules/movement';
 import type { VehicleState, ArenaMap, Rect, WreckageObject } from '@carwars/shared';
+
+// Deterministic + isolated: clear the per-vehicle AI singleton and pin the RNG
+// (orbit direction / personality) so navigation outcomes don't drift by test
+// order or run-to-run randomness.
+beforeEach(() => { __resetDriverState(); vi.spyOn(Math, 'random').mockReturnValue(0.5); });
+afterEach(() => vi.restoreAllMocks());
 
 // ── Fixtures ─────────────────────────────────────────────────────────────────
 
@@ -153,9 +159,10 @@ describe('AI steering — scenario tests', () => {
     expect(input.fireWeapon).toBeNull();
   });
 
-  it('sidesteps a wreck placed directly between self and enemy', () => {
+  it('does not drive over a wreck placed directly between self and enemy', () => {
     // Empty map, wreckage at (0, -10), vehicle at (0, 0) facing north (0°),
-    // enemy at (0, -20). Straight-line pursuit would drive through the wreck.
+    // enemy at (0, -20). Straight-line pursuit would drive through the wreck;
+    // the AI must steer to keep clear of it while still closing on the enemy.
     const map = makeArena([], 40, 40);
     const self  = makeVehicle('ai1', 'a', 0,   0, 0);
     const enemy = makeVehicle('t1', 'b', 0, -20, 180);
@@ -168,12 +175,13 @@ describe('AI steering — scenario tests', () => {
       causedBy: 'kinetic',
     };
 
-    // 70 ticks: with gradual acceleration (no longer instant top speed) the car
-    // needs more time to close on the wreck and steer around it.
-    const { positions } = runTicks(self, [enemy], 70, map, [wreck]);
-    const maxDeviation = Math.max(...positions.map(p => Math.abs(p.x)));
+    // 220 ticks: with gradual acceleration AND cornering scrub the car is slower
+    // to build committed speed and steer around the wreck, so it needs more time
+    // to close the 20-unit gap, round the obstacle, and pass it.
+    const { positions } = runTicks(self, [enemy], 220, map, [wreck]);
     const closestWreckApproach = Math.min(...positions.map(p => dist(p, wreck.position)));
-    expect(maxDeviation).toBeGreaterThan(1.5);      // did sidestep
-    expect(closestWreckApproach).toBeGreaterThan(1.0); // did not run over the wreck
+    const closedOnEnemy = Math.min(...positions.map(p => p.y));
+    expect(closestWreckApproach).toBeGreaterThan(1.0); // steered around — never ran over the wreck
+    expect(closedOnEnemy).toBeLessThan(-12);           // advanced past the wreck toward the enemy
   });
 });

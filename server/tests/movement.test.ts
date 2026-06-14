@@ -47,6 +47,12 @@ describe('movement', () => {
     expect(result.speed).toBe(90); // brake = max(8, accel*2) = 10 this tick
   });
 
+  it('scrubs speed when cornering but not going straight', () => {
+    const fast = { ...baseVehicle, speed: 100 };
+    expect(computeMovement(fast, { speed: 100, steer: 0 }).speed).toBe(100);       // straight: no scrub
+    expect(computeMovement(fast, { speed: 100, steer: 30 }).speed).toBeLessThan(100); // hard turn bleeds speed
+  });
+
   it('requires hazard check when turning at high speed', () => {
     const fastVehicle = { ...baseVehicle, speed: 20 };
     const input = { speed: 20, steer: 60 };
