@@ -89,12 +89,7 @@ export function computeVisibleEnemies(
   return enemies.filter(e => {
     const d = dist2d(self.position, e.position);
     if (d <= sight && hasLineOfSight(self.position, e.position, walls)) return true;
-    if (radar && d <= RADAR_RANGE) {
-      // Radar-only detection (no line of sight) — the sensor advantage. Logged
-      // so it's visible in match logs; only fires for radar-equipped vehicles.
-      console.log(`[RADAR] ${self.id.padEnd(10)} tracking ${e.id.padEnd(10)} through cover dist=${d.toFixed(1)}`);
-      return true;
-    }
+    if (radar && d <= RADAR_RANGE) return true; // radar sees through cover within range
     return false;
   });
 }
