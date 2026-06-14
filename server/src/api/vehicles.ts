@@ -83,6 +83,77 @@ vehiclesRouter.post('/', async (req: AuthRequest, res) => {
   }
 });
 
+// ── Buy Another: clone an existing vehicle's build into a fresh purchase ──────
+// POST /api/vehicles/:id/clone
+// Buys a brand-new, pristine vehicle with the SAME name/loadout/specs as an
+// existing one, priced at the source vehicle's stored value. Mirrors the create
+// flow (storage cap → atomic debit → insert). The clone has no driver and full
+// armour; nothing is copied from the source's current condition.
+vehiclesRouter.post('/:id/clone', async (req: AuthRequest, res) => {
+  const db = getDb();
+  const srcRes = await db.query<{ name: string; loadout: VehicleLoadout; value: number }>(
+    `SELECT name, loadout, value FROM vehicles WHERE id = $1 AND player_id = $2`,
+    [req.params.id, req.playerId]
+  );
+  if (!srcRes.rows.length) return res.status(404).json({ error: 'Vehicle not found' });
+  const { name, loadout, value } = srcRes.rows[0]; // loadout is jsonb → object
+
+  // Re-validate the build (catalogue/pricing may have shifted since it was built).
+  try {
+    deriveStats('tmp', name, loadout);
+  } catch (e: any) {
+    return res.status(400).json({ error: e.message });
+  }
+  const cap = computeCapacity(loadout);
+  if (isInvalid(cap)) {
+    return res.status(400).json({ error: `Invalid loadout — ${cap.errors.join('; ')}` });
+  }
+
+  const cost = value ?? loadout.totalCost ?? 0;
+  if (cost <= 0) return res.status(400).json({ error: 'Vehicle has no value to clone' });
+
+  const defaultDamageState = {
+    armor: { ...loadout.armor },
+    engineDamaged: false,
+    driverWounded: false,
+    tiresBlown: [],
+    destroyed: false
+  };
+
+  const client = await db.connect();
+  try {
+    await client.query('BEGIN');
+    if (await vehicleLimitReached(client, req.playerId!)) {
+      await client.query('ROLLBACK');
+      return res.status(400).json({ error: 'Vehicle limit reached. Purchase a garage bay to store more vehicles.' });
+    }
+    const debitRes = await client.query(
+      `UPDATE players SET money = money - $1 WHERE id = $2 AND money >= $1 RETURNING money`,
+      [cost, req.playerId]
+    );
+    if (!debitRes.rows.length) {
+      await client.query('ROLLBACK');
+      return res.status(400).json({ error: 'Insufficient funds' });
+    }
+    const insertRes = await client.query(
+      `INSERT INTO vehicles (player_id, name, loadout, original_loadout, damage_state, value)
+       VALUES ($1, $2, $3, $3, $4, $5) RETURNING id`,
+      [req.playerId, name, JSON.stringify(loadout), JSON.stringify(defaultDamageState), cost]
+    );
+    await client.query(
+      `INSERT INTO event_history (player_id, event_type, result, money_delta) VALUES ($1,'vehicle_build',$2,$3)`,
+      [req.playerId, JSON.stringify({ vehicleId: insertRes.rows[0].id, name, cost, clonedFrom: req.params.id }), -cost]
+    );
+    await client.query('COMMIT');
+    return res.status(201).json({ id: insertRes.rows[0].id, moneyRemaining: debitRes.rows[0].money });
+  } catch (e) {
+    await client.query('ROLLBACK');
+    throw e;
+  } finally {
+    client.release();
+  }
+});
+
 vehiclesRouter.get('/', async (req: AuthRequest, res) => {
   // Resolve any due squad deployments first so the status fields below reflect
   // freshly-returned vehicles (mirrors GET /api/drivers).

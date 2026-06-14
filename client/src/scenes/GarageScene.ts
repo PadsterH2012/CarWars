@@ -861,6 +861,8 @@ export class GarageScene extends Phaser.Scene {
                 ? `<button class="btn btn-yellow" data-action="repair" data-vehicle-id="${esc(v.id)}">Repair</button>`
                 : ''}
               <button class="btn btn-blue" data-action="workshop" data-vehicle-id="${esc(v.id)}">Workshop</button>
+              <button class="btn btn-green" data-action="buy-another" data-vehicle-id="${esc(v.id)}"
+                title="Buy an identical vehicle for $${esc(v.value?.toLocaleString() ?? '0')}">Buy Another</button>
               <button class="btn" data-action="sell" data-vehicle-id="${esc(v.id)}">Sell</button>
             </div>
           </div>
@@ -993,6 +995,11 @@ export class GarageScene extends Phaser.Scene {
         this.openSellModal(vid);
         break;
       }
+      case 'buy-another': {
+        const vid = actionEl.closest<HTMLElement>('[data-vehicle-id]')?.dataset.vehicleId ?? actionEl.dataset.vehicleId ?? '';
+        this.doBuyAnother(vid).catch(() => showToast(this.root, 'Could not buy another vehicle.'));
+        break;
+      }
       case 'driver-card': {
         const did = actionEl.closest<HTMLElement>('[data-driver-id]')?.dataset.driverId ?? actionEl.dataset.driverId ?? '';
         this.openDriverCardModal(did);
@@ -1109,6 +1116,21 @@ export class GarageScene extends Phaser.Scene {
     } else {
       const body = await r.json().catch(() => ({}));
       showToast(this.root, body.error ?? 'Repair failed');
+    }
+  }
+
+  private async doBuyAnother(vehicleId: string): Promise<void> {
+    const host = window.location.hostname;
+    const res = await fetch(`http://${host}:3001/api/vehicles/${vehicleId}/clone`, {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${this.token}` },
+    });
+    if (res.ok) {
+      showToast(this.root, 'Bought another — added to your garage');
+      this.scene.restart({ token: this.token });
+    } else {
+      const body = await res.json().catch(() => ({}));
+      showToast(this.root, body.error ?? 'Could not buy another vehicle');
     }
   }
 

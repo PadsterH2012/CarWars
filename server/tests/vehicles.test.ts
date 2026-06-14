@@ -258,6 +258,75 @@ describe('workshop — PATCH /api/vehicles/:id/weapon', () => {
   });
 });
 
+describe('buy another — POST /api/vehicles/:id/clone', () => {
+  let cloneToken = '';
+  let clonePlayerId = '';
+  let sourceId = '';
+
+  beforeAll(async () => {
+    const db = getDb();
+    await db.query(`DELETE FROM players WHERE username IN ('clonetest', 'clonetest2')`);
+    const reg = await request(app)
+      .post('/api/auth/register')
+      .send({ username: 'clonetest', password: 'password123' });
+    cloneToken = reg.body.token;
+    clonePlayerId = reg.body.playerId;
+    await db.query(`INSERT INTO garages (player_id) VALUES ($1)`, [clonePlayerId]);
+    await db.query(`UPDATE players SET money = 100000 WHERE id = $1`, [clonePlayerId]);
+    const build = await request(app)
+      .post('/api/vehicles')
+      .set('Authorization', `Bearer ${cloneToken}`)
+      .send({ name: 'Fleet Unit', loadout: { ...defaultLoadout, totalCost: 12000 } });
+    sourceId = build.body.id;
+  });
+
+  afterAll(async () => {
+    const db = getDb();
+    await db.query(`DELETE FROM players WHERE username IN ('clonetest', 'clonetest2')`);
+  });
+
+  it('clones the build, debits the source value, and adds a pristine copy', async () => {
+    const before = (await request(app).get('/api/me').set('Authorization', `Bearer ${cloneToken}`)).body.money;
+    const res = await request(app)
+      .post(`/api/vehicles/${sourceId}/clone`)
+      .set('Authorization', `Bearer ${cloneToken}`);
+    expect(res.status).toBe(201);
+    expect(res.body).toHaveProperty('id');
+    expect(res.body.id).not.toBe(sourceId);
+    expect(res.body.moneyRemaining).toBe(before - 12000);
+
+    // Both vehicles exist, same name, clone valued the same and fully armoured.
+    const list = await request(app).get('/api/vehicles').set('Authorization', `Bearer ${cloneToken}`);
+    const fleet = list.body.filter((v: any) => v.name === 'Fleet Unit');
+    expect(fleet.length).toBe(2);
+    const clone = fleet.find((v: any) => v.id === res.body.id);
+    expect(clone.value).toBe(12000);
+    expect(clone.damage_state?.destroyed).toBe(false);
+  });
+
+  it('returns 404 when cloning a vehicle owned by another player', async () => {
+    const reg2 = await request(app)
+      .post('/api/auth/register')
+      .send({ username: 'clonetest2', password: 'password123' });
+    const res = await request(app)
+      .post(`/api/vehicles/${sourceId}/clone`)
+      .set('Authorization', `Bearer ${reg2.body.token}`);
+    expect(res.status).toBe(404);
+  });
+
+  it('rejects with 400 and no debit when the player cant afford the clone', async () => {
+    const db = getDb();
+    await db.query(`UPDATE players SET money = 5000 WHERE id = $1`, [clonePlayerId]);
+    const res = await request(app)
+      .post(`/api/vehicles/${sourceId}/clone`)
+      .set('Authorization', `Bearer ${cloneToken}`);
+    expect(res.status).toBe(400);
+    expect(res.body.error).toMatch(/Insufficient funds/i);
+    const after = (await request(app).get('/api/me').set('Authorization', `Bearer ${cloneToken}`)).body.money;
+    expect(after).toBe(5000);
+  });
+});
+
 describe('calcPrize squad scaling', () => {
   it('scales linearly with squad size', async () => {
     const { calcPrize } = await import('../src/ws/handler');
