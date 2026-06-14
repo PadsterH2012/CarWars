@@ -924,10 +924,7 @@ async function handleMessage(ws: WebSocket, raw: string): Promise<void> {
       position: { x: primarySpawn.x, y: primarySpawn.y },
       facing: primarySpawn.facing,
       speed: 0,
-      stats: {
-        ...vehicle.stats,
-        maxSpeed: Math.min(vehicle.stats.maxSpeed, 100), // cap at 100 mph — sensible Car Wars ceiling
-      },
+      stats: vehicle.stats, // full derived top speed — AI enemies aren't capped, so the player isn't either
     };
     runner.getEngine().addVehicle(vehicle);
     runner.registerHumanVehicle(msg.vehicleId);
@@ -963,7 +960,7 @@ async function handleMessage(ws: WebSocket, raw: string): Promise<void> {
             ...mateVehicle,
             position: { x: pos.x, y: pos.y },
             facing: pos.facing,
-            stats: { ...mateVehicle.stats, maxSpeed: Math.min(mateVehicle.stats.maxSpeed, 100) },
+            stats: mateVehicle.stats, // full derived top speed (uncapped, like the primary + AI)
           };
           runner.getEngine().removeVehicle(mateId);
           runner.getEngine().addVehicle(placed);
