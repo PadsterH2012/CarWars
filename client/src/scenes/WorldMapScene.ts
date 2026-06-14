@@ -326,7 +326,14 @@ class WorldMapScene extends Phaser.Scene {
       if (!a || !b) continue;
       const p = this.toScreen(a.x, a.y);
       const q = this.toScreen(b.x, b.y);
-      this.roadGraphics.lineStyle(roadWidth(road.roadType), roadColour(road.roadType), 0.7);
+      // Roads leaving the current location are travel options — accent them in
+      // green; dim the rest so it's obvious where you can actually go.
+      const connected = road.from === this.currentNodeId || road.to === this.currentNodeId;
+      if (connected) {
+        this.roadGraphics.lineStyle(roadWidth(road.roadType) + 1, 0x00ff88, 0.9);
+      } else {
+        this.roadGraphics.lineStyle(roadWidth(road.roadType), roadColour(road.roadType), 0.3);
+      }
       this.roadGraphics.lineBetween(p.x, p.y, q.x, q.y);
     }
   }
@@ -335,6 +342,7 @@ class WorldMapScene extends Phaser.Scene {
     if (!this.region) return;
     this.nodeContainer.removeAll(true);
     this.nodeMap.clear();
+    const reachable = this.reachableNodeIds();
     for (const node of this.region.settlements) {
       const pos = this.toScreen(node.x, node.y);
       const c = this.add.container(pos.x, pos.y);
@@ -358,9 +366,18 @@ class WorldMapScene extends Phaser.Scene {
       }
       const dot = this.add.circle(0, 0, r, finalColour).setStrokeStyle(2, 0, 0.5);
       const lbl = this.add.text(0, r + 6, node.name, { fontSize: "12px", fontFamily: "monospace", color: "#cccccc" }).setOrigin(0.5, 0);
+      // Reachability cue: current node keeps its ring; road-linked settlements
+      // get a green ring (travel/deploy targets); everything else dims so the
+      // player can see at a glance where they can go.
       if (node.id === this.currentNodeId) {
         const ring = this.add.circle(0, 0, r + 6).setStrokeStyle(2, C_CURRENT_RING, 0.9);
         c.add(ring);
+      } else if (reachable.has(node.id)) {
+        const ring = this.add.circle(0, 0, r + 5).setStrokeStyle(2, 0x00ff88, 0.85);
+        c.add(ring);
+      } else {
+        dot.setAlpha(0.35);
+        lbl.setColor("#666666");
       }
       c.add([dot, lbl]);
       c.setSize(r * 2, r * 2);
@@ -394,7 +411,13 @@ class WorldMapScene extends Phaser.Scene {
   private onNodeClick(node: GeneratedSettlement): void {
     if (node.id === this.currentNodeId) { this.closeTravelPanel(); return; }
     const road = this.findRoad(this.currentNodeId, node.id);
-    if (!road) { this.closeTravelPanel(); return; }
+    if (!road) {
+      // Previously a silent no-op, which read as "travel is broken". Tell the
+      // player travel is road-only and which settlements are actually reachable.
+      this.closeTravelPanel();
+      this.showFlash(`No road to ${node.name} — you can only travel to settlements linked by a road (highlighted)`, 0xff4444);
+      return;
+    }
     this.selectedNodeId = node.id;
     this.selectedNode = node;
     this.selectedRoad = road;
@@ -403,6 +426,17 @@ class WorldMapScene extends Phaser.Scene {
 
   private findRoad(a: string, b: string): GeneratedRoad | undefined {
     return this.region?.roads.find(r => (r.from === a && r.to === b) || (r.from === b && r.to === a));
+  }
+
+  // Settlements directly linked to the current location by a road — the only
+  // places the player can travel to or deploy a squad against right now.
+  private reachableNodeIds(): Set<string> {
+    const set = new Set<string>();
+    for (const r of this.region?.roads ?? []) {
+      if (r.from === this.currentNodeId) set.add(r.to);
+      else if (r.to === this.currentNodeId) set.add(r.from);
+    }
+    return set;
   }
 
   // ── HTML Panel builders ───────────────────────────────────────────────────
@@ -434,6 +468,7 @@ class WorldMapScene extends Phaser.Scene {
           <div style="font-size:15px;color:var(--yellow);font-weight:bold;text-transform:uppercase"
                id="deploy-node-name"></div>
           <div style="font-size:11px;color:var(--gray);margin-top:3px">Select vehicles · max 3 per zone</div>
+          <div id="deploy-assignment-note" style="font-size:11px;margin-top:6px;line-height:1.4"></div>
         </div>
         <div id="deploy-vehicle-list" style="max-height:220px;overflow-y:auto"></div>
         <div style="padding:12px 14px;border-top:1px solid var(--border);display:flex;flex-direction:column;gap:7px">
@@ -507,6 +542,18 @@ class WorldMapScene extends Phaser.Scene {
         // Populate node name in deploy header
         const deployName = this.panelRoot.querySelector('#deploy-node-name') as HTMLElement | null;
         if (deployName) deployName.textContent = this.selectedNode.name;
+        // Spell out what this deployment does — the assignment is auto-picked by
+        // the settlement type, and only patrol/raid earn territory influence.
+        const note = this.panelRoot.querySelector('#deploy-assignment-note') as HTMLElement | null;
+        if (note) {
+          const a = this.deployAssignment(this.selectedNode);
+          note.textContent = a === 'job'
+            ? '💵 JOB — earns credits (seed capital). No territory influence.'
+            : a === 'raid'
+              ? '⚔ RAID — success seizes territory: +5 influence (partial +2, routed −3).'
+              : '🚩 PATROL — success builds territory: +5 influence (partial +2, routed −3).';
+          note.style.color = a === 'job' ? 'var(--amber)' : 'var(--green)';
+        }
         void this.populateDeployVehicleList();
         break;
       }

@@ -235,6 +235,15 @@ export async function resolveDueDeployments(playerId: string): Promise<void> {
       rival: ctx.rival,
     });
 
+    // Territory influence earned by this outcome. Only patrol/raid (non-job)
+    // deployments move influence; jobs pay cash but grant none. Computed here so
+    // the after-action report can show it AND the zone_influence write below
+    // applies the same number.
+    const INFLUENCE_BY_OUTCOME: Record<string, number> = {
+      success: 5, partial: 2, failure: 0, routed: -3,
+    };
+    const influenceDelta = ctx.isJob ? 0 : (INFLUENCE_BY_OUTCOME[result.outcome] ?? 0);
+
     const report = {
       zone: ctx.zoneIdForReport,
       zoneName: ctx.placeName,
@@ -247,6 +256,7 @@ export async function resolveDueDeployments(playerId: string): Promise<void> {
       repairCost: result.repairCost,
       net: result.net,
       rivalRepChange: result.rivalRepChange ?? null,
+      influenceDelta,
       breakdown: result.breakdown,
     };
 
@@ -328,12 +338,8 @@ export async function resolveDueDeployments(playerId: string): Promise<void> {
         await client.query('UPDATE jobs SET completed = TRUE WHERE id = $1', [ctx.jobId]);
       }
 
-      // Write zone influence for territory deployments
+      // Write zone influence for territory deployments (delta computed above).
       if (!ctx.isJob && dep.zone_id && gangId) {
-        const INFLUENCE_BY_OUTCOME: Record<string, number> = {
-          success: 5, partial: 2, failure: 0, routed: -3,
-        };
-        const influenceDelta = INFLUENCE_BY_OUTCOME[result.outcome] ?? 0;
         if (influenceDelta !== 0) {
           await client.query(
             `INSERT INTO zone_influence (settlement_id, gang_id, influence)

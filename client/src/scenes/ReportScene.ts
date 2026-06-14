@@ -15,6 +15,7 @@ interface ReportBody {
   perDriver: PerDriver[]; vehicles: PerVehicle[];
   income: number; repairCost: number; net: number;
   rivalRepChange: { rivalId: string; rivalName: string; delta: number } | null;
+  influenceDelta?: number;
 }
 interface ReportRow {
   id: string; zone_id: string; outcome: Outcome; report: ReportBody;
@@ -183,6 +184,7 @@ export class ReportScene extends Phaser.Scene {
               Net: ${rep.net >= 0 ? '+' : ''}$${rep.net.toLocaleString()}
               · Income $${(rep.income ?? 0).toLocaleString()}
               · Repairs $${(rep.repairCost ?? 0).toLocaleString()}
+              ${rep.influenceDelta ? `· <span style="color:${rep.influenceDelta > 0 ? 'var(--green)' : 'var(--red)'}">Territory ${rep.influenceDelta > 0 ? '+' : ''}${rep.influenceDelta} influence</span>` : ''}
             </div>` : ''}
           </div>
           <div class="report-outcome">
