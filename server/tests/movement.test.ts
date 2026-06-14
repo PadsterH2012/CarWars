@@ -35,6 +35,18 @@ describe('movement', () => {
     expect(result.facing).toBe(15);
   });
 
+  it('eases speed toward the target instead of jumping (acceleration)', () => {
+    const stopped = { ...baseVehicle, speed: 0 };
+    const result = computeMovement(stopped, { speed: 100, steer: 0 });
+    expect(result.speed).toBe(5); // accel stat 5 → +max(3,5) this tick, not 100
+  });
+
+  it('brakes faster than it accelerates', () => {
+    const fast = { ...baseVehicle, speed: 100 };
+    const result = computeMovement(fast, { speed: 0, steer: 0 });
+    expect(result.speed).toBe(90); // brake = max(8, accel*2) = 10 this tick
+  });
+
   it('requires hazard check when turning at high speed', () => {
     const fastVehicle = { ...baseVehicle, speed: 20 };
     const input = { speed: 20, steer: 60 };

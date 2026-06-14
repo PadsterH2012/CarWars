@@ -10,11 +10,31 @@ export interface HazardCheck {
   difficulty: number;
 }
 
+// Acceleration model: `input.speed` is the TARGET (throttle/AI desired). The
+// vehicle eases its actual speed toward it each tick rather than teleporting,
+// so braking and acceleration are gradual and the speedo reads a real ramp.
+// Rates are tuned per tick (not literal mph/turn, which would be far too slow
+// for match length) and scale with the vehicle's acceleration stat; braking is
+// stronger than acceleration. Tunable.
+const MIN_ACCEL_PER_TICK = 3;  // mph/tick floor when accelerating
+const BRAKE_MULTIPLIER   = 2;  // brakes are ~2× engine accel
+const MIN_BRAKE_PER_TICK = 8;  // mph/tick floor when slowing
+
+function approachSpeed(current: number, target: number, accelStat: number): number {
+  if (target > current) {
+    return Math.min(target, current + Math.max(MIN_ACCEL_PER_TICK, accelStat));
+  }
+  return Math.max(target, current - Math.max(MIN_BRAKE_PER_TICK, accelStat * BRAKE_MULTIPLIER));
+}
+
 export function computeMovement(vehicle: VehicleState, input: MovementInput): VehicleState {
+  // Ease the actual speed toward the commanded target, then move by it.
+  const speed = approachSpeed(vehicle.speed, input.speed, vehicle.stats.acceleration ?? MIN_ACCEL_PER_TICK);
+
   // Car Wars: speed (mph) ÷ 5 = inches per phase over 5 phases/turn.
   // We run 10 ticks/turn, so divide by 10 to get the correct inches per tick.
   // Additional /3 scale-down for visual pacing, then /8 for current tuning = /360 total.
-  const distancePerPhase = input.speed / 360;
+  const distancePerPhase = speed / 360;
   const newFacing = (vehicle.facing + input.steer + 360) % 360;
 
   const radians = (vehicle.facing - 90) * (Math.PI / 180);
@@ -28,7 +48,7 @@ export function computeMovement(vehicle: VehicleState, input: MovementInput): Ve
       y: vehicle.position.y + dy
     },
     facing: newFacing,
-    speed: input.speed
+    speed
   };
 }
 

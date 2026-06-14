@@ -168,7 +168,9 @@ describe('AI steering — scenario tests', () => {
       causedBy: 'kinetic',
     };
 
-    const { positions } = runTicks(self, [enemy], 30, map, [wreck]);
+    // 70 ticks: with gradual acceleration (no longer instant top speed) the car
+    // needs more time to close on the wreck and steer around it.
+    const { positions } = runTicks(self, [enemy], 70, map, [wreck]);
     const maxDeviation = Math.max(...positions.map(p => Math.abs(p.x)));
     const closestWreckApproach = Math.min(...positions.map(p => dist(p, wreck.position)));
     expect(maxDeviation).toBeGreaterThan(1.5);      // did sidestep
