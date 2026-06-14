@@ -9,6 +9,15 @@ export interface Pt { x: number; y: number }
 export const RADAR_ID = 'radar';
 export const RADAR_RANGE = 60; // matches server rules/perception.ts
 
+// Eye sight range (how far a crew can make out a vehicle in clear LOS), scaled
+// by skill. Radar reaches further AND through walls. KEEP IN SYNC with the
+// duplicate constants in server rules/perception.ts.
+export const SIGHT_BASE = 25;
+export const SIGHT_PER_SKILL = 2.8; // skill 1 ≈ 28, skill 3 ≈ 33, skill 6 ≈ 42
+export function sightRange(skill: number): number {
+  return SIGHT_BASE + Math.max(0, skill) * SIGHT_PER_SKILL;
+}
+
 function hasRadar(v: VehicleState): boolean {
   return !!v.stats.loadout?.accessories?.some(a => a.id === RADAR_ID);
 }
@@ -29,13 +38,14 @@ export function lineOfSight(from: Pt, to: Pt, walls: Rect[]): boolean {
   return true;
 }
 
-// Is `target` perceived by any of the `viewers` — clear LOS, or within radar
-// range (through walls) if any viewer carries radar.
-export function isPerceived(target: Pt, viewers: VehicleState[], walls: Rect[]): boolean {
+// Is `target` perceived by any of the `viewers` — clear LOS within `sight`
+// range, or within radar range (through walls) if any viewer carries radar.
+export function isPerceived(target: Pt, viewers: VehicleState[], walls: Rect[], sight: number): boolean {
   const radar = viewers.some(hasRadar);
   for (const v of viewers) {
-    if (lineOfSight(v.position, target, walls)) return true;
-    if (radar && Math.hypot(v.position.x - target.x, v.position.y - target.y) <= RADAR_RANGE) return true;
+    const d = Math.hypot(v.position.x - target.x, v.position.y - target.y);
+    if (d <= sight && lineOfSight(v.position, target, walls)) return true;
+    if (radar && d <= RADAR_RANGE) return true;
   }
   return false;
 }
@@ -69,16 +79,20 @@ function raySeg(o: Pt, dx: number, dy: number, s: Seg): number {
   return t1 > 0 ? t1 : Infinity;
 }
 
+// `maxDist` clips vision to a sight radius — rays that don't hit a wall sooner
+// end on the circle, so the lit area is a torch shaped by walls rather than
+// infinite wedges. Default Infinity = wall/bounds-limited only.
 export function visibilityPolygon(
   origin: Pt,
   walls: Rect[],
   bounds: { x: number; y: number; w: number; h: number },
+  maxDist = Infinity,
 ): Pt[] {
   const segs: Seg[] = [...rectSegments(bounds)];
   for (const w of walls) segs.push(...rectSegments(w));
 
   // Candidate angles: toward every segment endpoint, ± a sliver so rays slip
-  // past corners and reach what's behind them.
+  // past corners. Plus an even ring so the clipped (circular) arc stays smooth.
   const corners: Pt[] = [];
   for (const s of segs) { corners.push({ x: s.ax, y: s.ay }, { x: s.bx, y: s.by }); }
   const angles: number[] = [];
@@ -86,17 +100,21 @@ export function visibilityPolygon(
     const a = Math.atan2(c.y - origin.y, c.x - origin.x);
     angles.push(a - 0.0002, a, a + 0.0002);
   }
+  if (Number.isFinite(maxDist)) {
+    const RING = 48;
+    for (let k = 0; k < RING; k++) angles.push((k / RING) * Math.PI * 2 - Math.PI);
+  }
   angles.sort((p, q) => p - q);
 
-  const hits: { ang: number; x: number; y: number }[] = [];
+  const hits: Pt[] = [];
   for (const a of angles) {
     const dx = Math.cos(a), dy = Math.sin(a);
-    let best = Infinity;
+    let best = maxDist;
     for (const s of segs) {
       const t = raySeg(origin, dx, dy, s);
       if (t < best) best = t;
     }
-    if (best !== Infinity) hits.push({ ang: a, x: origin.x + dx * best, y: origin.y + dy * best });
+    if (Number.isFinite(best)) hits.push({ x: origin.x + dx * best, y: origin.y + dy * best });
   }
-  return hits.map(h => ({ x: h.x, y: h.y }));
+  return hits;
 }

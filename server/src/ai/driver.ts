@@ -525,7 +525,7 @@ export function computeAiInput(
   // Detection is line-of-sight only (walls block it), plus radar if fitted.
   // When nothing is detected the driver searches (pursue last-known → scout
   // spawns/hotspots → hold and ambush) instead of tracking through walls.
-  const visibleEnemies = computeVisibleEnemies(self, enemies, map?.walls ?? []);
+  const visibleEnemies = computeVisibleEnemies(self, enemies, map?.walls ?? [], skill);
   rememberSightings(ds.memory, visibleEnemies, ctx.tick);
 
   // A commander 'attack' order designates a target even out of sight (the

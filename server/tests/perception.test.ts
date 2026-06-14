@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import {
-  hasLineOfSight, computeVisibleEnemies, planSearch, RADAR_RANGE,
+  hasLineOfSight, computeVisibleEnemies, planSearch, RADAR_RANGE, sightRange,
   freshestSighting, rememberSightings, type Sighting,
 } from '../src/ai/perception';
 import type { VehicleState, Rect } from '@carwars/shared';
@@ -23,25 +23,32 @@ describe('perception — sight + memory', () => {
     expect(hasLineOfSight({ x: -5, y: 0 }, { x: 5, y: 0 }, [])).toBe(true);
   });
 
-  it('a distant enemy with clear line of sight IS visible (no range cap)', () => {
-    expect(computeVisibleEnemies(veh('a', 0, 0), [veh('b', 100, 0)], [])).toHaveLength(1);
+  it('sight range scales with skill', () => {
+    expect(sightRange(1)).toBeLessThan(sightRange(6));
   });
 
-  it('enemy behind a wall is not visible — unless fitted with radar', () => {
+  it('enemy in clear LOS within sight range is visible; beyond it is not', () => {
+    const near = veh('b', sightRange(3) - 5, 0);
+    const far  = veh('b', sightRange(3) + 20, 0); // clear LOS but too far to make out
+    expect(computeVisibleEnemies(veh('a', 0, 0), [near], [], 3)).toHaveLength(1);
+    expect(computeVisibleEnemies(veh('a', 0, 0), [far], [], 3)).toHaveLength(0);
+  });
+
+  it('enemy behind a wall (in range) is not visible — unless fitted with radar', () => {
     const enemy = veh('b', 3, 0);
     const wall: Rect = { x: 0, y: 0, w: 1, h: 10, type: 'wall' } as any;
-    // No radar — wall blocks LOS, undetected.
-    expect(computeVisibleEnemies(veh('a', -3, 0), [enemy], [wall])).toHaveLength(0);
-    // Radar — detects through the wall within range.
+    expect(computeVisibleEnemies(veh('a', -3, 0), [enemy], [wall], 3)).toHaveLength(0);
     const radarSelf = veh('a', -3, 0, [{ id: 'radar' }]);
-    expect(computeVisibleEnemies(radarSelf, [enemy], [wall])).toHaveLength(1);
+    expect(computeVisibleEnemies(radarSelf, [enemy], [wall], 3)).toHaveLength(1);
   });
 
-  it('radar does not detect through walls beyond radar range', () => {
+  it('radar detects beyond sight range (within radar range), even through walls', () => {
     const wall: Rect = { x: 0, y: 0, w: 1, h: 200, type: 'wall' } as any;
     const radarSelf = veh('a', -5, 0, [{ id: 'radar' }]);
-    const farEnemy = veh('b', RADAR_RANGE + 10, 0); // behind the wall, beyond radar range
-    expect(computeVisibleEnemies(radarSelf, [farEnemy], [wall])).toHaveLength(0);
+    const mid = veh('b', 40, 0); // beyond sight (~33) but within radar (60), behind wall
+    const far = veh('b', RADAR_RANGE + 10, 0); // beyond radar range
+    expect(computeVisibleEnemies(radarSelf, [mid], [wall], 3)).toHaveLength(1);
+    expect(computeVisibleEnemies(radarSelf, [far], [wall], 3)).toHaveLength(0);
   });
 
   it('memory is stale across a match restart (negative age)', () => {

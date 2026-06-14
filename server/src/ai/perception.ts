@@ -9,14 +9,22 @@
 import type { VehicleState, Rect, Position, ArenaMap } from '@carwars/shared';
 
 // ── Detection ────────────────────────────────────────────────────────────────
-// Default detection is LINE OF SIGHT only — no magic "sensor radius". If a
-// clear line exists between the two vehicles, they see each other; a wall
-// breaks it. The only way to know an enemy's position without LOS is:
+// Detection is LINE OF SIGHT within a skill-scaled SIGHT RANGE — you need both
+// a clear line (walls break it) AND to be close enough to make the vehicle out.
+// The only ways to know an enemy's position otherwise:
 //   - an ASSUMPTION (scout known spawn points / last-known), or
 //   - dedicated EQUIPMENT — the 'radar' accessory detects through obstacles
 //     within radar range (infrared is night-vision, a separate concern).
 export const RADAR_ID = 'radar';
 export const RADAR_RANGE = 60; // radar detects vehicles (even through walls) within this
+
+// Eye sight range, scaled by crew skill. KEEP IN SYNC with the duplicate
+// constants in client src/game/visibility.ts so AI and player vision match.
+export const SIGHT_BASE = 25;
+export const SIGHT_PER_SKILL = 2.8; // skill 1 ≈ 28, skill 3 ≈ 33, skill 6 ≈ 42
+export function sightRange(skill: number): number {
+  return SIGHT_BASE + Math.max(0, skill) * SIGHT_PER_SKILL;
+}
 
 function hasRadar(v: VehicleState): boolean {
   return !!v.stats.loadout?.accessories?.some(a => a.id === RADAR_ID);
@@ -68,17 +76,20 @@ export function hasLineOfSight(from: Position, to: Position, walls: Rect[]): boo
 }
 
 // The enemies this vehicle can actually detect right now: anything in clear
-// line of sight, plus — if fitted with radar — anything within radar range
-// even through walls.
+// line of sight within sight range, plus — if fitted with radar — anything
+// within radar range even through walls.
 export function computeVisibleEnemies(
   self: VehicleState,
   enemies: VehicleState[],
   walls: Rect[],
+  skill: number,
 ): VehicleState[] {
   const radar = hasRadar(self);
+  const sight = sightRange(skill);
   return enemies.filter(e => {
-    if (hasLineOfSight(self.position, e.position, walls)) return true;
-    if (radar && dist2d(self.position, e.position) <= RADAR_RANGE) return true;
+    const d = dist2d(self.position, e.position);
+    if (d <= sight && hasLineOfSight(self.position, e.position, walls)) return true;
+    if (radar && d <= RADAR_RANGE) return true;
     return false;
   });
 }

@@ -1,7 +1,7 @@
 import Phaser from 'phaser';
 import { Connection } from '../game/Connection';
 import type { ZoneState, CombatEvent } from '@carwars/shared';
-import { isPerceived, visibilityPolygon, RADAR_ID, RADAR_RANGE, type Pt } from '../game/visibility';
+import { isPerceived, visibilityPolygon, sightRange, RADAR_ID, RADAR_RANGE, type Pt } from '../game/visibility';
 import arenaMapData from '../tilemaps/arena-1.json';
 import { preloadVehicleSprites, buildVehicleSprite, updateVehicleSprite, teamColorForVehicle } from '../game/VehicleSprite';
 import { bindFullscreenToggle, onLayout } from '../ui/responsive';
@@ -427,7 +427,7 @@ export class ArenaScene extends Phaser.Scene {
       // Fog of war: an enemy vehicle is only drawn while the squad can perceive
       // it (LOS or radar). It vanishes the moment it slips out of sight.
       const isEnemy = v.playerId === 'ai-team';
-      container.setVisible(!isEnemy || isPerceived(v.position, viewers, this.mapWalls));
+      container.setVisible(!isEnemy || isPerceived(v.position, viewers, this.mapWalls, sightRange(this.driverSkill)));
 
       if (v.id === this.myVehicleId) {
         this.cameras.main.startFollow(container, false);
@@ -559,7 +559,7 @@ export class ArenaScene extends Phaser.Scene {
     state.vehicles.forEach(v => {
       const isPlayer = v.id === this.myVehicleId;
       const isEnemy  = v.playerId === 'ai-team';
-      if (isEnemy && !isPerceived(v.position, viewers, this.mapWalls)) return;
+      if (isEnemy && !isPerceived(v.position, viewers, this.mapWalls, sightRange(this.driverSkill))) return;
       const color = isPlayer ? 0x00ff88 : (isEnemy ? 0xff4444 : 0xffaa00);
       const dotX = Math.max(MM_X + 2, Math.min(MM_X + MM_SIZE - 2, cx + v.position.x * MM_SCALE));
       const dotY = Math.max(MM_Y + 2, Math.min(MM_Y + MM_SIZE - 2, cy + v.position.y * MM_SCALE));
@@ -602,30 +602,43 @@ export class ArenaScene extends Phaser.Scene {
     const viewers = this.friendlyViewers(state);
 
     const g = this.fogVis;
-    g.clear();
-    g.fillStyle(0xffffff, 1);
     const toLocal = (p: Pt) => ({ x: (p.x + halfW) * PPI, y: (p.y + halfH) * PPI });
-    for (const v of viewers) {
-      const poly = visibilityPolygon(v.position, this.mapWalls, bounds);
-      if (poly.length < 3) continue;
+    const sight = sightRange(this.driverSkill);
+    const radar = viewers.some(v => (v.stats.loadout?.accessories ?? []).some(a => a.id === RADAR_ID));
+
+    // One LOS shadowcast per viewer, clipped to sight range (a torch shaped by
+    // walls). Reused for both the explored buffer and the falloff fill.
+    const polys = viewers.map(v => ({ v, poly: visibilityPolygon(v.position, this.mapWalls, bounds, sight) }));
+    const fillPoly = (origin: Pt, poly: Pt[], f: number) => {
+      if (poly.length < 3) return;
       g.beginPath();
       poly.forEach((p, i) => {
-        const l = toLocal(p);
+        const sx = origin.x + (p.x - origin.x) * f, sy = origin.y + (p.y - origin.y) * f;
+        const l = toLocal({ x: sx, y: sy });
         if (i === 0) g.moveTo(l.x, l.y); else g.lineTo(l.x, l.y);
       });
       g.closePath();
       g.fillPath();
-    }
-    // Radar reveals a circle through walls (carries the sensor advantage in).
-    const radar = viewers.some(v => (v.stats.loadout?.accessories ?? []).some(a => a.id === RADAR_ID));
-    if (radar) for (const v of viewers) {
-      const l = toLocal(v.position);
-      g.fillCircle(l.x, l.y, RADAR_RANGE * PPI);
-    }
+    };
 
-    // Accumulate explored, then paint the two overlays by erasing the lit area.
+    // Pass 1 — HARD lit area (full opacity) → accumulate "explored memory".
+    g.clear();
+    g.fillStyle(0xffffff, 1);
+    for (const { v, poly } of polys) fillPoly(v.position, poly, 1);
+    if (radar) for (const v of viewers) { const l = toLocal(v.position); g.fillCircle(l.x, l.y, RADAR_RANGE * PPI); }
     this.fogExplored.draw(g);
-    this.fogDim.clear();  this.fogDim.fill(0x000000, 0.45);  this.fogDim.erase(g);
+
+    // Pass 2 — SOFT lit area: nested polygons scaled toward each viewer build a
+    // radial falloff (bright at the car, fading to the sight edge).
+    g.clear();
+    g.fillStyle(0xffffff, 0.38);
+    const LAYERS = [1.0, 0.78, 0.56, 0.34];
+    for (const { v, poly } of polys) for (const f of LAYERS) fillPoly(v.position, poly, f);
+    if (radar) { g.fillStyle(0xffffff, 1); for (const v of viewers) { const l = toLocal(v.position); g.fillCircle(l.x, l.y, RADAR_RANGE * PPI); } }
+
+    // Paint the overlays by erasing the lit area: fogDim fades with the soft
+    // pass; fogDark uses the hard explored memory.
+    this.fogDim.clear();  this.fogDim.fill(0x000000, 0.55);  this.fogDim.erase(g);
     this.fogDark.clear(); this.fogDark.fill(0x000000, 0.40); this.fogDark.erase(this.fogExplored);
   }
 
@@ -667,7 +680,7 @@ export class ArenaScene extends Phaser.Scene {
       const worldY = WORLD_CENTER_Y + w.position.y * PIXELS_PER_INCH;
       container.setPosition(worldX, worldY);
       container.setRotation(Phaser.Math.DegToRad(w.facing));
-      container.setVisible(isPerceived(w.position, viewers, this.mapWalls)); // fog
+      container.setVisible(isPerceived(w.position, viewers, this.mapWalls, sightRange(this.driverSkill))); // fog
     });
 
     this.wreckSprites.forEach((c, id) => {
@@ -692,7 +705,7 @@ export class ArenaScene extends Phaser.Scene {
           : this.add.circle(worldX, worldY, 6, 0xff2200).setDepth(1.5);
         this.hazardSprites.set(h.id, sprite as Phaser.GameObjects.GameObject);
       }
-      sprite.setVisible(isPerceived(h.position, viewers, this.mapWalls)); // fog
+      sprite.setVisible(isPerceived(h.position, viewers, this.mapWalls, sightRange(this.driverSkill))); // fog
     });
     this.hazardSprites.forEach((sprite, id) => {
       if (!seen.has(id)) {
