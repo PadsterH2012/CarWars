@@ -118,18 +118,27 @@ export function resolveSquadEngagement(
   const roll = rng();
   const outcome = pickOutcome(roll, successChance);
 
-  const perDriver = squad.map(d => resolveDriver(d, outcome, rng));
+  const perDriver = squad.map(d => resolveDriver(d, outcome, zoneDifficulty, rng));
 
-  const vehicleDamage = DAMAGE_BY_OUTCOME[outcome];
-  const perVehicle: PerVehicleResult[] = vehicles.map(v => ({
+  // Vehicle damage. For success/partial/failure every vehicle takes the tier's
+  // damage. ROUTED is a catastrophe but NOT an automatic total wipe: only the
+  // single most-valuable vehicle is wrecked; the rest limp home heavily damaged.
+  // (Previously routed wrecked every vehicle, contradicting the design intent
+  // and turning one bad roll into the loss of a whole squad.)
+  const mkVehicle = (v: SquadVehicle, dmg: VehicleDamageTier): PerVehicleResult => ({
     vehicleId: v.id,
     name: v.name,
-    damage: vehicleDamage,
-    repairCost: Math.round(v.value * REPAIR_FRACTION[vehicleDamage]),
-  }));
+    damage: dmg,
+    repairCost: Math.round(v.value * REPAIR_FRACTION[dmg]),
+  });
+  let perVehicle: PerVehicleResult[];
+  if (outcome === 'routed' && vehicles.length > 0) {
+    const worstIdx = vehicles.reduce((best, v, i, arr) => (v.value > arr[best].value ? i : best), 0);
+    perVehicle = vehicles.map((v, i) => mkVehicle(v, i === worstIdx ? 'wrecked' : 'heavy'));
+  } else {
+    perVehicle = vehicles.map(v => mkVehicle(v, DAMAGE_BY_OUTCOME[outcome]));
+  }
 
-  // ROUTED is a catastrophe — the first vehicle is wrecked outright even if the
-  // tier table already says so; a squad with no vehicles simply takes no hit.
   const income =
     outcome === 'success' ? basePayout : outcome === 'partial' ? Math.floor(basePayout * 0.5) : 0;
   const repairCost = perVehicle.reduce((sum, v) => sum + v.repairCost, 0);
@@ -168,9 +177,14 @@ function pickOutcome(roll: number, successChance: number): EngagementOutcome {
   return 'routed';
 }
 
-// Per-driver consequences scaled to the engagement tier. Two rng draws per
-// driver: a status roll (injury severity) then a kills roll.
-function resolveDriver(d: SquadDriver, outcome: EngagementOutcome, rng: () => number): PerDriverResult {
+// Per-driver consequences scaled to the engagement tier AND zone difficulty.
+// Two rng draws per driver: a status roll (injury severity) then a kills roll.
+function resolveDriver(
+  d: SquadDriver,
+  outcome: EngagementOutcome,
+  zoneDifficulty: number,
+  rng: () => number,
+): PerDriverResult {
   const statusRoll = rng();
   const killsRoll = rng();
 
@@ -189,10 +203,17 @@ function resolveDriver(d: SquadDriver, outcome: EngagementOutcome, rng: () => nu
       status = statusRoll < 0.3 ? 'wounded' : 'unharmed';
       kills = Math.floor(killsRoll * 1);
       break;
-    case 'routed':
-      status = statusRoll < 0.4 ? 'dead' : statusRoll < 0.7 ? 'wounded' : 'unharmed';
+    case 'routed': {
+      // Death scales with difficulty: an EASY rout is a beating, not a funeral.
+      // deathChance = 0 at difficulty ≤3, +10% per level above (≈0.7 at diff 10).
+      // Below that threshold a routed driver is at worst wounded.
+      const deathChance = Math.max(0, (zoneDifficulty - 3)) * 0.1;
+      status = statusRoll < deathChance ? 'dead'
+             : statusRoll < deathChance + 0.5 ? 'wounded'
+             : 'unharmed';
       kills = 0;
       break;
+    }
   }
 
   return { driverId: d.id, driverName: d.name, status, kills };

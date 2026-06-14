@@ -89,6 +89,49 @@ describe('resolveSquadEngagement', () => {
     expect(r.perDriver.some(d => d.status === 'dead')).toBe(true);
   });
 
+  it('ROUTED wrecks only the most valuable vehicle; the rest take heavy damage', () => {
+    const r = resolveSquadEngagement(
+      {
+        squad: [{ id: 'd1', name: 'A', skill: 1 }],
+        vehicles: [{ id: 'v1', name: 'Cheap', value: 4000 }, { id: 'v2', name: 'Pricey', value: 12000 }],
+        zoneDifficulty: 9, assignment: 'raid', basePayout: 800,
+      },
+      seq(0.99, 0.9, 0.0), // main roll → routed; driver survives
+    );
+    expect(r.outcome).toBe('routed');
+    const wrecked = r.vehicles.filter(v => v.damage === 'wrecked');
+    const heavy = r.vehicles.filter(v => v.damage === 'heavy');
+    expect(wrecked).toHaveLength(1);
+    expect(wrecked[0].name).toBe('Pricey'); // most valuable is the one lost
+    expect(heavy).toHaveLength(1);
+    expect(heavy[0].name).toBe('Cheap');
+  });
+
+  it('an EASY job never kills a driver, even when routed', () => {
+    const r = resolveSquadEngagement(
+      {
+        squad: [{ id: 'd1', name: 'A', skill: 2 }, { id: 'd2', name: 'B', skill: 2 }],
+        vehicles: twoVehicles, zoneDifficulty: 2, assignment: 'job', basePayout: 500,
+      },
+      seq(0.99, 0.0, 0.0, 0.0, 0.0), // routed; both drivers roll the worst status
+    );
+    expect(r.outcome).toBe('routed');
+    // deathChance at difficulty 2 is 0 → the worst that happens is wounded
+    expect(r.perDriver.every(d => d.status !== 'dead')).toBe(true);
+  });
+
+  it('a HARD job can kill a driver when routed', () => {
+    const r = resolveSquadEngagement(
+      {
+        squad: [{ id: 'd1', name: 'A', skill: 1 }],
+        vehicles: [{ id: 'v1', name: 'J', value: 4000 }], zoneDifficulty: 9, assignment: 'raid', basePayout: 800,
+      },
+      seq(0.99, 0.0, 0.0), // routed; statusRoll 0 < deathChance 0.6 → dead
+    );
+    expect(r.outcome).toBe('routed');
+    expect(r.perDriver[0].status).toBe('dead');
+  });
+
   it('net is income minus repair cost', () => {
     const r = resolveSquadEngagement(
       { squad: twoSkilledDrivers, vehicles: twoVehicles, zoneDifficulty: 4, assignment: 'patrol', basePayout: 1000 },
