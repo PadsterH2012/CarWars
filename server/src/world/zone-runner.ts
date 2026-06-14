@@ -67,6 +67,9 @@ export class ZoneRunner {
   // combatEvents. Feeds the prestige-point award at zone-end so drivers are
   // credited for damage dealt + hits soaked, not just kills.
   private matchStats = new Map<string, { damageDealt: number; hitsTaken: number }>();
+  // Current AI behaviour label per vehicle — stamped onto the broadcast state
+  // each tick so the client squad HUD can show "SCOUTING / ENGAGING / …".
+  private vehicleTask = new Map<string, string>();
   private squadOrders = new Map<string, SquadOrder>(); // vehicleId → current order (commander mode)
   private pausedBy: WebSocket | null = null;   // the client that initiated the pause; only they can unpause
   private rival: RivalInfo | null = null;      // rival gang for this match, if set by handler
@@ -411,6 +414,9 @@ export class ZoneRunner {
           order,
         );
         this.engine.queueInput(vehicle.id, aiInput);
+        this.vehicleTask.set(vehicle.id, aiInput.task ?? 'engaging'); // for the squad HUD
+      } else {
+        this.vehicleTask.set(vehicle.id, 'manual'); // human at the wheel
       }
     });
     this.humanInputThisTick.clear();
@@ -461,6 +467,9 @@ export class ZoneRunner {
     }
 
     this.checkEndCondition(newState).catch(console.error);
+
+    // Stamp each vehicle's current behaviour label for the squad HUD.
+    for (const v of newState.vehicles) v.task = this.vehicleTask.get(v.id);
 
     const msg: ServerMessage = { type: 'zone_state', state: newState };
     const data = JSON.stringify(msg);

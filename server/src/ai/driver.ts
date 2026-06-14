@@ -14,6 +14,7 @@ export interface AiInput {
   speed: number;
   steer: number;
   fireWeapon: string | null;
+  task?: string;  // behaviour label for the squad HUD (scout/engaging/evading/…)
 }
 
 type Tactic = 'aggressive' | 'flanking' | 'evasive' | 'snipe' | 'orbit';
@@ -365,7 +366,7 @@ function computeSearchInput(
   if (plan.hold) {
     // Ambush — hold position and turn to cover the likely approach.
     console.log(`[SEARCH] ${self.id.padEnd(10)} AMBUSH hold → (${goal.x.toFixed(0)},${goal.y.toFixed(0)})`);
-    return { speed: 0, steer: clampSteer(bearingTo(self.position, goal)), fireWeapon: null };
+    return { speed: 0, steer: clampSteer(bearingTo(self.position, goal)), fireWeapon: null, task: 'ambush' };
   }
 
   // Route to the goal around walls; the ring (danger already written this tick)
@@ -382,7 +383,7 @@ function computeSearchInput(
     ? Math.floor(self.stats.maxSpeed * 0.7)
     : Math.floor(self.stats.maxSpeed * 0.55);
   console.log(`[SEARCH] ${self.id.padEnd(10)} ${plan.mode.toUpperCase()} → (${goal.x.toFixed(0)},${goal.y.toFixed(0)}) spd=${speed}`);
-  return { speed, steer: clampSteer(picked.bearing), fireWeapon: null };
+  return { speed, steer: clampSteer(picked.bearing), fireWeapon: null, task: plan.mode };
 }
 
 // ── Main AI function ─────────────────────────────────────────────────────────
@@ -418,7 +419,7 @@ export function computeAiInput(
         targetBearing = bearingTo(self.position, first);
       }
       const steer = Math.max(-MAX_TURN, Math.min(MAX_TURN, shortestTurn(self.facing, targetBearing)));
-      return { speed: Math.min(self.stats.maxSpeed, dist > 6 ? self.stats.maxSpeed : Math.floor(self.stats.maxSpeed * 0.5)), steer, fireWeapon: null };
+      return { speed: Math.min(self.stats.maxSpeed, dist > 6 ? self.stats.maxSpeed : Math.floor(self.stats.maxSpeed * 0.5)), steer, fireWeapon: null, task: 'moving' };
     }
     if (order.type === 'retreat') {
       // Very low loyalty (≤ 1) means the driver ignores the retreat order
@@ -432,7 +433,7 @@ export function computeAiInput(
         const cy = enemies.reduce((s, e) => s + e.position.y, 0) / enemies.length;
         const awayBearing = bearingTo({ x: cx, y: cy }, self.position);
         const steer = Math.max(-MAX_TURN, Math.min(MAX_TURN, shortestTurn(self.facing, awayBearing)));
-        return { speed: self.stats.maxSpeed, steer, fireWeapon: null };
+        return { speed: self.stats.maxSpeed, steer, fireWeapon: null, task: 'retreating' };
       }
       if (disobey) {
         // Fall through to normal combat logic — explicit console note so
@@ -455,7 +456,7 @@ export function computeAiInput(
         const speed = dist < 1 ? leader.speed : Math.min(self.stats.maxSpeed, Math.max(leader.speed, Math.floor(dist * 5)));
         // Follow mode prioritises positioning; firing is suspended so the player
         // can choose engage-vs-regroup via explicit attack/retreat orders.
-        return { speed, steer, fireWeapon: null };
+        return { speed, steer, fireWeapon: null, task: 'following' };
       }
     }
     // 'attack' orders narrow target selection but keep the normal tactic engine
@@ -1052,5 +1053,5 @@ export function computeAiInput(
     `[${tactic}] hp=${hp}% ${fireStr}`,
   );
 
-  return { speed: desiredSpeed, steer, fireWeapon };
+  return { speed: desiredSpeed, steer, fireWeapon, task: isRecovering ? 'recovering' : tactic };
 }

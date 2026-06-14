@@ -2,6 +2,7 @@ import Phaser from 'phaser';
 import { Connection } from '../game/Connection';
 import type { ZoneState, CombatEvent } from '@carwars/shared';
 import { isPerceived, visibilityPolygon, sightRange, RADAR_ID, RADAR_RANGE, type Pt } from '../game/visibility';
+import { SquadHud } from '../game/squadHud';
 import arenaMapData from '../tilemaps/arena-1.json';
 import { preloadVehicleSprites, buildVehicleSprite, updateVehicleSprite, teamColorForVehicle } from '../game/VehicleSprite';
 import { bindFullscreenToggle, onLayout } from '../ui/responsive';
@@ -65,6 +66,7 @@ export class ArenaScene extends Phaser.Scene {
   private armorTexts: Partial<Record<string, Phaser.GameObjects.Text>> = {};
   private wasdKeys!: { w: Phaser.Input.Keyboard.Key; s: Phaser.Input.Keyboard.Key; a: Phaser.Input.Keyboard.Key; d: Phaser.Input.Keyboard.Key };
   private minimapGfx!: Phaser.GameObjects.Graphics;
+  private squadHud?: SquadHud; // bottom-strip per-vehicle squad HUD
   private mapWalls: import('@carwars/shared').Rect[] = [];
   private mapGraphics!: Phaser.GameObjects.Graphics;
   // ── Fog of war ───────────────────────────────────────────────────────────
@@ -264,22 +266,11 @@ export class ArenaScene extends Phaser.Scene {
       padding: { x: 6, y: 4 },
     }).setScrollFactor(0).setDepth(20);
 
-    // Armor facing display
-    const armorLayout: Array<{ key: string; label: string; x: number; y: number }> = [
-      { key: 'top',       label: 'TOP', x: 60,  y: 130 },
-      { key: 'front',     label: 'FNT', x: 60,  y: 150 },
-      { key: 'left',      label: 'LFT', x: 20,  y: 168 },
-      { key: 'right',     label: 'RGT', x: 100, y: 168 },
-      { key: 'back',      label: 'BAK', x: 60,  y: 186 },
-      { key: 'underbody', label: 'UDR', x: 60,  y: 204 },
-    ];
-    armorLayout.forEach(({ key, label, x, y }) => {
-      this.armorTexts[key] = this.add.text(x, y, `${label}: --`, {
-        color: '#00ff88', fontSize: '11px', fontFamily: 'monospace',
-      }).setScrollFactor(0).setDepth(20);
-    });
+    // Per-vehicle armour/speed/weapons now live in the bottom squad HUD strip
+    // (SquadHud) — the old top-left armour-face panels are retired.
 
     this.minimapGfx = this.add.graphics().setScrollFactor(0).setDepth(20);
+    this.squadHud = new SquadHud(this);
     // Floor and decoration layers sit between the dark background fill (depth 0)
     // and the walls (depth 1) so walls always sit on top of painted surfaces.
     this.floorGraphics = this.add.graphics().setDepth(0.4);
@@ -447,6 +438,7 @@ export class ArenaScene extends Phaser.Scene {
     this.syncHazards(state);
     this.drawMinimap(state);
     this.updateFog(state);
+    this.squadHud?.update(this, state.vehicles, this.myVehicleId, this.squadVehicleIds, this.gangPrimaryColour);
     if (state.combatEvents?.length) {
       this.renderCombatEvents(state.combatEvents);
     }
@@ -824,10 +816,9 @@ export class ArenaScene extends Phaser.Scene {
       ? `[${this.selectedMountIndex + 1}] ${mount.weaponId?.toUpperCase() ?? '?'}  ${mount.ammo}`
       : 'NO WEAPON';
 
-    this.hudText.setText(
-      `SPD: ${myVehicle.speed} mph   SKILL: ${this.driverSkill}\n` +
-      `WEAPON: ${weaponLabel}`
-    );
+    // Speed/armour/weapons are shown per-vehicle in the bottom squad strip; the
+    // top-left now just calls out the SELECTED weapon (what Space will fire).
+    this.hudText.setText(`FIRING: ${weaponLabel}`);
 
     // Update armor panels with colour coding
     const armorFaces = ['front', 'back', 'left', 'right', 'top', 'underbody'] as const;

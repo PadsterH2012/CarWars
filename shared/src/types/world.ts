@@ -105,6 +105,10 @@ export interface VehicleState {
   facing: number;
   speed: number;
   stats: VehicleStats;
+  // Current AI behaviour label (scout/ambush/pursue/aggressive/orbit/snipe/
+  // flanking/evasive/recovering/manual/…) — set by the zone-runner each tick
+  // for the squad HUD. Absent until perceived.
+  task?: string;
 }
 
 export interface HazardObject {
