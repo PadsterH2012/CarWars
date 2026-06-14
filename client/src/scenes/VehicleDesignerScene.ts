@@ -1518,7 +1518,8 @@ export class VehicleDesignerScene extends Phaser.Scene {
         res = await fetch(`http://${host}:3001/api/vehicles/${this.editVehicleId}/loadout`, {
           method: 'PATCH',
           headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${this.token}` },
-          body: JSON.stringify(loadout),
+          // Carry the (possibly renamed) name so [RENAME] persists on save.
+          body: JSON.stringify({ ...loadout, name: this.vehicleName }),
         });
       } else {
         res = await fetch(`http://${host}:3001/api/vehicles`, {

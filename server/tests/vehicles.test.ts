@@ -256,6 +256,42 @@ describe('workshop — PATCH /api/vehicles/:id/weapon', () => {
     const expectedRefund = Math.floor(Math.abs(res.body.delta) * 0.5);
     expect(res.body.moneyRemaining).toBe(before + expectedRefund);
   });
+
+  it('renames the vehicle when a name is supplied (value unchanged → no charge)', async () => {
+    const res = await request(app)
+      .patch(`/api/vehicles/${workshopVehicleId}/loadout`)
+      .set('Authorization', `Bearer ${workshopToken}`)
+      .send({
+        chassisId: 'mid', engineId: 'medium', suspensionId: 'standard',
+        tires: [{ id: 't0', blown: false }],
+        mounts: [{ id: 'mount0', arc: 'front', weaponId: 'mg', ammo: 20 }],
+        armor: { front: 4 },
+        totalCost: 5000,
+        name: 'Renamed Rig',
+      });
+    expect(res.status).toBe(200);
+    const list = await request(app).get('/api/vehicles').set('Authorization', `Bearer ${workshopToken}`);
+    const v = list.body.find((x: any) => x.id === workshopVehicleId);
+    expect(v.name).toBe('Renamed Rig');
+    expect(v.loadout.name).toBeUndefined(); // name must not leak into stored loadout
+  });
+
+  it('leaves the name unchanged when no name is supplied', async () => {
+    const res = await request(app)
+      .patch(`/api/vehicles/${workshopVehicleId}/loadout`)
+      .set('Authorization', `Bearer ${workshopToken}`)
+      .send({
+        chassisId: 'mid', engineId: 'medium', suspensionId: 'standard',
+        tires: [{ id: 't0', blown: false }],
+        mounts: [{ id: 'mount0', arc: 'front', weaponId: 'mg', ammo: 20 }],
+        armor: { front: 4 },
+        totalCost: 5000,
+      });
+    expect(res.status).toBe(200);
+    const list = await request(app).get('/api/vehicles').set('Authorization', `Bearer ${workshopToken}`);
+    const v = list.body.find((x: any) => x.id === workshopVehicleId);
+    expect(v.name).toBe('Renamed Rig');
+  });
 });
 
 describe('buy another — POST /api/vehicles/:id/clone', () => {

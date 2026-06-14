@@ -276,9 +276,18 @@ vehiclesRouter.delete('/:id', async (req: AuthRequest, res) => {
 // Atomic: money debit/credit + loadout + value update all in one transaction,
 // with gang_ledger logging. Forbidden while vehicle is in_arena.
 vehiclesRouter.patch('/:id/loadout', async (req: AuthRequest, res) => {
-  const newLoadout = req.body as VehicleLoadout;
-  if (!newLoadout || typeof newLoadout !== 'object') {
+  if (!req.body || typeof req.body !== 'object') {
     return res.status(400).json({ error: 'loadout body required' });
+  }
+  // The body is the loadout, optionally carrying a `name` so the designer can
+  // rename a vehicle in the same save ([RENAME] applies on save). Split it out
+  // so it never pollutes the stored loadout JSON.
+  const { name: rawName, ...newLoadout } = req.body as VehicleLoadout & { name?: string };
+  let newName: string | undefined;
+  if (rawName !== undefined) {
+    newName = String(rawName).trim();
+    if (!newName) return res.status(400).json({ error: 'name cannot be empty' });
+    if (newName.length > 64) return res.status(400).json({ error: 'name too long' });
   }
 
   // Sanity-check the loadout runs through deriveStats without throwing
@@ -327,8 +336,8 @@ vehiclesRouter.patch('/:id/loadout', async (req: AuthRequest, res) => {
         [Math.abs(charge), req.playerId]);
     }
     await client.query(
-      `UPDATE vehicles SET loadout = $1, value = $2 WHERE id = $3`,
-      [JSON.stringify(newLoadout), newCost, row.id]
+      `UPDATE vehicles SET loadout = $1, value = $2, name = COALESCE($4, name) WHERE id = $3`,
+      [JSON.stringify(newLoadout), newCost, row.id, newName ?? null]
     );
     await client.query(
       `INSERT INTO gang_ledger (gang_id, event_type, amount, description, result)
