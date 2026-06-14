@@ -448,6 +448,7 @@ html, body {
 .lb-table thead tr { border-bottom: 1px solid var(--border); }
 .lb-table th { font-size: 11px; color: var(--gray); text-transform: uppercase; letter-spacing: 0.1em; padding: 6px 12px; text-align: left; font-weight: normal; white-space: nowrap; }
 .lb-table th.r { text-align: right; }
+.lb-table td.r { text-align: right; white-space: nowrap; }
 .lb-table tbody tr { border-bottom: 1px solid #181818; }
 .lb-table tbody tr.player-row { background: #141000; border-color: #3a2c00; }
 .lb-table td { padding: 10px 12px; font-size: 13px; vertical-align: middle; }
