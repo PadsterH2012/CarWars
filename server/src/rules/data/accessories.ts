@@ -145,7 +145,7 @@ export const ACCESSORIES: AccessoryDef[] = [
   {
     id: 'radar', name: 'Radar', category: 'sensor',
     cost: 1000, weight: 25, spaces: 1,
-    description: 'Detect vehicles at extended range.',
+    description: 'Tracks enemies within 60 even through walls — they stay visible on your map and minimap when out of line of sight.',
     effects: {},
   },
   {
