@@ -525,14 +525,63 @@ export class ArenaScene extends Phaser.Scene {
     const cx = MM_X + MM_SIZE / 2;
     const cy = MM_Y + MM_SIZE / 2;
 
+    // Fog of war: the player only sees enemy blips their own squad can perceive
+    // — line of sight to any of their vehicles, or anywhere within radar range
+    // if a deployed vehicle carries radar. Mirrors the AI perception model.
+    const perceivers = state.vehicles.filter(v =>
+      !v.stats.damageState?.destroyed &&
+      (v.id === this.myVehicleId || this.squadVehicleIds.includes(v.id)),
+    );
+    const hasRadar = perceivers.some(v =>
+      (v.stats.loadout?.accessories ?? []).some(a => a.id === 'radar'),
+    );
+    if (this.minimapLabel) this.minimapLabel.setText(hasRadar ? 'MAP ◉' : 'MAP');
+
     state.vehicles.forEach(v => {
       const isPlayer = v.id === this.myVehicleId;
-      const color = isPlayer ? 0x00ff88 : (v.playerId === 'ai-team' ? 0xff4444 : 0xffaa00);
+      const isEnemy  = v.playerId === 'ai-team';
+      // Hide enemies the squad can't perceive (no LOS and no radar coverage).
+      if (isEnemy && !this.playerPerceives(v, perceivers, hasRadar)) return;
+      const color = isPlayer ? 0x00ff88 : (isEnemy ? 0xff4444 : 0xffaa00);
       const dotX = Math.max(MM_X + 2, Math.min(MM_X + MM_SIZE - 2, cx + v.position.x * MM_SCALE));
       const dotY = Math.max(MM_Y + 2, Math.min(MM_Y + MM_SIZE - 2, cy + v.position.y * MM_SCALE));
       gfx.fillStyle(color, 1);
       gfx.fillCircle(dotX, dotY, isPlayer ? 4 : 3);
     });
+  }
+
+  // Radar range — matches the server's RADAR_RANGE in rules/perception.ts.
+  private static readonly RADAR_RANGE = 60;
+
+  // Can the player's squad perceive this enemy? Radar sees through walls within
+  // range; otherwise a clear line of sight from any squad vehicle is required.
+  private playerPerceives(
+    enemy: import('@carwars/shared').VehicleState,
+    perceivers: import('@carwars/shared').VehicleState[],
+    hasRadar: boolean,
+  ): boolean {
+    if (hasRadar) {
+      return perceivers.some(v =>
+        Math.hypot(v.position.x - enemy.position.x, v.position.y - enemy.position.y) <= ArenaScene.RADAR_RANGE,
+      );
+    }
+    return perceivers.some(v => this.clientLineOfSight(v.position, enemy.position));
+  }
+
+  // Clear line of sight between two world points — walls block it. Samples the
+  // segment at 0.5-unit steps, same resolution/logic as the server.
+  private clientLineOfSight(from: { x: number; y: number }, to: { x: number; y: number }): boolean {
+    if (!this.mapWalls.length) return true;
+    const dx = to.x - from.x, dy = to.y - from.y;
+    const steps = Math.max(1, Math.ceil(Math.hypot(dx, dy) / 0.5));
+    for (let i = 1; i < steps; i++) {
+      const t = i / steps;
+      const px = from.x + dx * t, py = from.y + dy * t;
+      for (const w of this.mapWalls) {
+        if (w.w / 2 - Math.abs(px - w.x) > 0 && w.h / 2 - Math.abs(py - w.y) > 0) return false;
+      }
+    }
+    return true;
   }
 
   private syncWreckage(state: ZoneState): void {
