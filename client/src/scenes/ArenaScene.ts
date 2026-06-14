@@ -1,6 +1,7 @@
 import Phaser from 'phaser';
 import { Connection } from '../game/Connection';
 import type { ZoneState, CombatEvent } from '@carwars/shared';
+import { isPerceived, visibilityPolygon, RADAR_ID, RADAR_RANGE, type Pt } from '../game/visibility';
 import arenaMapData from '../tilemaps/arena-1.json';
 import { preloadVehicleSprites, buildVehicleSprite, updateVehicleSprite, teamColorForVehicle } from '../game/VehicleSprite';
 import { bindFullscreenToggle, onLayout } from '../ui/responsive';
@@ -66,6 +67,17 @@ export class ArenaScene extends Phaser.Scene {
   private minimapGfx!: Phaser.GameObjects.Graphics;
   private mapWalls: import('@carwars/shared').Rect[] = [];
   private mapGraphics!: Phaser.GameObjects.Graphics;
+  // ── Fog of war ───────────────────────────────────────────────────────────
+  // World-space render textures over the map. fogDim darkens everywhere the
+  // squad can't currently see; fogDark adds extra darkness on never-explored
+  // ground; fogExplored is an offscreen buffer accumulating ever-seen area.
+  // fogVis is a scratch Graphics holding this tick's visibility polygons.
+  private fogDim?: Phaser.GameObjects.RenderTexture;
+  private fogDark?: Phaser.GameObjects.RenderTexture;
+  private fogExplored?: Phaser.GameObjects.RenderTexture;
+  private fogVis?: Phaser.GameObjects.Graphics;
+  private fogMapW = 0;  // map dimensions in inches
+  private fogMapH = 0;
   // Extra layers (below walls): floor surfaces and non-colliding decorations
   private floorGraphics!: Phaser.GameObjects.Graphics;
   private floorImages: Phaser.GameObjects.Image[] = [];
@@ -125,6 +137,11 @@ export class ArenaScene extends Phaser.Scene {
     this.mapWalls = [];
     this.tilemapLayers = [];
     this.zoneState = null;
+    // Fog of war re-initialises from the next join (old RTs are destroyed with
+    // the scene on restart). Lazy-created once map dimensions arrive.
+    this.fogDim = this.fogDark = this.fogExplored = undefined;
+    this.fogVis = undefined;
+    this.fogMapW = this.fogMapH = 0;
     this.zoneEnded = false;
     this.firePending = false;
     this.selectedMountIndex = 0;
@@ -349,6 +366,7 @@ export class ArenaScene extends Phaser.Scene {
             const zoomForMap = msg.state.mapWidth > 80 ? 0.6 : msg.state.mapWidth > 50 ? 0.85 : 1.1;
             this.cameras.main.setZoom(zoomForMap);
             this.cameras.main.setBounds(mapX, mapY, mapW, mapH);
+            this.initFog(msg.state.mapWidth, msg.state.mapHeight);
           }
           // Paint floor surfaces and decorations from the join message (both
           // are static for the match — re-rendered only on scene restart).
@@ -379,6 +397,7 @@ export class ArenaScene extends Phaser.Scene {
 
   private syncSprites(state: ZoneState): void {
     const seen = new Set<string>();
+    const viewers = this.friendlyViewers(state);
 
     state.vehicles.forEach(v => {
       seen.add(v.id);
@@ -405,6 +424,11 @@ export class ArenaScene extends Phaser.Scene {
 
       updateVehicleSprite(container, v, opts);
 
+      // Fog of war: an enemy vehicle is only drawn while the squad can perceive
+      // it (LOS or radar). It vanishes the moment it slips out of sight.
+      const isEnemy = v.playerId === 'ai-team';
+      container.setVisible(!isEnemy || isPerceived(v.position, viewers, this.mapWalls));
+
       if (v.id === this.myVehicleId) {
         this.cameras.main.startFollow(container, false);
       }
@@ -422,6 +446,7 @@ export class ArenaScene extends Phaser.Scene {
     this.syncWreckage(state);
     this.syncHazards(state);
     this.drawMinimap(state);
+    this.updateFog(state);
     if (state.combatEvents?.length) {
       this.renderCombatEvents(state.combatEvents);
     }
@@ -525,23 +550,16 @@ export class ArenaScene extends Phaser.Scene {
     const cx = MM_X + MM_SIZE / 2;
     const cy = MM_Y + MM_SIZE / 2;
 
-    // Fog of war: the player only sees enemy blips their own squad can perceive
-    // — line of sight to any of their vehicles, or anywhere within radar range
-    // if a deployed vehicle carries radar. Mirrors the AI perception model.
-    const perceivers = state.vehicles.filter(v =>
-      !v.stats.damageState?.destroyed &&
-      (v.id === this.myVehicleId || this.squadVehicleIds.includes(v.id)),
-    );
-    const hasRadar = perceivers.some(v =>
-      (v.stats.loadout?.accessories ?? []).some(a => a.id === 'radar'),
-    );
-    if (this.minimapLabel) this.minimapLabel.setText(hasRadar ? 'MAP ◉' : 'MAP');
+    // Fog of war: only show enemy blips the squad can actually perceive (LOS
+    // from any squad vehicle, or radar coverage). Shared with the main-view fog.
+    const viewers = this.friendlyViewers(state);
+    const radar = viewers.some(v => (v.stats.loadout?.accessories ?? []).some(a => a.id === RADAR_ID));
+    if (this.minimapLabel) this.minimapLabel.setText(radar ? 'MAP ◉' : 'MAP');
 
     state.vehicles.forEach(v => {
       const isPlayer = v.id === this.myVehicleId;
       const isEnemy  = v.playerId === 'ai-team';
-      // Hide enemies the squad can't perceive (no LOS and no radar coverage).
-      if (isEnemy && !this.playerPerceives(v, perceivers, hasRadar)) return;
+      if (isEnemy && !isPerceived(v.position, viewers, this.mapWalls)) return;
       const color = isPlayer ? 0x00ff88 : (isEnemy ? 0xff4444 : 0xffaa00);
       const dotX = Math.max(MM_X + 2, Math.min(MM_X + MM_SIZE - 2, cx + v.position.x * MM_SCALE));
       const dotY = Math.max(MM_Y + 2, Math.min(MM_Y + MM_SIZE - 2, cy + v.position.y * MM_SCALE));
@@ -550,43 +568,71 @@ export class ArenaScene extends Phaser.Scene {
     });
   }
 
-  // Radar range — matches the server's RADAR_RANGE in rules/perception.ts.
-  private static readonly RADAR_RANGE = 60;
-
-  // Can the player's squad perceive this enemy? Radar sees through walls within
-  // range; otherwise a clear line of sight from any squad vehicle is required.
-  private playerPerceives(
-    enemy: import('@carwars/shared').VehicleState,
-    perceivers: import('@carwars/shared').VehicleState[],
-    hasRadar: boolean,
-  ): boolean {
-    if (hasRadar) {
-      return perceivers.some(v =>
-        Math.hypot(v.position.x - enemy.position.x, v.position.y - enemy.position.y) <= ArenaScene.RADAR_RANGE,
-      );
-    }
-    return perceivers.some(v => this.clientLineOfSight(v.position, enemy.position));
+  // The player's own living vehicles — the squad that provides vision.
+  private friendlyViewers(state: ZoneState) {
+    return state.vehicles.filter(v =>
+      !v.stats.damageState?.destroyed &&
+      (v.id === this.myVehicleId || this.squadVehicleIds.includes(v.id)),
+    );
   }
 
-  // Clear line of sight between two world points — walls block it. Samples the
-  // segment at 0.5-unit steps, same resolution/logic as the server.
-  private clientLineOfSight(from: { x: number; y: number }, to: { x: number; y: number }): boolean {
-    if (!this.mapWalls.length) return true;
-    const dx = to.x - from.x, dy = to.y - from.y;
-    const steps = Math.max(1, Math.ceil(Math.hypot(dx, dy) / 0.5));
-    for (let i = 1; i < steps; i++) {
-      const t = i / steps;
-      const px = from.x + dx * t, py = from.y + dy * t;
-      for (const w of this.mapWalls) {
-        if (w.w / 2 - Math.abs(px - w.x) > 0 && w.h / 2 - Math.abs(py - w.y) > 0) return false;
-      }
+  // Create the fog render textures once the map size is known (in inches).
+  private initFog(mapWInch: number, mapHInch: number): void {
+    this.fogMapW = mapWInch;
+    this.fogMapH = mapHInch;
+    const wPx = mapWInch * PIXELS_PER_INCH, hPx = mapHInch * PIXELS_PER_INCH;
+    const x = WORLD_CENTER_X - wPx / 2, y = WORLD_CENTER_Y - hPx / 2;
+    // Offscreen buffer that accumulates ever-seen area ("explored memory").
+    this.fogExplored = this.add.renderTexture(0, 0, wPx, hPx).setOrigin(0, 0).setVisible(false);
+    // Two world-space dark overlays above the action (below the HUD at 20).
+    this.fogDim  = this.add.renderTexture(x, y, wPx, hPx).setOrigin(0, 0).setDepth(9);
+    this.fogDark = this.add.renderTexture(x, y, wPx, hPx).setOrigin(0, 0).setDepth(9.1);
+    // Scratch graphics holding this tick's visibility polygons (in RT-local px).
+    this.fogVis = this.add.graphics().setVisible(false);
+  }
+
+  // Recompute the fog each tick: union the squad's visibility polygons (true
+  // line-of-sight shadowcasting), accumulate explored area, then paint the dim
+  // (not-currently-visible) and dark (never-explored) overlays.
+  private updateFog(state: ZoneState): void {
+    if (!this.fogDim || !this.fogDark || !this.fogExplored || !this.fogVis || !this.mapWalls.length) return;
+    const PPI = PIXELS_PER_INCH;
+    const halfW = this.fogMapW / 2, halfH = this.fogMapH / 2;
+    const bounds = { x: 0, y: 0, w: this.fogMapW, h: this.fogMapH };
+    const viewers = this.friendlyViewers(state);
+
+    const g = this.fogVis;
+    g.clear();
+    g.fillStyle(0xffffff, 1);
+    const toLocal = (p: Pt) => ({ x: (p.x + halfW) * PPI, y: (p.y + halfH) * PPI });
+    for (const v of viewers) {
+      const poly = visibilityPolygon(v.position, this.mapWalls, bounds);
+      if (poly.length < 3) continue;
+      g.beginPath();
+      poly.forEach((p, i) => {
+        const l = toLocal(p);
+        if (i === 0) g.moveTo(l.x, l.y); else g.lineTo(l.x, l.y);
+      });
+      g.closePath();
+      g.fillPath();
     }
-    return true;
+    // Radar reveals a circle through walls (carries the sensor advantage in).
+    const radar = viewers.some(v => (v.stats.loadout?.accessories ?? []).some(a => a.id === RADAR_ID));
+    if (radar) for (const v of viewers) {
+      const l = toLocal(v.position);
+      g.fillCircle(l.x, l.y, RADAR_RANGE * PPI);
+    }
+
+    // Accumulate explored, then paint the two overlays by erasing the lit area.
+    this.fogExplored.draw(g);
+    this.fogDim.clear();  this.fogDim.fill(0x000000, 0.45);  this.fogDim.erase(g);
+    this.fogDark.clear(); this.fogDark.fill(0x000000, 0.40); this.fogDark.erase(this.fogExplored);
   }
 
   private syncWreckage(state: ZoneState): void {
     const wrecks = state.wreckage ?? [];
     const seen = new Set<string>();
+    const viewers = this.friendlyViewers(state);
 
     wrecks.forEach(w => {
       seen.add(w.id);
@@ -621,6 +667,7 @@ export class ArenaScene extends Phaser.Scene {
       const worldY = WORLD_CENTER_Y + w.position.y * PIXELS_PER_INCH;
       container.setPosition(worldX, worldY);
       container.setRotation(Phaser.Math.DegToRad(w.facing));
+      container.setVisible(isPerceived(w.position, viewers, this.mapWalls)); // fog
     });
 
     this.wreckSprites.forEach((c, id) => {
@@ -633,18 +680,19 @@ export class ArenaScene extends Phaser.Scene {
 
   private syncHazards(state: ZoneState): void {
     const seen = new Set<string>();
+    const viewers = this.friendlyViewers(state);
     state.hazardObjects.forEach(h => {
       seen.add(h.id);
-      if (this.hazardSprites.has(h.id)) return;
-      const worldX = WORLD_CENTER_X + h.position.x * PIXELS_PER_INCH;
-      const worldY = WORLD_CENTER_Y + h.position.y * PIXELS_PER_INCH;
-      let sprite: Phaser.GameObjects.GameObject;
-      if (h.type === 'oil') {
-        sprite = this.add.ellipse(worldX, worldY, 32, 16, 0x112211, 0.7).setDepth(1.5);
-      } else {
-        sprite = this.add.circle(worldX, worldY, 6, 0xff2200).setDepth(1.5);
+      let sprite = this.hazardSprites.get(h.id) as (Phaser.GameObjects.Components.Visible & Phaser.GameObjects.GameObject) | undefined;
+      if (!sprite) {
+        const worldX = WORLD_CENTER_X + h.position.x * PIXELS_PER_INCH;
+        const worldY = WORLD_CENTER_Y + h.position.y * PIXELS_PER_INCH;
+        sprite = h.type === 'oil'
+          ? this.add.ellipse(worldX, worldY, 32, 16, 0x112211, 0.7).setDepth(1.5)
+          : this.add.circle(worldX, worldY, 6, 0xff2200).setDepth(1.5);
+        this.hazardSprites.set(h.id, sprite as Phaser.GameObjects.GameObject);
       }
-      this.hazardSprites.set(h.id, sprite);
+      sprite.setVisible(isPerceived(h.position, viewers, this.mapWalls)); // fog
     });
     this.hazardSprites.forEach((sprite, id) => {
       if (!seen.has(id)) {
