@@ -2,8 +2,50 @@ import { Router } from 'express';
 import { getDb } from '../db/client';
 import { requireAuth, AuthRequest } from './middleware';
 import { getWorldForGang } from '../rules/worldLoader';
+import { GARAGE_COST } from './garages';
 
 export const leaderboardRouter = Router();
+
+// ── Blended "prominence" score (v1) ──────────────────────────────────────────
+// Prominence = how prominent a gang is overall, blending three axes that each
+// matter at a different stage of the game (see Obsidian "32 - Game Vision &
+// Progression Spine"):
+//   • territory  (influence held)        — dominant LATE game
+//   • wealth     (total assets)          — carries you EARLY
+//   • notoriety  (reputation)            — carries you EARLY
+// Each axis is scored RELATIVE to the field leader (value ÷ max-across-gangs,
+// 0–1) so the score stays fair regardless of raw magnitudes, then weighted.
+// The early→late tiering is emergent: a new gang holds ~0 territory, so its
+// territory term is ~0 and it ranks on wealth + notoriety; as land is taken the
+// 0.5-weighted territory term takes over. No per-gang state.
+export const PROMINENCE_WEIGHTS = { territory: 0.5, wealth: 0.3, notoriety: 0.2 };
+
+export function safeShare(value: number, max: number): number {
+  return max > 0 ? Math.max(0, Math.min(1, value / max)) : 0;
+}
+
+// Pure prominence score (0–100) for one gang given the field maxima. Relative
+// per-axis shares × fixed weights. Exported for unit testing.
+export function computeProminence(
+  g: { totalInfluence: number; wealth: number; notoriety: number },
+  max: { influence: number; wealth: number; notoriety: number },
+): number {
+  return Math.round(100 * (
+    PROMINENCE_WEIGHTS.territory  * safeShare(g.totalInfluence, max.influence)
+    + PROMINENCE_WEIGHTS.wealth    * safeShare(g.wealth, max.wealth)
+    + PROMINENCE_WEIGHTS.notoriety * safeShare(g.notoriety, max.notoriety)
+  ));
+}
+
+// Cosmetic title derived purely from holdings (decision 6 — does not gate
+// anything). Rival gangs have no garage data, so they only ever reach the
+// territory-based titles.
+export function titleFor(influence: number, settlementCount: number, ownsGarage: boolean): string {
+  if (settlementCount >= 5) return 'Kingpin';
+  if (influence > 0)        return 'Gang Leader';
+  if (ownsGarage)           return 'Garage Boss';
+  return 'Duellist';
+}
 
 leaderboardRouter.get('/', requireAuth, async (req: AuthRequest, res) => {
   try {
@@ -12,15 +54,33 @@ leaderboardRouter.get('/', requireAuth, async (req: AuthRequest, res) => {
     if (!ctx) return res.status(404).json({ error: 'Gang not found' });
 
     const gangRes = await db.query<{
-      id: string; name: string; primary_colour: number;
+      id: string; name: string; primary_colour: number; treasury: number; reputation: number;
       dominant_since: Date | null; retired: boolean; retire_bonus: number;
     }>(
-      `SELECT id, name, primary_colour, dominant_since, retired, retire_bonus
+      `SELECT id, name, primary_colour, treasury, reputation, dominant_since, retired, retire_bonus
          FROM gangs WHERE owner_player_id = $1`,
       [req.playerId],
     );
     if (!gangRes.rows.length) return res.status(404).json({ error: 'Gang not found' });
     const playerGang = gangRes.rows[0];
+
+    // Player total assets (decision 7): treasury + Σ vehicle value + garage
+    // (structural value + uncollected income). Rivals have no vehicles/garages,
+    // so their total assets = treasury.
+    const [vehRes, garRes] = await Promise.all([
+      db.query<{ total: number }>(
+        `SELECT COALESCE(SUM(value), 0)::int AS total FROM vehicles WHERE player_id = $1`,
+        [req.playerId],
+      ),
+      db.query<{ accumulated_income: number }>(
+        `SELECT accumulated_income FROM garages WHERE player_id = $1`,
+        [req.playerId],
+      ),
+    ]);
+    const playerOwnsGarage = garRes.rows.length > 0;
+    const playerAssets = playerGang.treasury
+      + (vehRes.rows[0]?.total ?? 0)
+      + (playerOwnsGarage ? GARAGE_COST + (garRes.rows[0]?.accumulated_income ?? 0) : 0);
 
     const settlementIds = ctx.world.settlements.map(s => s.id);
     const infRes = await db.query<{
@@ -31,53 +91,75 @@ leaderboardRouter.get('/', requireAuth, async (req: AuthRequest, res) => {
               COUNT(DISTINCT settlement_id)::int AS settlement_count
          FROM zone_influence
          WHERE settlement_id = ANY($1::text[])
-         GROUP BY gang_id
-         ORDER BY total_influence DESC`,
+         GROUP BY gang_id`,
       [settlementIds],
     );
+    const infMap = new Map(infRes.rows.map(r => [r.gang_id, r]));
 
-    // Build a name/colour map: player's own gang + generated rival gangs
-    const gangMap = new Map<string, { name: string; primaryColour: number; isPlayer: boolean }>();
-    gangMap.set(playerGang.id, {
-      name: playerGang.name,
-      primaryColour: playerGang.primary_colour,
-      isPlayer: true,
+    // Assemble every gang (player + rivals) with its three prominence inputs.
+    type Raw = {
+      gangId: string; gangName: string; primaryColour: number; isPlayer: boolean;
+      ownsGarage: boolean;
+      totalInfluence: number; settlementCount: number; wealth: number; notoriety: number;
+    };
+    const raw: Raw[] = [];
+    raw.push({
+      gangId: playerGang.id, gangName: playerGang.name, primaryColour: playerGang.primary_colour,
+      isPlayer: true, ownsGarage: playerOwnsGarage,
+      totalInfluence: infMap.get(playerGang.id)?.total_influence ?? 0,
+      settlementCount: infMap.get(playerGang.id)?.settlement_count ?? 0,
+      wealth: playerAssets, notoriety: playerGang.reputation,
     });
     for (const g of ctx.gangs) {
-      gangMap.set(g.id, { name: g.name, primaryColour: g.primary_colour, isPlayer: false });
+      raw.push({
+        gangId: g.id, gangName: g.name, primaryColour: g.primary_colour,
+        isPlayer: false, ownsGarage: false,
+        totalInfluence: infMap.get(g.id)?.total_influence ?? 0,
+        settlementCount: infMap.get(g.id)?.settlement_count ?? 0,
+        // Rivals: total assets = treasury; no reputation system for them yet (v1).
+        wealth: g.treasury, notoriety: 0,
+      });
     }
 
-    const ranked = infRes.rows.map((row, i) => {
-      const info = gangMap.get(row.gang_id);
-      return {
-        rank:            i + 1,
-        gangId:          row.gang_id,
-        gangName:        info?.name ?? 'Unknown Gang',
-        primaryColour:   info?.primaryColour ?? 0x888888,
-        isPlayer:        info?.isPlayer ?? false,
-        totalInfluence:  row.total_influence,
-        settlementCount: row.settlement_count,
-      };
-    });
+    // Field maxima for relative scoring.
+    const maxInf   = Math.max(0, ...raw.map(r => r.totalInfluence));
+    const maxWealth = Math.max(0, ...raw.map(r => r.wealth));
+    const maxNotor = Math.max(0, ...raw.map(r => r.notoriety));
+    const maxima = { influence: maxInf, wealth: maxWealth, notoriety: maxNotor };
+
+    const scored = raw.map(r => ({
+      gangId: r.gangId, gangName: r.gangName, primaryColour: r.primaryColour,
+      isPlayer: r.isPlayer,
+      totalInfluence: r.totalInfluence, settlementCount: r.settlementCount,
+      wealth: r.wealth, notoriety: r.notoriety,
+      prominence: computeProminence(r, maxima),
+      title: titleFor(r.totalInfluence, r.settlementCount, r.ownsGarage),
+    }));
+
+    // Rank by prominence; tie-break on territory then wealth (keeps the late-game
+    // territory bias even on equal prominence).
+    scored.sort((a, b) =>
+      b.prominence - a.prominence
+      || b.totalInfluence - a.totalInfluence
+      || b.wealth - a.wealth,
+    );
+    const ranked = scored.map((s, i) => ({ rank: i + 1, ...s }));
 
     const top20 = ranked.slice(0, 20);
-    // Always surface the player's own row so the client can pin it even when the
-    // gang is outside the top 20 — or unranked entirely (a new gang with no
-    // influence has no zone_influence rows, so it isn't in `ranked`).
-    const playerEntry = ranked.find(r => r.isPlayer) ?? {
-      rank:            ranked.length + 1,
-      gangId:          playerGang.id,
-      gangName:        playerGang.name,
-      primaryColour:   playerGang.primary_colour,
-      isPlayer:        true,
-      totalInfluence:  0,
-      settlementCount: 0,
-    };
+    // Always surface the player's own row so the client can pin it when outside
+    // the top 20. The player is always in `ranked` now (we seed every gang).
+    const playerEntry = ranked.find(r => r.isPlayer)!;
     const playerRank = playerEntry.rank;
 
-    // Endgame check: 3 real-time hours at #1 triggers the win state
+    // Endgame stays a TERRITORY win condition (control the most land), not a
+    // prominence win — see doc 30. Player is the territory leader iff it holds
+    // the strict-or-tied maximum influence and that maximum is > 0.
+    const playerIsTerritoryLeader =
+      playerEntry.totalInfluence > 0 && playerEntry.totalInfluence === maxInf;
+
+    // Endgame check: 3 real-time hours as territory leader triggers the win state
     let endgame = false;
-    if (playerRank === 1) {
+    if (playerIsTerritoryLeader) {
       if (!playerGang.dominant_since) {
         await db.query(
           `UPDATE gangs SET dominant_since = NOW() WHERE id = $1`,
@@ -98,9 +180,7 @@ leaderboardRouter.get('/', requireAuth, async (req: AuthRequest, res) => {
       entries:     top20,
       playerEntry,
       playerRank,
-      // Count the player's gang too when it's unranked (no influence rows), so
-      // the footer reads "#19 of 19", not "#19 of 18".
-      totalGangs:  Math.max(ranked.length, playerRank),
+      totalGangs:  ranked.length,
       endgame,
       retired:     playerGang.retired,
       retireBonus: playerGang.retire_bonus,

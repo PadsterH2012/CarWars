@@ -162,7 +162,7 @@ export class JobBoardScene extends Phaser.Scene {
     return `
       <div class="page-header">
         <div class="page-title">Job Board</div>
-        <div class="page-subtitle">Send a crew to earn credits and reputation</div>
+        <div class="page-subtitle">Send a crew to earn credits — seed capital for your gang</div>
       </div>
       <div class="content" style="overflow-y:auto;">
         <div class="job-list">

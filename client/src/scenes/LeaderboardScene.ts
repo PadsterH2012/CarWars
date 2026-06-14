@@ -9,6 +9,10 @@ interface LeaderboardEntry {
   isPlayer: boolean;
   totalInfluence: number;
   settlementCount: number;
+  prominence: number;
+  wealth: number;
+  notoriety: number;
+  title: string;
 }
 
 interface LeaderboardData {
@@ -100,6 +104,9 @@ export class LeaderboardScene extends Phaser.Scene {
   private buildMainHTML(): string {
     const d = this.data_;
 
+    const money = (n: number): string =>
+      n >= 1000 ? `$${Math.round(n / 1000)}k` : `$${esc(n)}`;
+
     const rowHtml = (e: LeaderboardEntry): string => {
       const hexColor = '#' + e.primaryColour.toString(16).padStart(6, '0');
       const playerClass = e.isPlayer ? ' player-row' : '';
@@ -109,21 +116,24 @@ export class LeaderboardScene extends Phaser.Scene {
               <td>
                 <span class="gang-swatch" style="background:${esc(hexColor)};margin-right:8px;vertical-align:middle;"></span>
                 ${esc(e.gangName)}
+                <span style="color:var(--dim);font-size:11px;margin-left:6px;">${esc(e.title)}</span>
               </td>
-              <td class="pts">${esc(e.totalInfluence.toLocaleString())}</td>
-              <td class="zones">${esc(e.settlementCount)}</td>
+              <td class="pts" style="font-weight:600;">${esc(e.prominence.toLocaleString())}</td>
+              <td class="r" style="color:var(--gray);">${esc(e.totalInfluence.toLocaleString())}</td>
+              <td class="r" style="color:var(--gray);">${money(e.wealth)}</td>
+              <td class="r" style="color:var(--gray);">${esc(e.notoriety.toLocaleString())}</td>
             </tr>`;
     };
 
     let tableBody: string;
     if (!d) {
-      tableBody = `<tr><td colspan="4" style="padding:32px;text-align:center;color:var(--gray)">Loading…</td></tr>`;
+      tableBody = `<tr><td colspan="6" style="padding:32px;text-align:center;color:var(--gray)">Loading…</td></tr>`;
     } else {
       let rows = d.entries.map(rowHtml).join('');
       // Pin the player's own row when it's not already in the visible top 20.
       const inTop = d.entries.some(e => e.isPlayer);
       if (!inTop && d.playerEntry) {
-        rows += `<tr><td colspan="4" style="text-align:center;color:var(--dim);padding:6px;">⋯</td></tr>`;
+        rows += `<tr><td colspan="6" style="text-align:center;color:var(--dim);padding:6px;">⋯</td></tr>`;
         rows += rowHtml(d.playerEntry);
       }
       tableBody = rows;
@@ -146,18 +156,18 @@ export class LeaderboardScene extends Phaser.Scene {
         </div>
       </div>` : '');
 
-    const unranked = !!d && (d.playerEntry?.totalInfluence ?? 0) === 0;
+    const noTerritory = !!d && (d.playerEntry?.totalInfluence ?? 0) === 0;
     const playerRankFooter = d ? `
       <div style="padding:12px 24px;border-top:1px solid var(--border);font-size:12px;color:var(--gray);">
-        Your gang: #${esc(d.playerRank)} of ${esc(d.totalGangs)} gangs${unranked
-          ? ` — <span style="color:var(--amber)">no territory yet; take jobs and patrol settlements to gain influence</span>`
+        Your gang: #${esc(d.playerRank)} of ${esc(d.totalGangs)} gangs${noTerritory
+          ? ` — <span style="color:var(--amber)">build wealth and notoriety to climb; take and hold territory to dominate the late game</span>`
           : ''}
       </div>` : '';
 
     return `
       <div class="page-header">
-        <div class="page-title">Territory Leaderboard</div>
-        <div class="page-subtitle">Ranked by total influence across all zones</div>
+        <div class="page-title">Gang Leaderboard</div>
+        <div class="page-subtitle">Ranked by prominence — territory, wealth & notoriety combined</div>
       </div>
       <div class="content" style="display:flex;flex-direction:column;overflow:hidden;">
         <div style="flex:1;overflow-y:auto;padding:16px 24px;">
@@ -167,8 +177,10 @@ export class LeaderboardScene extends Phaser.Scene {
               <tr>
                 <th style="width:50px;text-align:center;">Rank</th>
                 <th>Gang</th>
-                <th class="r">Influence</th>
-                <th class="r">Zones</th>
+                <th class="r" title="Blended standing">Prominence</th>
+                <th class="r" title="Influence held">Territory</th>
+                <th class="r" title="Total assets">Wealth</th>
+                <th class="r" title="Reputation">Fame</th>
               </tr>
             </thead>
             <tbody>
