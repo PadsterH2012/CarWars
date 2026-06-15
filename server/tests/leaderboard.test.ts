@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { computeProminence, safeShare, titleFor, PROMINENCE_WEIGHTS } from '../src/api/leaderboard';
+import { computeProminence, safeShare, titleFor, PROMINENCE_WEIGHTS, rivalWealth, rivalNotoriety } from '../src/api/leaderboard';
 
 describe('prominence scoring', () => {
   it('weights sum to 1', () => {
@@ -51,5 +51,39 @@ describe('prominence scoring', () => {
     expect(titleFor(0, 0, true)).toBe('Garage Boss');
     expect(titleFor(10, 1, false)).toBe('Gang Leader');
     expect(titleFor(80, 5, false)).toBe('Kingpin');
+  });
+});
+
+describe('rival notional wealth & notoriety', () => {
+  it('rivalWealth = treasury + territory-implied assets', () => {
+    expect(rivalWealth(2000, 0)).toBe(2000);       // no territory → just treasury
+    expect(rivalWealth(0, 100)).toBe(100_000);     // 100 influence → notional assets
+    expect(rivalWealth(5000, 120)).toBe(125_000);
+  });
+
+  it('rivalNotoriety scales with influence', () => {
+    expect(rivalNotoriety(0)).toBe(0);
+    expect(rivalNotoriety(120)).toBe(120);
+  });
+
+  it('a landless-but-rich player no longer outranks a territorial rival', () => {
+    // Player: lots of cash, real fame, but ZERO territory.
+    const player = { totalInfluence: 0, wealth: 122_000, notoriety: 133 };
+    // Rival: 124 influence, notional wealth/notoriety derived from it.
+    const rival = {
+      totalInfluence: 124,
+      wealth: rivalWealth(0, 124),       // 124,000
+      notoriety: rivalNotoriety(124),    // 124
+    };
+    const max = {
+      influence: 124,
+      wealth: Math.max(player.wealth, rival.wealth),
+      notoriety: Math.max(player.notoriety, rival.notoriety),
+    };
+    const playerScore = computeProminence(player, max);
+    const rivalScore = computeProminence(rival, max);
+    // The territory holder must rank above the landless player (was the bug:
+    // player auto-won wealth + fame because rivals had $0 / 0).
+    expect(rivalScore).toBeGreaterThan(playerScore);
   });
 });

@@ -20,6 +20,24 @@ export const leaderboardRouter = Router();
 // 0.5-weighted territory term takes over. No per-gang state.
 export const PROMINENCE_WEIGHTS = { territory: 0.5, wealth: 0.3, notoriety: 0.2 };
 
+// Rivals carry no vehicles / garages / reputation in the model, only a treasury
+// and influence. So we derive a NOTIONAL wealth and notoriety from what they do
+// have: their territory implies a fleet + infrastructure (wealth), and their
+// power makes them known/feared (notoriety). Without this the player trivially
+// tops the wealth and fame axes (rivals would read as $0 / 0 fame). Tunable;
+// a cheap proxy until rivals get a fully-modelled economy + reputation.
+const RIVAL_ASSETS_PER_INFLUENCE = 1000;   // notional fleet/infra value per influence pt
+const RIVAL_NOTORIETY_PER_INFLUENCE = 1;   // fame/fear per influence pt
+
+// Rival notional net worth = liquid treasury + the value their territory implies.
+export function rivalWealth(treasury: number, influence: number): number {
+  return treasury + influence * RIVAL_ASSETS_PER_INFLUENCE;
+}
+// Rival fame/fear, derived from how much territory they command.
+export function rivalNotoriety(influence: number): number {
+  return influence * RIVAL_NOTORIETY_PER_INFLUENCE;
+}
+
 export function safeShare(value: number, max: number): number {
   return max > 0 ? Math.max(0, Math.min(1, value / max)) : 0;
 }
@@ -111,13 +129,16 @@ leaderboardRouter.get('/', requireAuth, async (req: AuthRequest, res) => {
       wealth: playerAssets, notoriety: playerGang.reputation,
     });
     for (const g of ctx.gangs) {
+      const gInfluence = infMap.get(g.id)?.total_influence ?? 0;
       raw.push({
         gangId: g.id, gangName: g.name, primaryColour: g.primary_colour,
         isPlayer: false, ownsGarage: false,
-        totalInfluence: infMap.get(g.id)?.total_influence ?? 0,
+        totalInfluence: gInfluence,
         settlementCount: infMap.get(g.id)?.settlement_count ?? 0,
-        // Rivals: total assets = treasury; no reputation system for them yet (v1).
-        wealth: g.treasury, notoriety: 0,
+        // Rivals: notional wealth (treasury + territory-implied assets) and
+        // notoriety (territory-derived fame) so they contest those axes too.
+        wealth: rivalWealth(g.treasury, gInfluence),
+        notoriety: rivalNotoriety(gInfluence),
       });
     }
 
